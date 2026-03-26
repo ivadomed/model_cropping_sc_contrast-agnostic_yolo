@@ -1,0 +1,16 @@
+processed/
+predictions/
+reconstructions/
+sandbox/
+datasets/
+checkpoints/
+data/raw/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Wandb
+wandb/

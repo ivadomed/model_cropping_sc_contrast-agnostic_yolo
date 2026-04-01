@@ -1,16 +1,34 @@
-processed/
+processed*/
 predictions/
 reconstructions/
 sandbox/
-datasets/
+datasets*/
 checkpoints/
+runs/
 data/raw/
+dataset_stats.csv
+metrics_*.csv
+
+# Model weights
+*.pt
+*.pth
+*.onnx
 
 # Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyo
 .venv/
+*.egg-info/
+dist/
+build/
 
 # Wandb
 wandb/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,155 +1,227 @@
 #!/usr/bin/env python3
 """
-Evaluate predicted 3D bounding boxes against ground truth.
+Evaluate YOLO 2D bbox predictions: IoU, Dice, AP50, AP50:95.
 
-For each patient in predictions/<run-id>/ that has a bbox_3d.txt:
-  - reads predictions/<run-id>/<site>/<stem>/volume/bbox_3d.txt  (predicted)
-  - reads processed/<site>/<stem>/volume/bbox_3d.txt             (GT)
-  - computes: 3D IoU, coverage (fraction of GT covered by pred), per-axis deltas
-
-Outputs:
-  - CSV: <out-csv>  (one row per patient)
-  - W&B summary (if available)
+Runs inference directly from processed/ slices (conf=0.001 to capture full PR curve).
+Reports broken down by: global / split / dataset / dataset×contrast / dataset×contrast×split.
 
 Usage:
-    python scripts/evaluate.py --run-id yolo_spine_v1
-    python scripts/evaluate.py --run-id yolo_spine_v1 --out results/eval_v1.csv --no-wandb
+    python scripts/evaluate.py \
+        --checkpoint checkpoints/yolo_spine_v1/weights/best.pt \
+        --run-id yolo_spine_v1 \
+        --processed processed_10mm_SI \
+        --splits-dir data/datasplits
 """
 
 import argparse
-import csv
+import re
 import sys
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import yaml
 from tqdm import tqdm
+from ultralytics import YOLO
 
 sys.path.insert(0, str(Path(__file__).parent))
-from utils import read_bbox_3d
 
 
-# ── metrics ───────────────────────────────────────────────────────────────────
+def load_splits(splits_dir: Path) -> dict:
+    """Returns {(dataset, subject): split_name} from all datasplit_*.yaml."""
+    mapping = {}
+    for f in sorted(splits_dir.glob("datasplit_*.yaml")):
+        dataset = re.sub(r"_seed\d+$", "", f.stem[len("datasplit_"):])
+        for split_name, subjects in yaml.safe_load(f.read_text()).items():
+            for subj in (subjects or []):
+                mapping[(dataset, subj)] = split_name
+    return mapping
 
-def iou_3d(pred: dict, gt: dict) -> float:
-    """Volumetric IoU between two bboxes {row1,row2,col1,col2,z1,z2}."""
-    inter_r = max(0, min(pred["row2"], gt["row2"]) - max(pred["row1"], gt["row1"]))
-    inter_c = max(0, min(pred["col2"], gt["col2"]) - max(pred["col1"], gt["col1"]))
-    inter_z = max(0, min(pred["z2"],   gt["z2"])   - max(pred["z1"],   gt["z1"]))
-    intersection = inter_r * inter_c * inter_z
-    if intersection == 0:
+
+def bbox_iou(a, b) -> float:
+    """IoU between two (cx,cy,w,h) normalised bboxes."""
+    ax1, ay1, ax2, ay2 = a[0] - a[2] / 2, a[1] - a[3] / 2, a[0] + a[2] / 2, a[1] + a[3] / 2
+    bx1, by1, bx2, by2 = b[0] - b[2] / 2, b[1] - b[3] / 2, b[0] + b[2] / 2, b[1] + b[3] / 2
+    inter = max(0.0, min(ax2, bx2) - max(ax1, bx1)) * max(0.0, min(ay2, by2) - max(ay1, by1))
+    union = (ax2 - ax1) * (ay2 - ay1) + (bx2 - bx1) * (by2 - by1) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def read_gt_box(txt_path: Path):
+    """Returns (cx,cy,w,h) or None if file empty/missing."""
+    if not txt_path.exists():
+        return None
+    content = txt_path.read_text().strip()
+    if not content:
+        return None
+    p = content.split()
+    return (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+
+
+def collect_gt_records(processed_dir: Path, splits_map: dict) -> list:
+    """Walk processed/ and return one record per PNG slice with GT info."""
+    records = []
+    for dataset_dir in sorted(processed_dir.iterdir()):
+        if not dataset_dir.is_dir():
+            continue
+        dataset = dataset_dir.name
+        for patient_dir in sorted(dataset_dir.iterdir()):
+            if not patient_dir.is_dir():
+                continue
+            stem = patient_dir.name
+            m = re.match(r"(sub-[^_]+)_?(.*)", stem)
+            subject = m.group(1)
+            contrast = m.group(2) or "default"
+            split = splits_map.get((dataset, subject), "unknown")
+
+            png_dir = patient_dir / "png"
+            txt_dir = patient_dir / "txt"
+            if not png_dir.is_dir() or not txt_dir.is_dir():
+                continue
+
+            for png in sorted(png_dir.glob("slice_*.png")):
+                gt_box = read_gt_box(txt_dir / (png.stem + ".txt"))
+                records.append({
+                    "dataset":   dataset,
+                    "subject":   subject,
+                    "contrast":  contrast,
+                    "split":     split,
+                    "png_path":  str(png),
+                    "gt_box":    gt_box,
+                    "has_gt":    gt_box is not None,
+                    "pred_box":  None,
+                    "pred_conf": 0.0,
+                })
+    return records
+
+
+def run_inference(model: YOLO, records: list, conf_thresh: float, batch: int) -> None:
+    """Run YOLO inference and fill pred_box / pred_conf in records in-place."""
+    paths = [r["png_path"] for r in records]
+    for i in tqdm(range(0, len(paths), batch), desc="Inference", unit="batch"):
+        results = model.predict(paths[i:i + batch], conf=conf_thresh, verbose=False)
+        for rec, res in zip(records[i:i + batch], results):
+            boxes = res.boxes
+            if boxes is None or len(boxes) == 0:
+                continue
+            best = int(boxes.conf.argmax())
+            cx, cy, w, h = boxes.xywhn[best].tolist()
+            rec["pred_box"]  = (cx, cy, w, h)
+            rec["pred_conf"] = float(boxes.conf[best])
+
+
+def ap_at_iou(df: pd.DataFrame, iou_thresh: float) -> float:
+    """AP at a single IoU threshold, predictions ranked by confidence."""
+    n_gt = int(df["has_gt"].sum())
+    if n_gt == 0:
+        return float("nan")
+    preds = df[df["has_pred"]].sort_values("pred_conf", ascending=False)
+    if len(preds) == 0:
         return 0.0
-    vol_pred = (pred["row2"] - pred["row1"]) * (pred["col2"] - pred["col1"]) * (pred["z2"] - pred["z1"])
-    vol_gt   = (gt["row2"]   - gt["row1"])   * (gt["col2"]   - gt["col1"])   * (gt["z2"]   - gt["z1"])
-    return intersection / (vol_pred + vol_gt - intersection)
+    tp = (preds["has_gt"] & (preds["iou"] >= iou_thresh)).astype(int).values
+    cum_tp = np.cumsum(tp)
+    cum_fp = np.cumsum(1 - tp)
+    precision = cum_tp / (cum_tp + cum_fp)
+    recall    = cum_tp / n_gt
+    precision = np.concatenate([[1.0], precision])
+    recall    = np.concatenate([[0.0], recall])
+    for i in range(len(precision) - 2, -1, -1):
+        precision[i] = max(precision[i], precision[i + 1])
+    return float(np.trapz(precision, recall))
 
 
-def coverage(pred: dict, gt: dict) -> float:
-    """Fraction of GT bbox volume that is covered by pred bbox (recall-like)."""
-    inter_r = max(0, min(pred["row2"], gt["row2"]) - max(pred["row1"], gt["row1"]))
-    inter_c = max(0, min(pred["col2"], gt["col2"]) - max(pred["col1"], gt["col1"]))
-    inter_z = max(0, min(pred["z2"],   gt["z2"])   - max(pred["z1"],   gt["z1"]))
-    intersection = inter_r * inter_c * inter_z
-    vol_gt = (gt["row2"] - gt["row1"]) * (gt["col2"] - gt["col1"]) * (gt["z2"] - gt["z1"])
-    return intersection / vol_gt if vol_gt > 0 else 0.0
+def summarise_group(df: pd.DataFrame) -> dict:
+    n_gt   = int(df["has_gt"].sum())
+    n_pred = int(df["has_pred"].sum())
 
+    matched   = df[df["has_gt"] & df["has_pred"]]
+    iou_mean  = float(matched["iou"].mean()) if len(matched) else float("nan")
+    dice_mean = float((2 * matched["iou"] / (1 + matched["iou"])).mean()) if len(matched) else float("nan")
 
-def axis_deltas(pred: dict, gt: dict) -> dict:
-    """Signed delta (pred - gt) on each of the 6 faces (voxels). Negative = pred is inside GT."""
+    tp50        = int((df["has_gt"] & df["has_pred"] & (df["iou"] >= 0.5)).sum())
+    recall50    = tp50 / n_gt   if n_gt   else float("nan")
+    precision50 = tp50 / n_pred if n_pred else float("nan")
+    denom       = (precision50 + recall50) if (not np.isnan(precision50) and not np.isnan(recall50)) else 0.0
+    f1_50       = 2 * precision50 * recall50 / denom if denom > 0 else float("nan")
+
+    ap50    = ap_at_iou(df, 0.50)
+    ap50_95 = float(np.nanmean([ap_at_iou(df, t) for t in np.arange(0.50, 1.00, 0.05)]))
+
     return {
-        "d_row1": pred["row1"] - gt["row1"],
-        "d_row2": pred["row2"] - gt["row2"],
-        "d_col1": pred["col1"] - gt["col1"],
-        "d_col2": pred["col2"] - gt["col2"],
-        "d_z1":   pred["z1"]   - gt["z1"],
-        "d_z2":   pred["z2"]   - gt["z2"],
+        "n_slices":    len(df),
+        "n_gt":        n_gt,
+        "n_pred":      n_pred,
+        "iou_mean":    round(iou_mean,    4),
+        "dice_mean":   round(dice_mean,   4),
+        "recall50":    round(recall50,    4),
+        "precision50": round(precision50, 4),
+        "f1_50":       round(f1_50,       4),
+        "ap50":        round(ap50,        4),
+        "ap50_95":     round(ap50_95,     4),
     }
 
 
-# ── per-patient evaluation ────────────────────────────────────────────────────
+def build_report(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
 
-def evaluate_patient(site: str, stem: str, pred_run_dir: Path, processed_dir: Path) -> dict | None:
-    pred_txt = pred_run_dir / site / stem / "volume" / "bbox_3d.txt"
-    gt_txt   = processed_dir / site / stem / "volume" / "bbox_3d.txt"
+    def add(g, split="ALL", dataset="ALL", contrast="ALL"):
+        rows.append({"split": split, "dataset": dataset, "contrast": contrast, **summarise_group(g)})
 
-    if not pred_txt.exists():
-        return {"site": site, "stem": stem, "status": "no_prediction"}
-    if not gt_txt.exists():
-        return {"site": site, "stem": stem, "status": "no_gt"}
+    add(df)
+    for split, g in df.groupby("split"):
+        add(g, split=split)
+    for dataset, g in df.groupby("dataset"):
+        add(g, dataset=dataset)
+        for split, gg in g.groupby("split"):
+            add(gg, split=split, dataset=dataset)
+        for contrast, gg in g.groupby("contrast"):
+            add(gg, dataset=dataset, contrast=contrast)
+            for split, ggg in gg.groupby("split"):
+                add(ggg, split=split, dataset=dataset, contrast=contrast)
 
-    pred = read_bbox_3d(pred_txt)
-    gt   = read_bbox_3d(gt_txt)
+    return pd.DataFrame(rows)
 
-    row = {
-        "site": site,
-        "stem": stem,
-        "status": "ok",
-        "iou_3d":    round(iou_3d(pred, gt), 4),
-        "coverage":  round(coverage(pred, gt), 4),
-    }
-    row.update(axis_deltas(pred, gt))
-    return row
-
-
-# ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate predicted 3D bboxes vs GT",
+        description="Evaluate 2D bbox: IoU, Dice, AP50, AP50:95 — per dataset/contrast/split",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--run-id",      required=True)
-    parser.add_argument("--predictions", default="predictions")
-    parser.add_argument("--processed",   default="processed")
-    parser.add_argument("--out",         default=None, help="Output CSV path (default: results/<run-id>.csv)")
-    parser.add_argument("--no-wandb",    action="store_true")
-    parser.add_argument("--wandb-project", default="spine_detection")
+    parser.add_argument("--checkpoint", required=True, help="Path to best.pt")
+    parser.add_argument("--run-id",     required=True, help="Name used for output CSV")
+    parser.add_argument("--processed",  default="processed")
+    parser.add_argument("--splits-dir", default="data/datasplits")
+    parser.add_argument("--conf",       type=float, default=0.001,
+                        help="Min confidence for inference (low = full PR curve for AP computation)")
+    parser.add_argument("--batch",      type=int,   default=64)
+    parser.add_argument("--out",        default=".",  help="Output directory for CSV")
     args = parser.parse_args()
 
-    pred_run_dir  = Path(args.predictions) / args.run_id
-    processed_dir = Path(args.processed)
-    out_csv = Path(args.out) if args.out else Path("results") / f"{args.run_id}.csv"
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    splits_map = load_splits(Path(args.splits_dir))
+    records = collect_gt_records(Path(args.processed), splits_map)
+    print(f"Collected {len(records)} slices — "
+          f"{len(set(r['dataset'] for r in records))} datasets, "
+          f"{len(set(r['subject'] for r in records))} subjects")
 
-    # Find all patients that have predictions
-    patient_paths = sorted({p.parent.parent for p in pred_run_dir.rglob("volume/bbox_3d.txt")})
+    model = YOLO(args.checkpoint)
+    run_inference(model, records, conf_thresh=args.conf, batch=args.batch)
 
-    rows = []
-    for patient_dir in tqdm(patient_paths, desc="Patients"):
-        site = patient_dir.parent.name
-        stem = patient_dir.name
-        row = evaluate_patient(site, stem, pred_run_dir, processed_dir)
-        if row:
-            rows.append(row)
+    for r in records:
+        r["has_pred"] = r["pred_box"] is not None
+        if r["has_gt"] and r["has_pred"]:
+            r["iou"] = bbox_iou(r["gt_box"], r["pred_box"])
+        elif not r["has_gt"] and not r["has_pred"]:
+            r["iou"] = float("nan")
+        else:
+            r["iou"] = 0.0
 
-    # Write CSV
-    fieldnames = ["site", "stem", "status", "iou_3d", "coverage",
-                  "d_row1", "d_row2", "d_col1", "d_col2", "d_z1", "d_z2"]
-    with open(out_csv, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    df = pd.DataFrame(records).drop(columns=["png_path", "gt_box", "pred_box"])
+    report = build_report(df)
 
-    ok_rows = [r for r in rows if r.get("status") == "ok"]
-    print(f"\nEvaluated: {len(ok_rows)} / {len(rows)} patients")
-    if ok_rows:
-        import statistics
-        ious = [r["iou_3d"] for r in ok_rows]
-        covs = [r["coverage"] for r in ok_rows]
-        print(f"  IoU 3D  — mean: {statistics.mean(ious):.3f}  median: {statistics.median(ious):.3f}  min: {min(ious):.3f}")
-        print(f"  Coverage— mean: {statistics.mean(covs):.3f}  median: {statistics.median(covs):.3f}  min: {min(covs):.3f}")
-
-        if not args.no_wandb:
-            import wandb
-            wandb.init(project=args.wandb_project, id=args.run_id, resume="allow")
-            wandb.summary.update({
-                "eval/iou_3d_mean":   statistics.mean(ious),
-                "eval/iou_3d_median": statistics.median(ious),
-                "eval/coverage_mean": statistics.mean(covs),
-                "eval/n_patients":    len(ok_rows),
-            })
-            wandb.finish()
-
-    print(f"Results: {out_csv}")
+    out_csv = Path(args.out) / f"metrics_{args.run_id}.csv"
+    report.to_csv(out_csv, index=False)
+    print(f"\nReport → {out_csv}")
+    print(report[report["dataset"] == "ALL"].to_string(index=False))
 
 
 if __name__ == "__main__":

@@ -3,13 +3,13 @@
 Reconstruct NIfTI volumes from predictions and raw data.
 
 For each patient in predictions/<run-id>/:
-  - original.nii.gz       → symlink to raw image
-  - resampled.nii.gz      → raw image reoriented to RPI + resampled
-  - mask_resampled.nii.gz → raw mask reoriented to RPI + resampled (order=1)
-  - pred_slices_stacked.nii.gz → binary 3D volume: filled predicted bboxes per slice
-  - gt_slices_stacked.nii.gz   → binary 3D volume: filled GT bboxes per slice
+  - original.nii.gz           → symlink to raw image
+  - mask_original.nii.gz      → symlink to raw mask
+  - pred_slices_stacked.nii.gz → binary 3D volume from predicted bboxes (LAS space)
+  - gt_slices_stacked.nii.gz  → binary 3D volume from GT bboxes (LAS space)
 
-All volumes share the affine/spacing of resampled.nii.gz.
+All stacked volumes share the affine of the LAS-reoriented original image.
+Bbox coords are normalised to [0,1] relative to the native LAS slice dimensions.
 
 Usage:
     python scripts/reconstruct.py --run-id yolo_spine_v1
@@ -21,12 +21,11 @@ import sys
 from pathlib import Path
 
 import nibabel as nib
-import numpy as np
 import yaml
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent))
-from utils import reorient_to_rpi, resample_nifti, stack_bbox_volume
+from utils import reorient_to_las, resample_z, stack_bbox_volume
 
 
 def reconstruct_patient(
@@ -34,7 +33,6 @@ def reconstruct_patient(
     processed_dir: Path,
     out_dir: Path,
 ) -> None:
-    # Infer site/stem from path: predictions/<run-id>/<site>/<stem>
     stem = pred_patient_dir.name
     site = pred_patient_dir.parent.name
     patient_rel = f"{site}/{stem}"
@@ -44,32 +42,24 @@ def reconstruct_patient(
 
     raw_image = Path(meta["raw_image"])
     raw_mask  = Path(meta["raw_mask"])
-    res_mm    = tuple(meta["resolution_mm"])
-    H, W, Z   = meta["shape"]
+    H, W, Z   = meta["shape_las"]
+    si_res_mm = meta["si_res_mm"]
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Symlink to original raw image
-    orig_link = out_dir / "original.nii.gz"
-    if orig_link.is_symlink():
-        orig_link.unlink()
-    orig_link.symlink_to(raw_image.resolve())
+    for link_name, target in [("original.nii.gz", raw_image), ("mask_original.nii.gz", raw_mask)]:
+        link = out_dir / link_name
+        if link.is_symlink():
+            link.unlink()
+        link.symlink_to(target.resolve())
 
-    # Resampled image and mask (generated from raw, never copied from processed/)
-    img_r = resample_nifti(reorient_to_rpi(nib.load(str(raw_image))), res_mm, order=3)
-    nib.save(img_r, str(out_dir / "resampled.nii.gz"))
+    # Affine/header from LAS-reoriented + SI-resampled image (matches processed space)
+    img_las = resample_z(reorient_to_las(nib.load(str(raw_image))), si_res_mm, order=3)
+    affine, header = img_las.affine, img_las.header
 
-    mask_r = resample_nifti(reorient_to_rpi(nib.load(str(raw_mask))), res_mm, order=1)
-    nib.save(mask_r, str(out_dir / "mask_resampled.nii.gz"))
-
-    affine = img_r.affine
-    header = img_r.header
-
-    # Predicted bbox slices stacked into a 3D binary volume
     pred_vol = stack_bbox_volume(pred_patient_dir / "slices" / "txt", H, W, Z)
     nib.save(nib.Nifti1Image(pred_vol, affine, header), str(out_dir / "pred_slices_stacked.nii.gz"))
 
-    # GT bbox slices stacked (from processed/txt/)
     gt_vol = stack_bbox_volume(processed_dir / patient_rel / "txt", H, W, Z)
     nib.save(nib.Nifti1Image(gt_vol, affine, header), str(out_dir / "gt_slices_stacked.nii.gz"))
 
@@ -79,23 +69,21 @@ def main():
         description="Reconstruct NIfTI volumes from YOLO predictions",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--run-id",       required=True)
-    parser.add_argument("--predictions",  default="predictions")
-    parser.add_argument("--processed",    default="processed")
-    parser.add_argument("--out",          default="reconstructions")
+    parser.add_argument("--run-id",      required=True)
+    parser.add_argument("--predictions", default="predictions")
+    parser.add_argument("--processed",   default="processed")
+    parser.add_argument("--out",         default="reconstructions")
     args = parser.parse_args()
 
-    pred_run_dir = Path(args.predictions) / args.run_id
+    pred_run_dir  = Path(args.predictions) / args.run_id
     processed_dir = Path(args.processed)
     recon_run_dir = Path(args.out) / args.run_id
 
-    # Collect all patient dirs: predictions/<run-id>/<site>/<stem>/
-    patient_dirs = [p for p in pred_run_dir.rglob("volume/bbox_3d.txt")]
-    patient_dirs = [p.parent.parent for p in patient_dirs]  # <site>/<stem>/
+    patient_dirs = [p.parent.parent for p in pred_run_dir.rglob("volume/bbox_3d.txt")]
 
     for patient_dir in tqdm(patient_dirs, desc="Patients"):
-        site = patient_dir.parent.name
-        stem = patient_dir.name
+        site    = patient_dir.parent.name
+        stem    = patient_dir.name
         out_dir = recon_run_dir / site / stem
         reconstruct_patient(patient_dir, processed_dir, out_dir)
 

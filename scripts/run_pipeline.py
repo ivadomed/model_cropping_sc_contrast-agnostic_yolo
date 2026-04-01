@@ -3,14 +3,14 @@
 End-to-end pipeline on a single volume for testing.
 
 Runs the full pipeline in sandbox/<stem>/ (overwritten on each call):
-  png/             axial slices (from GT mask)
-  txt/             GT YOLO labels
-  volume/bbox_3d.txt  GT 3D bbox
-  slices/txt/      YOLO predictions per slice
-  slices/png/      predictions visualised (bbox in red)
-  volume_pred/bbox_3d.txt  predicted 3D bbox
-  resampled.nii.gz
-  mask_resampled.nii.gz
+  png/                    axial slices (native LAS resolution, normalised uint8)
+  txt/                    GT YOLO labels
+  volume/bbox_3d.txt      GT 3D bbox
+  slices/txt/             YOLO predictions per slice
+  slices/png/             predictions visualised (bbox in red)
+  volume_pred/bbox_3d.txt predicted 3D bbox
+  original.nii.gz         symlink → raw image
+  mask_original.nii.gz    symlink → raw mask
   pred_slices_stacked.nii.gz
   gt_slices_stacked.nii.gz
 
@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 import nibabel as nib
-import yaml
+import numpy as np
 from PIL import Image as PILImage, ImageDraw
 from tqdm import tqdm
 from ultralytics import YOLO
@@ -35,26 +35,25 @@ from ultralytics import YOLO
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import (
     bbox_3d_from_txts, nifti_stem, normalize_to_uint8,
-    reorient_to_rpi, resample_nifti, seg_to_yolo_bbox,
+    reorient_to_las, resample_z, seg_to_yolo_bbox,
     stack_bbox_volume, write_bbox_3d,
 )
 
 
-def preprocess_volume(img_path: Path, mask_path: Path, res_mm: tuple, out_dir: Path) -> tuple:
-    """Preprocess one volume into out_dir/png/ + txt/ + volume/. Returns (H, W, Z, affine, header)."""
+def preprocess_volume(img_path: Path, mask_path: Path, si_res_mm: float, out_dir: Path) -> tuple:
+    """Reorient to LAS, resample SI axis, export slices as normalised uint8 PNG + YOLO labels.
+    Returns (H, W, Z, affine, header).
+    """
     (out_dir / "png").mkdir(parents=True, exist_ok=True)
     (out_dir / "txt").mkdir(parents=True, exist_ok=True)
     (out_dir / "volume").mkdir(parents=True, exist_ok=True)
 
-    img_r  = resample_nifti(reorient_to_rpi(nib.load(str(img_path))), res_mm, order=3)
-    mask_r = resample_nifti(reorient_to_rpi(nib.load(str(mask_path))), res_mm, order=1)
-    nib.save(img_r,  str(out_dir / "resampled.nii.gz"))
-    nib.save(mask_r, str(out_dir / "mask_resampled.nii.gz"))
+    img_r  = resample_z(reorient_to_las(nib.load(str(img_path))),    si_res_mm, order=3)
+    mask_r = resample_z(reorient_to_las(nib.load(str(mask_path))),   si_res_mm, order=0)
 
-    import numpy as np
     img_data  = img_r.get_fdata(dtype=np.float32)
     mask_data = mask_r.get_fdata().astype(np.uint8)
-    H, W, Z   = img_data.shape[:3]
+    H, W, Z = img_data.shape[:3]
 
     for z in range(Z):
         PILImage.fromarray(normalize_to_uint8(img_data[:, :, z])).save(
@@ -117,15 +116,13 @@ def main():
     parser.add_argument("--image",      required=True)
     parser.add_argument("--mask",       required=True)
     parser.add_argument("--checkpoint", required=True)
-    parser.add_argument("--res", nargs=3, type=float, metavar=("R", "P", "I"),
-                        default=[0.9, 0.7, 1.0], help="Resampling resolution in mm")
+    parser.add_argument("--si-res",     type=float, required=True, help="Target SI (Z) resolution in mm")
     parser.add_argument("--conf",       type=float, default=0.25)
     parser.add_argument("--out",        default="sandbox")
     args = parser.parse_args()
 
     img_path  = Path(args.image)
     mask_path = Path(args.mask)
-    res_mm    = tuple(args.res)
     stem      = nifti_stem(img_path)
     out_dir   = Path(args.out) / stem
 
@@ -133,17 +130,18 @@ def main():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
 
-    print(f"Preprocessing {stem} …")
-    H, W, Z, affine, header = preprocess_volume(img_path, mask_path, res_mm, out_dir)
+    for link_name, target in [("original.nii.gz", img_path), ("mask_original.nii.gz", mask_path)]:
+        (out_dir / link_name).symlink_to(target.resolve())
 
-    print(f"Running YOLO inference …")
+    print(f"Preprocessing {stem} …")
+    H, W, Z, affine, header = preprocess_volume(img_path, mask_path, args.si_res, out_dir)
+
+    print("Running YOLO inference …")
     model = YOLO(args.checkpoint)
     infer_volume(model, out_dir, H, W, args.conf)
 
-    import nibabel as nib
-    import numpy as np
     pred_vol = stack_bbox_volume(out_dir / "slices" / "txt", H, W, Z)
-    gt_vol   = stack_bbox_volume(out_dir / "txt", H, W, Z)
+    gt_vol   = stack_bbox_volume(out_dir / "txt",            H, W, Z)
     nib.save(nib.Nifti1Image(pred_vol, affine, header), str(out_dir / "pred_slices_stacked.nii.gz"))
     nib.save(nib.Nifti1Image(gt_vol,   affine, header), str(out_dir / "gt_slices_stacked.nii.gz"))
 

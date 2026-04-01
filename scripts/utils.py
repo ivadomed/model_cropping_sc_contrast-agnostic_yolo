@@ -1,10 +1,10 @@
-"""Shared helpers: normalisation, bbox, RPI reorientation, resampling."""
+"""Shared helpers: normalisation, bbox, LAS reorientation, SI resampling."""
 from pathlib import Path
 
 import nibabel as nib
-import nibabel.processing as nib_proc
 import numpy as np
 from nibabel.orientations import axcodes2ornt, ornt_transform
+from scipy import ndimage
 
 
 def nifti_stem(path: Path) -> str:
@@ -39,27 +39,31 @@ def seg_to_yolo_bbox(seg: np.ndarray):
     return (c0 + c1) / 2 / W, (r0 + r1) / 2 / H, (c1 - c0 + 1) / W, (r1 - r0 + 1) / H
 
 
-def reorient_to_rpi(img: nib.Nifti1Image) -> nib.Nifti1Image:
-    """Reorient NIfTI to RPI using nibabel orientation transforms."""
+def resample_z(img: nib.Nifti1Image, target_z_mm: float, order: int) -> nib.Nifti1Image:
+    """Resample NIfTI along axis 2 (S in LAS) to target_z_mm voxel spacing.
+    order=3 for images, order=0 for binary masks.
+    No-op if current spacing already matches target (within 0.01 mm).
+    """
+    current_z = float(img.header.get_zooms()[2])
+    if abs(current_z - target_z_mm) < 0.01:
+        return img
+    zoom_factor = current_z / target_z_mm
+    data = ndimage.zoom(img.get_fdata(dtype=np.float32), (1.0, 1.0, zoom_factor), order=order)
+    affine = img.affine.copy()
+    affine[:3, 2] *= target_z_mm / current_z
+    return nib.Nifti1Image(data, affine)
+
+
+def reorient_to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
+    """Reorient NIfTI to LAS (Left × Anterior × Superior) using nibabel orientation transforms."""
     current = nib.io_orientation(img.affine)
     target = axcodes2ornt(("L", "A", "S"))
     return img.as_reoriented(ornt_transform(current, target))
 
 
-def resample_nifti(img: nib.Nifti1Image, res_mm: tuple, order: int) -> nib.Nifti1Image:
-    """Resample to target voxel size in mm. Binarises at 0.5 for order=1 (masks).
-    order=3 for images (cubic spline), order=1 for masks (linear + binarise).
-    """
-    out = nib_proc.resample_to_output(img, voxel_sizes=res_mm, order=order, mode="nearest")
-    if order == 1:
-        data = (np.asanyarray(out.dataobj) >= 0.5).astype(np.uint8)
-        out = nib.Nifti1Image(data, out.affine, out.header)
-    return out
-
-
 def read_bbox_3d(path: Path) -> dict:
     """Read bbox_3d.txt → {row1, row2, col1, col2, z1, z2} in voxel coords.
-    Convention: row=axis-0 (R), col=axis-1 (P), z=axis-2 (I).
+    Convention: row=axis-0, col=axis-1, z=axis-2 (in LAS space).
     """
     r1, r2, c1, c2, z1, z2 = map(int, path.read_text().split())
     return {"row1": r1, "row2": r2, "col1": c1, "col2": c2, "z1": z1, "z2": z2}
@@ -70,7 +74,7 @@ def write_bbox_3d(path: Path, row1, row2, col1, col2, z1, z2) -> None:
     path.write_text(f"{row1} {row2} {col1} {col2} {z1} {z2}\n")
 
 
-def bbox_3d_from_txts(txt_dir: Path, H: int, W: int) -> dict | None:
+def bbox_3d_from_txts(txt_dir: Path, H: int, W: int):
     """Aggregate YOLO slice txts into a 3D bbox union.
     YOLO format: class cx cy w h  (cx=col/W, cy=row/H, all in [0,1]).
     Returns {row1,row2,col1,col2,z1,z2} in voxel coords, or None if no detections.
@@ -93,7 +97,9 @@ def bbox_3d_from_txts(txt_dir: Path, H: int, W: int) -> dict | None:
 
 
 def stack_bbox_volume(txt_dir: Path, H: int, W: int, Z: int) -> np.ndarray:
-    """Create a binary 3D volume (H×W×Z) where each slice is a filled bbox rectangle."""
+    """Create a binary 3D volume (H×W×Z) where each slice is a filled bbox rectangle.
+    Bboxes are in normalised coords relative to an H×W image (used for 320×320 slices).
+    """
     vol = np.zeros((H, W, Z), dtype=np.uint8)
     for txt in txt_dir.glob("slice_*.txt"):
         content = txt.read_text().strip()
@@ -109,3 +115,5 @@ def stack_bbox_volume(txt_dir: Path, H: int, W: int, Z: int) -> np.ndarray:
         c2 = min(W, int((cx + w / 2) * W))
         vol[r1:r2, c1:c2, z] = 1
     return vol
+
+

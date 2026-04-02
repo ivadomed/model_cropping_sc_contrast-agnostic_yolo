@@ -87,20 +87,44 @@ def main():
         SETTINGS["wandb"] = False
         os.environ["WANDB_MODE"] = "disabled"
     else:
-        SETTINGS["wandb"] = True  # reset in case a previous --no-wandb run persisted False
-
-    model = YOLO(args.model)
-    if not args.no_augment:
-        model.add_callback("on_train_start", inject_mri_augmentations)
-    if not args.no_wandb:
+        SETTINGS["wandb"] = True
+        # wb.py is imported once at Python startup — if SETTINGS["wandb"] was False then,
+        # wb=None is frozen. Force reload so the assert passes and callbacks are registered.
+        import importlib
+        import ultralytics.utils.callbacks.wb as _wb_mod
+        importlib.reload(_wb_mod)
         import wandb
         wandb.init(
             project=args.wandb_project,
             name=args.run_id,
-            id=args.run_id,
-            resume="allow",
             tags=["yolo", "spine", "mri"],
+            config={
+                "model":       args.model,
+                "dataset":     args.dataset_yaml,
+                "imgsz":       args.imgsz,
+                "batch":       args.batch,
+                "epochs":      args.epochs,
+                "patience":    args.patience,
+                "augment":     not args.no_augment,
+                "si_res_mm":   args.dataset_yaml.split("_")[1] if "_" in args.dataset_yaml else "?",
+                # YOLO augmentations — stored individually for easy comparison across runs
+                "aug/hsv_v":         0.0  if args.no_augment else 0.15,
+                "aug/degrees":       0.0  if args.no_augment else 15.0,
+                "aug/scale":         0.0  if args.no_augment else 0.2,
+                "aug/translate":     0.0  if args.no_augment else 0.1,
+                "aug/fliplr":        0.0  if args.no_augment else 0.5,
+                "aug/flipud":        0.0  if args.no_augment else 0.5,
+                # albumentations MRI augmentations
+                "aug/gauss_noise_p":    0.0 if args.no_augment else 0.1,
+                "aug/gaussian_blur_p":  0.0 if args.no_augment else 0.2,
+                "aug/downscale_p":      0.0 if args.no_augment else 0.25,
+                "aug/random_gamma_p":   0.0 if args.no_augment else 0.1,
+            },
         )
+
+    model = YOLO(args.model)
+    if not args.no_augment:
+        model.add_callback("on_train_start", inject_mri_augmentations)
 
     aug = dict(
         hsv_h=0.0, hsv_s=0.0, hsv_v=0.0,

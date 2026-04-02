@@ -143,7 +143,8 @@ SPLITS — un yaml par dataset (data/datasplits/)
   build_dataset.py mappe sub-xxx → tous les dossiers sub-xxx_* dans processed/
 
 TRAIN — décisions
-- imgsz=640 (standard YOLO, resize in-plane délégué à YOLO)
+- imgsz=320 (retour au défaut de l'ancien modèle qui convergeait — feature maps plus petites,
+  moins d'ancres négatives, bbox SC proportionnellement plus large → convergence plus stable)
 - augmentations MRI via albumentations : GaussNoise, GaussianBlur, Downscale, RandomGamma
   injectées via callback on_train_start (inject_mri_augmentations)
 - hsv_v=0.15, degrees=15, scale=0.2, translate=0.1, fliplr=0.5, flipud=0.5

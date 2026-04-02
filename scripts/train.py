@@ -2,22 +2,25 @@
 """
 Train a YOLO 2D model for spinal cord detection on axial MRI slices.
 
-Augmentations from the contrast-agnostic paper:
-  - Affine (rotation + scaling)           → YOLO: degrees, scale
+Defaults: yolo26n, imgsz=320, batch=1024 (4×GPU), device=0,1,2,3, epochs=100, patience=20.
+
+Augmentations (désactivables via --no-augment) issues du papier contrast-agnostic :
+  - Affine (rotation + scaling)           → YOLO: degrees=15, scale=0.2
   - Gaussian noise                        → albumentations: GaussNoise       (p=0.1)
   - Gaussian smoothing                    → albumentations: GaussianBlur     (p=0.2)
-  - Brightness augmentation               → YOLO: hsv_v                     (p=0.15)
+  - Brightness augmentation               → YOLO: hsv_v=0.15
   - Low-resolution simulation [0.5, 1.0] → albumentations: Downscale        (p=0.25)
   - Gamma correction                      → albumentations: RandomGamma      (p=0.1)
-  - Mirroring across all axes             → YOLO: fliplr, flipud             (p=0.5)
+  - Mirroring across all axes             → YOLO: fliplr=0.5, flipud=0.5
 
-W&B: ultralytics native integration — configured via WANDB_PROJECT / WANDB_RUN_ID env vars.
-Saves weights to: checkpoints/<run-id>/weights/best.pt
+W&B : wandb.init() avant model.train() pour contrôler projet/run.
+Sauvegarde : checkpoints/<run-id>/weights/{best,last}.pt
+             best.pt = meilleur fitness = 0.1·mAP50 + 0.9·mAP50-95 sur val
 
 Usage:
-    python scripts/train.py --dataset-yaml datasets/dataset.yaml --run-id yolo_spine_v1
+    python scripts/train.py --dataset-yaml datasets_1mm_SI/dataset.yaml --run-id yolo26_1mm_noaug --no-augment
+    python scripts/train.py --dataset-yaml datasets_1mm_SI/dataset.yaml --run-id yolo26_1mm_aug
     python scripts/train.py ... --model yolo26s.pt --epochs 150 --no-wandb
-    python scripts/train.py ... --model yolo12n.pt --run-id yolo12_spine_v1
 """
 
 import argparse
@@ -65,8 +68,8 @@ def main():
                         help="Model weights: yolo26{n,s,m,l,x}.pt (latest) | yolo12{n,s,m,l,x}.pt | "
                              "yolo11{n,s,m,l,x}.pt | yolov8{n,s,m,l,x}.pt | path/to/custom.pt")
     parser.add_argument("--epochs",   type=int,   default=100)
-    parser.add_argument("--imgsz",    type=int,   default=640)
-    parser.add_argument("--batch",    type=int,   default=-1,
+    parser.add_argument("--imgsz",    type=int,   default=320)
+    parser.add_argument("--batch",    type=int,   default=256,
                         help="Batch size (-1 = auto-detect optimal for GPU memory)")
     parser.add_argument("--device",   default="0")
     parser.add_argument("--patience", type=int,   default=20)
@@ -85,16 +88,19 @@ def main():
         os.environ["WANDB_MODE"] = "disabled"
     else:
         SETTINGS["wandb"] = True  # reset in case a previous --no-wandb run persisted False
-        import wandb
-        wandb.init(
-            project=args.wandb_project,
-            name=args.run_id,
-            tags=["yolo", "spine", "mri"],
-        )
 
     model = YOLO(args.model)
     if not args.no_augment:
         model.add_callback("on_train_start", inject_mri_augmentations)
+    if not args.no_wandb:
+        import wandb
+        wandb.init(
+            project=args.wandb_project,
+            name=args.run_id,
+            id=args.run_id,
+            resume="allow",
+            tags=["yolo", "spine", "mri"],
+        )
 
     aug = dict(
         hsv_h=0.0, hsv_s=0.0, hsv_v=0.0,

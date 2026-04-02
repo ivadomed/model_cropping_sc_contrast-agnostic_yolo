@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
+from PIL import Image, ImageDraw
 from tqdm import tqdm
 from ultralytics import YOLO
 
@@ -95,19 +96,66 @@ def collect_gt_records(processed_dir: Path, splits_map: dict) -> list:
     return records
 
 
-def run_inference(model: YOLO, records: list, conf_thresh: float, batch: int) -> None:
-    """Run YOLO inference and fill pred_box / pred_conf in records in-place."""
+def draw_boxes(png_path: str, gt_box, pred_box) -> Image.Image:
+    """Draw GT (green) and pred (red) bboxes on the slice. Returns RGB image."""
+    img = Image.open(png_path).convert("RGB")
+    W, H = img.size
+    draw = ImageDraw.Draw(img)
+
+    def bbox_pixels(box):
+        cx, cy, w, h = box
+        return [(cx - w / 2) * W, (cy - h / 2) * H, (cx + w / 2) * W, (cy + h / 2) * H]
+
+    if gt_box is not None:
+        draw.rectangle(bbox_pixels(gt_box),   outline=(0, 255, 0), width=2)  # green = GT
+    if pred_box is not None:
+        draw.rectangle(bbox_pixels(pred_box), outline=(255, 0, 0), width=2)  # red = pred
+    return img
+
+
+def auto_batch(model: YOLO, conf_thresh: float, start: int = 512) -> int:
+    """Binary search for largest inference batch that fits in GPU memory."""
+    import torch
+    dummy = [np.zeros((640, 640, 3), dtype=np.uint8)] * start
+    batch = start
+    while batch >= 1:
+        try:
+            model.predict(dummy[:batch], conf=conf_thresh, verbose=False)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            print(f"Auto batch size: {batch}")
+            return batch
+        except RuntimeError:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            batch //= 2
+    return 1
+
+
+def run_inference(model: YOLO, records: list, conf_thresh: float, batch: int,
+                  inference_dir: Path = None, processed_dir: Path = None,
+                  viz_conf: float = 0.1) -> None:
+    """Run YOLO inference batch by batch, fill pred_box/pred_conf, and optionally save visualisations."""
     paths = [r["png_path"] for r in records]
     for i in tqdm(range(0, len(paths), batch), desc="Inference", unit="batch"):
+        batch_records = records[i:i + batch]
         results = model.predict(paths[i:i + batch], conf=conf_thresh, verbose=False)
-        for rec, res in zip(records[i:i + batch], results):
+        for rec, res in zip(batch_records, results):
             boxes = res.boxes
-            if boxes is None or len(boxes) == 0:
-                continue
-            best = int(boxes.conf.argmax())
-            cx, cy, w, h = boxes.xywhn[best].tolist()
-            rec["pred_box"]  = (cx, cy, w, h)
-            rec["pred_conf"] = float(boxes.conf[best])
+            if boxes is not None and len(boxes) > 0:
+                best = int(boxes.conf.argmax())
+                cx, cy, w, h = boxes.xywhn[best].tolist()
+                rec["pred_box"]  = (cx, cy, w, h)
+                rec["pred_conf"] = float(boxes.conf[best])
+
+        if inference_dir is not None:
+            for rec in batch_records:
+                png_path = Path(rec["png_path"])
+                out = inference_dir / png_path.relative_to(processed_dir)
+                out.parent.mkdir(parents=True, exist_ok=True)
+                # only draw pred box if confidence exceeds viz threshold
+                viz_pred = rec["pred_box"] if rec["pred_conf"] >= viz_conf else None
+                draw_boxes(rec["png_path"], rec["gt_box"], viz_pred).save(str(out))
 
 
 def ap_at_iou(df: pd.DataFrame, iou_thresh: float) -> float:
@@ -133,14 +181,17 @@ def ap_at_iou(df: pd.DataFrame, iou_thresh: float) -> float:
 def summarise_group(df: pd.DataFrame) -> dict:
     n_gt   = int(df["has_gt"].sum())
     n_pred = int(df["has_pred"].sum())
+    n_pred_thresh = int(df["has_pred_thresh"].sum())
 
     matched   = df[df["has_gt"] & df["has_pred"]]
     iou_mean  = float(matched["iou"].mean()) if len(matched) else float("nan")
     dice_mean = float((2 * matched["iou"] / (1 + matched["iou"])).mean()) if len(matched) else float("nan")
 
-    tp50        = int((df["has_gt"] & df["has_pred"] & (df["iou"] >= 0.5)).sum())
-    recall50    = tp50 / n_gt   if n_gt   else float("nan")
-    precision50 = tp50 / n_pred if n_pred else float("nan")
+    # fixed-threshold metrics use has_pred_thresh (conf >= metrics_conf) to avoid counting
+    # very low-confidence noise predictions on slices where the cord is absent
+    tp50        = int((df["has_gt"] & df["has_pred_thresh"] & (df["iou"] >= 0.5)).sum())
+    recall50    = tp50 / n_gt          if n_gt          else float("nan")
+    precision50 = tp50 / n_pred_thresh if n_pred_thresh else float("nan")
     denom       = (precision50 + recall50) if (not np.isnan(precision50) and not np.isnan(recall50)) else 0.0
     f1_50       = 2 * precision50 * recall50 / denom if denom > 0 else float("nan")
 
@@ -191,23 +242,55 @@ def main():
     parser.add_argument("--run-id",     required=True, help="Name used for output CSV")
     parser.add_argument("--processed",  default="processed")
     parser.add_argument("--splits-dir", default="data/datasplits")
-    parser.add_argument("--conf",       type=float, default=0.001,
-                        help="Min confidence for inference (low = full PR curve for AP computation)")
-    parser.add_argument("--batch",      type=int,   default=64)
-    parser.add_argument("--out",        default=".",  help="Output directory for CSV")
+    parser.add_argument("--conf",         type=float, default=0.25,
+                        help="Min confidence for inference (ultralytics default)")
+    parser.add_argument("--metrics-conf", type=float, default=0.25,
+                        help="Confidence threshold for precision/recall/f1 fixed-threshold metrics")
+    parser.add_argument("--viz-conf",     type=float, default=0.25,
+                        help="Min confidence to draw a pred box in visualisations")
+    parser.add_argument("--batch",       type=int,   default=-1,
+                        help="Inference batch size (-1 = auto-detect)")
+    parser.add_argument("--split",       default=None, choices=["train", "val", "test"],
+                        help="Restrict to a single split (default: all splits)")
+    parser.add_argument("--out",         default=".", help="Output directory for CSV")
+    parser.add_argument("--inference-dir", default="inference", help="Root dir for visualisation output")
+    parser.add_argument("--no-viz",      action="store_true", help="Skip saving visualisation images")
     args = parser.parse_args()
 
     splits_map = load_splits(Path(args.splits_dir))
     records = collect_gt_records(Path(args.processed), splits_map)
+    if args.split:
+        records = [r for r in records if r["split"] == args.split]
     print(f"Collected {len(records)} slices — "
           f"{len(set(r['dataset'] for r in records))} datasets, "
-          f"{len(set(r['subject'] for r in records))} subjects")
+          f"{len(set(r['subject'] for r in records))} subjects"
+          + (f" [{args.split}]" if args.split else ""))
+
+    checkpoint = Path(args.checkpoint)
+    train_args_yaml = checkpoint.parent.parent / "args.yaml"
+    if train_args_yaml.exists():
+        train_args = yaml.safe_load(train_args_yaml.read_text())
+        print(f"Checkpoint : {checkpoint}")
+        print(f"  model    : {train_args.get('model', '?')}")
+        print(f"  data     : {train_args.get('data', '?')}")
+        print(f"  epochs   : {train_args.get('epochs', '?')}  imgsz: {train_args.get('imgsz', '?')}")
+    else:
+        print(f"Checkpoint : {checkpoint}  (args.yaml introuvable)")
+
+    inference_dir = None if args.no_viz else Path(args.inference_dir) / args.run_id
+    if inference_dir:
+        print(f"Visualisations → {inference_dir}")
 
     model = YOLO(args.checkpoint)
-    run_inference(model, records, conf_thresh=args.conf, batch=args.batch)
+    batch = auto_batch(model, args.conf) if args.batch == -1 else args.batch
+    run_inference(model, records, conf_thresh=args.conf, batch=batch,
+                  inference_dir=inference_dir, processed_dir=Path(args.processed),
+                  viz_conf=args.viz_conf)
 
     for r in records:
         r["has_pred"] = r["pred_box"] is not None
+        # has_pred_thresh: used for precision/recall/f1 — only confident predictions count
+        r["has_pred_thresh"] = r["pred_box"] is not None and r["pred_conf"] >= args.metrics_conf
         if r["has_gt"] and r["has_pred"]:
             r["iou"] = bbox_iou(r["gt_box"], r["pred_box"])
         elif not r["has_gt"] and not r["has_pred"]:
@@ -220,7 +303,7 @@ def main():
 
     out_csv = Path(args.out) / f"metrics_{args.run_id}.csv"
     report.to_csv(out_csv, index=False)
-    print(f"\nReport → {out_csv}")
+    print(f"Report → {out_csv}")
     print(report[report["dataset"] == "ALL"].to_string(index=False))
 
 

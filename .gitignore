@@ -1,6 +1,7 @@
 processed*/
 predictions/
 reconstructions/
+inference/
 sandbox/
 datasets*/
 checkpoints/

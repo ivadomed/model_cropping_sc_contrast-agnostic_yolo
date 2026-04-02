@@ -17,7 +17,7 @@ SCRIPT_DIR="$HOME/model_cropping_sc_contrast-agnostic_yolo/scripts"
 DATASETS=(
     "basel-mp2rage"
     "canproco"
-    # "data-multi-subject"
+    "data-multi-subject"
     "dcm-brno"
     "dcm-zurich-lesions-20231115"
     "dcm-zurich-lesions"
@@ -36,34 +36,49 @@ DATASETS=(
 # ---- Setup ----
 mkdir -p "$DATA_DIR"
 
-# ---- Download datasets ----
+# ---- Clone datasets ----
 for dataset in "${DATASETS[@]}"; do
     echo "=========================================="
     echo "Downloading: $dataset"
     echo "=========================================="
-    
-    # Skip if already cloned
+
     if [ -d "$DATA_DIR/$dataset" ]; then
         echo "  -> Already exists, skipping clone."
+    elif [ "$dataset" = "data-multi-subject" ]; then
+        cd "$DATA_DIR"
+        git clone https://github.com/spine-generic/data-multi-subject
+        cd "$DATA_DIR/$dataset"
+        git annex init
     else
         cd "$SCRIPT_DIR"
         python 01_clone_dataset.py --ofolder "$DATA_DIR" --dataset "$dataset"
     fi
 done
 
-# ---- Download actual NIfTI files via git-annex ----
+# ---- Download actual NIfTI files via git-annex (parallel, one worker per dataset) ----
 echo ""
 echo "=========================================="
-echo "Fetching NIfTI files with git annex get..."
+echo "Fetching NIfTI files with git annex get (parallel)..."
 echo "=========================================="
 
+pids=()
 for dataset in "${DATASETS[@]}"; do
     if [ -d "$DATA_DIR/$dataset" ]; then
         echo "  -> git annex get: $dataset"
-        cd "$DATA_DIR/$dataset"
-        git annex get .
+        (cd "$DATA_DIR/$dataset" && git annex get .) &
+        pids+=($!)
     fi
 done
+
+failed=0
+for pid in "${pids[@]}"; do
+    wait "$pid" || { echo "ERROR: git annex get failed (pid $pid)"; failed=1; }
+done
+
+if [ "$failed" -eq 1 ]; then
+    echo "ERROR: one or more git annex get calls failed."
+    exit 1
+fi
 
 echo ""
 echo "=========================================="

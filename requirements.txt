@@ -1,0 +1,20 @@
+# Core ML
+ultralytics>=8.4.23
+torch>=2.0.0
+albumentations>=2.0.0
+
+# MRI / NIfTI
+nibabel>=5.0.0
+scipy>=1.10.0
+
+# Data
+numpy>=1.24.0
+pandas>=2.0.0
+PyYAML>=6.0
+
+# Image / visualisation
+Pillow>=10.0.0
+
+# Utils
+tqdm>=4.65.0
+wandb>=0.16.0

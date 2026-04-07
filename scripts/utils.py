@@ -85,7 +85,7 @@ def bbox_3d_from_txts(txt_dir: Path, H: int, W: int):
         if not content:
             continue
         z = int(txt.stem.split("_")[1])
-        _, cx, cy, w, h = map(float, content.split())
+        _, cx, cy, w, h, *_ = map(float, content.split())
         col1s.append(int((cx - w / 2) * W))
         col2s.append(int((cx + w / 2) * W))
         row1s.append(int((cy - h / 2) * H))
@@ -108,7 +108,7 @@ def stack_bbox_volume(txt_dir: Path, H: int, W: int, Z: int) -> np.ndarray:
         z = int(txt.stem.split("_")[1])
         if z >= Z:
             continue
-        _, cx, cy, w, h = map(float, content.split())
+        _, cx, cy, w, h, *_ = map(float, content.split())
         r1 = max(0, int((cy - h / 2) * H))
         r2 = min(H, int((cy + h / 2) * H))
         c1 = max(0, int((cx - w / 2) * W))

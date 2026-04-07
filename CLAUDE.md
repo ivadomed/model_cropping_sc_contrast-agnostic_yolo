@@ -56,7 +56,9 @@ PRÉPROCESSING
 - resize in-plane délégué à YOLO via le paramètre imgsz (training et inférence)
 - dossier de sortie nommé automatiquement processed_{res}mm_SI (ex: processed_1mm_SI)
 - Z = min(img, mask) sur l'axe SI : le zoom scipy arrondit indépendamment → peut différer d'1 voxel
-- meta.yaml par patient : raw_image, raw_mask, shape_las [H,W,Z], si_res_mm
+- meta.yaml par patient : raw_image, raw_mask, shape_las [H,W,Z], si_res_mm, rl_res_mm, ap_res_mm
+  rl_res_mm/ap_res_mm = résolution native dans le plan axial (LAS axes 0 et 1), non modifiée par resampling
+  pour patcher des meta.yaml existants sans re-préprocesser : preprocess.py --update-meta --out <dir>
 
 DÉCOUVERTE DES MASQUES — table explicite par dataset dans preprocess.py
   DATASET_MASK_SUFFIX = {
@@ -94,22 +96,37 @@ DATA/PROCESSED — hiérarchie exacte
       └── <subject>[_<contrast>]/
           ├── png/                ← slices 2D natives normalisées uint8
           │   └── slice_NNN.png
-          ├── txt/                ← labels YOLO GT par slice
-          │   └── slice_NNN.txt   format : class cx cy w h (normalisé [0,1])
+          ├── txt/                ← labels YOLO GT par slice (toujours présent, vide si pas de SC)
+          │   └── slice_NNN.txt   format : "0 cx cy w h" normalisé [0,1], ou vide
           ├── volume/
           │   └── bbox_3d.txt     ← bbox 3D GT : row1 row2 col1 col2 z1 z2 (voxels)
-          └── meta.yaml           ← raw_image, raw_mask, shape_las, si_res_mm
+          └── meta.yaml           ← raw_image, raw_mask, shape_las [H,W,Z],
+                                     si_res_mm, rl_res_mm, ap_res_mm
 
-PREDICTIONS — hiérarchie exacte
+PREDICTIONS — deux hiérarchies selon le script d'origine
+
+  evaluate.py → structure miroir de processed/ (utilisée par metrics.py et find_failures.py)
+  predictions/
+  └── <run_id>/
+      └── <dataset>/
+          └── <patient>/
+              ├── png/            ← overlay GT (vert) + pred (rouge) par slice
+              │   └── slice_NNN.png
+              ├── txt/            ← prédiction par slice (vide si pas de détection)
+              │   └── slice_NNN.txt  format : "0 cx cy w h conf" (6 champs, conf ajouté)
+              └── volume/
+                  └── bbox_3d.txt ← bbox 3D reconstruite depuis txt/
+
+  infer.py → structure avec sous-dossier slices/ (utilisée par reconstruct.py)
   predictions/
   └── <run_id>/
       └── <dataset>/
           └── <patient>/
               ├── slices/
-              │   ├── png/        ← slices visualisées avec bbox prédites superposées
-              │   └── txt/        ← prédictions YOLO brutes par slice
+              │   ├── png/        ← slices avec bbox pred superposée
+              │   └── txt/        ← prédictions YOLO brutes (5 champs, sans conf)
               └── volume/
-                  └── bbox_3d.txt ← bbox 3D reconstruite depuis slices/txt/
+                  └── bbox_3d.txt
 
 RECONSTRUCTIONS — hiérarchie exacte
   reconstructions/
@@ -141,6 +158,14 @@ SPLITS — un yaml par dataset (data/datasplits/)
   data/datasplits/datasplit_<dataset>_seed50.yaml
   format : train/val/test: [sub-xxx, ...]  (noms de sujets BIDS)
   build_dataset.py mappe sub-xxx → tous les dossiers sub-xxx_* dans processed/
+  metrics.py/find_failures.py : sujets absents du split → marqués "unknown" dans le CSV
+
+  CAS CONNUS DE SUJETS "UNKNOWN" :
+  - nih-ms-mp2rage      : aucun fichier datasplit → tous les sujets sont unknown par construction
+  - dcm-zurich          : le split contient des IDs type "sub-260155" mais processed/ contient
+                          "sub-001", "sub-002" (renommage lors du téléchargement) → zéro match
+  - sct-testing-large   : le split couvre un sous-ensemble de sites (amuVirginie, karoTobiasMS…)
+                          processed/ contient aussi d'autres sites (amuAMU15, amuPAM50…) non splittés
 
 TRAIN — décisions
 - imgsz=320 (retour au défaut de l'ancien modèle qui convergeait — feature maps plus petites,
@@ -160,14 +185,33 @@ SCRIPTS — un script, une responsabilité
   ├── preprocess.py     ← data/raw/ → processed_{res}mm_SI/
   │                       --si-res obligatoire, réoriente LAS, rééchantillonne axe SI,
   │                       export PNG uint8 + txt YOLO + volume/bbox_3d.txt + meta.yaml
+  │                       meta.yaml inclut : shape_las, si_res_mm, rl_res_mm, ap_res_mm
+  │                       --update-meta --out <dir> : patche les meta.yaml existants sans re-préprocesser
   ├── build_dataset.py  ← processed/ + data/datasplits/*.yaml → datasets/
   │                       --processed processed_10mm_SI --out datasets_10mm_SI
   ├── train.py          ← datasets/ → checkpoints/<run_id>/weights/{best,last}.pt
   │                       --model yolo26n.pt --epochs 100 --imgsz 640
-  ├── infer.py          ← processed/ + checkpoint → predictions/<run_id>/
+  ├── infer.py          ← processed/ + checkpoint → predictions/<run_id>/ (structure slices/)
+  │                       filtré par split yaml + partition, txt sans conf (5 champs)
   ├── reconstruct.py    ← predictions/<run_id>/ + data/raw/ → reconstructions/<run_id>/
-  ├── evaluate.py       ← processed/ + checkpoint → metrics_<run_id>.csv
-  │                       inference directe conf=0.001 (courbe PR complète)
-  │                       métriques 2D : IoU, Dice, recall50, precision50, f1_50, AP50, AP50:95
-  │                       décomposées : global / split / dataset / dataset×contrast / dataset×contrast×split
+  ├── evaluate.py       ← processed/ + checkpoint → predictions/<run_id>/
+  │                       seuil unique CONF_THRESH=0.25 (défaut, injectable via --conf)
+  │                       par patient : txt (bbox + conf), png (GT vert + pred rouge), volume/bbox_3d.txt
+  │                       format txt préd : "0 cx cy w h conf" (champ conf en plus du format YOLO standard)
+  ├── metrics.py        ← --inference predictions/<run_id>/ --processed processed/
+  │                       → predictions/<run_id>/<dataset>/<patient>/metrics/slices.csv  (une ligne par slice)
+  │                       → predictions/<run_id>/metrics.csv  (agrégé cross-dataset/contrast/split)
+  │                       → predictions/<run_id>/report.html  (tableau IoU par dataset et par dataset×contraste)
+  │                       colonnes slices.csv : slice_idx, has_gt, has_pred, pred_conf,
+  │                         iou (vs GT même slice, 0 si absent), iou_nearest_gt (vs GT voisin si pas de GT, 0 si pas de pred),
+  │                         z_dist_to_ref_gt, ref_gt_slice, is_fp, is_fn
+  │                       seuil CONF_THRESH=0.5 (injectable via --conf) pour precision/recall/f1
+  ├── find_failures.py  ← --inference predictions/<run_id>/ --processed processed/ → predictions/<run_id>/failures.csv
+  │                       pour chaque slice prédite : IoU vs GT de la slice la plus proche ayant un GT
+  │                       (même slice si GT présent, sinon voisin en z le plus proche)
+  │                       trié par iou_nearest_gt croissant — pires cas en premier
+  ├── predict_volume.py ← image.nii.gz + checkpoint → bbox_pred.nii.gz (overlay FSLeyes)
+  │                       réoriente LAS, infère à --si-res (défaut 10.0mm), reprojette sur résolution native
+  │                       zoom_factor = orig_si_mm / si_res → round(z_orig * zoom_factor) = z_inf
+  │                       même dimensions et affine que l'entrée LAS → superposable dans FSLeyes
   └── run_pipeline.py   ← image + masque + --si-res → sandbox/ (test end-to-end)

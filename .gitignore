@@ -9,6 +9,16 @@ runs/
 data/raw/
 dataset_stats.csv
 metrics_*.csv
+metrics.csv
+failures.csv
+report.html
+
+# Images
+*.png
+*.jpg
+*.jpeg
+*.nii
+*.nii.gz
 
 # Model weights
 *.pt

@@ -94,7 +94,7 @@ def main():
         import ultralytics.utils.callbacks.wb as _wb_mod
         importlib.reload(_wb_mod)
         import wandb
-        wandb.init(
+        wb_run = wandb.init(
             project=args.wandb_project,
             name=args.run_id,
             tags=["yolo", "spine", "mri"],
@@ -121,6 +121,12 @@ def main():
                 "aug/random_gamma_p":   0.0 if args.no_augment else 0.1,
             },
         )
+
+    if not args.no_wandb:
+        # Save W&B run ID so metrics.py can resume this exact run later
+        wandb_id_file = Path("checkpoints") / args.run_id / "wandb_run_id.txt"
+        wandb_id_file.parent.mkdir(parents=True, exist_ok=True)
+        wandb_id_file.write_text(wb_run.id)
 
     model = YOLO(args.model)
     if not args.no_augment:

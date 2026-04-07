@@ -8,7 +8,7 @@ For each (image, mask) pair in each BIDS dataset:
   3. Export axial slices → png/slice_NNN.png  (native in-plane resolution, normalised uint8)
   4. Compute YOLO GT bbox per slice → txt/slice_NNN.txt
   5. Compute 3D GT bbox → volume/bbox_3d.txt
-  6. Write meta.yaml (raw paths, LAS shape after resampling, SI resolution)
+  6. Write meta.yaml (raw paths, LAS shape after resampling, SI/RL/AP resolutions)
 
 No in-plane resampling — YOLO handles HxW resize via imgsz.
 Mask discovery: per-dataset explicit suffix table in DATASET_MASK_SUFFIX.
@@ -17,6 +17,7 @@ Mask discovery: per-dataset explicit suffix table in DATASET_MASK_SUFFIX.
 Usage:
     python scripts/preprocess.py --si-res 1.0
     python scripts/preprocess.py --si-res 10.0 --raw data/raw --workers 8
+    python scripts/preprocess.py --update-meta --out processed_10mm_SI   ← patch existing meta.yaml with rl/ap res
 """
 
 import argparse
@@ -86,7 +87,9 @@ def process_pair(args: tuple):
     for d in ("png", "txt", "volume"):
         (patient_dir / d).mkdir(parents=True, exist_ok=True)
 
-    img_r  = resample_z(reorient_to_las(nib.load(str(img_path))),    si_res_mm, order=3)
+    img_las = reorient_to_las(nib.load(str(img_path)))
+    rl_res_mm, ap_res_mm = float(img_las.header.get_zooms()[0]), float(img_las.header.get_zooms()[1])
+    img_r  = resample_z(img_las,                                          si_res_mm, order=3)
     mask_r = resample_z(reorient_to_las(nib.load(str(mask_path_str))), si_res_mm, order=0)
 
     img_data  = img_r.get_fdata(dtype=np.float32)
@@ -121,9 +124,39 @@ def process_pair(args: tuple):
         "raw_mask":  str(mask_path_str),
         "shape_las": [H, W, Z],
         "si_res_mm": si_res_mm,
+        "rl_res_mm": round(rl_res_mm, 4),
+        "ap_res_mm": round(ap_res_mm, 4),
     }))
 
     return "processed"
+
+
+def update_meta_one(meta_path_str: str) -> str:
+    """Add rl_res_mm/ap_res_mm to one meta.yaml. Returns 'updated' or 'skipped'."""
+    meta_path = Path(meta_path_str)
+    meta = yaml.safe_load(meta_path.read_text())
+    if "rl_res_mm" in meta:
+        return "skipped"
+    img_las = reorient_to_las(nib.load(meta["raw_image"]))
+    rl_res_mm, ap_res_mm = float(img_las.header.get_zooms()[0]), float(img_las.header.get_zooms()[1])
+    meta["rl_res_mm"] = round(rl_res_mm, 4)
+    meta["ap_res_mm"] = round(ap_res_mm, 4)
+    meta_path.write_text(yaml.dump(meta))
+    return "updated"
+
+
+def update_meta_resolutions(processed_dir: Path, workers: int = None) -> None:
+    """Patch all existing meta.yaml in processed_dir to add rl_res_mm and ap_res_mm."""
+    metas = sorted(processed_dir.rglob("meta.yaml"))
+    print(f"Found {len(metas)} meta.yaml files in {processed_dir}")
+    counts = {"updated": 0, "skipped": 0}
+    with Pool(processes=workers or cpu_count()) as pool:
+        for status in tqdm(
+            pool.imap_unordered(update_meta_one, [str(m) for m in metas]),
+            total=len(metas), desc="meta.yaml", unit="file",
+        ):
+            counts[status] += 1
+    print(f"Done — updated: {counts['updated']}  skipped (already had fields): {counts['skipped']}")
 
 
 def main():
@@ -131,12 +164,20 @@ def main():
         description="BIDS raw → processed_{res}mm_SI/ (LAS slices resampled on SI + YOLO labels)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--si-res",  type=float, required=True, help="Target SI (Z) resolution in mm")
-    parser.add_argument("--raw",     default="data/raw",  help="BIDS root directory")
-    parser.add_argument("--out",     default=None,        help="Output directory (default: processed_{si_res}mm_SI)")
-    parser.add_argument("--workers", type=int, default=None, help="Parallel workers")
+    parser.add_argument("--si-res",      type=float, default=None, help="Target SI (Z) resolution in mm (required unless --update-meta)")
+    parser.add_argument("--raw",         default="data/raw",  help="BIDS root directory")
+    parser.add_argument("--out",         default=None,        help="Output directory (default: processed_{si_res}mm_SI)")
+    parser.add_argument("--workers",     type=int, default=None, help="Parallel workers")
+    parser.add_argument("--update-meta", action="store_true",
+                        help="Only patch existing meta.yaml with rl_res_mm/ap_res_mm (no re-preprocessing). Requires --out.")
     args = parser.parse_args()
 
+    if args.update_meta:
+        assert args.out, "--out is required with --update-meta"
+        update_meta_resolutions(Path(args.out), args.workers)
+        return
+
+    assert args.si_res is not None, "--si-res is required"
     si_res = args.si_res
     processed_dir = str(Path(args.out or f"processed_{si_res:g}mm_SI"))
 

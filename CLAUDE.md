@@ -210,6 +210,15 @@ SCRIPTS — un script, une responsabilité
   │                       pour chaque slice prédite : IoU vs GT de la slice la plus proche ayant un GT
   │                       (même slice si GT présent, sinon voisin en z le plus proche)
   │                       trié par iou_nearest_gt croissant — pires cas en premier
+  ├── border_metrics.py ← --inference predictions/<run_id>/ --processed processed/
+  │                       → predictions/<run_id>/<dataset>/metrics/border_metrics.csv  (une ligne par slice par niveau)
+  │                       → predictions/<run_id>/<dataset>/metrics/border_iou.png      (violin IoU, niveaux -N à 0)
+  │                       → predictions/<run_id>/<dataset>/metrics/border_fp_fn.png   (barres FP/FN, niveaux -N à +N)
+  │                       niveau 0 = dernière slice avec GT (jonction moelle/cerveau, bord supérieur)
+  │                       niveau -k = k slices sous le bord (GT présent) ; niveau +k = k slices au-dessus (pas de GT)
+  │                       FP = prédiction présente avec IoU < seuil ; FN = GT présent sans aucune prédiction
+  │                       splits traités : test + unknown ; paramètres : --n (défaut 5), --conf (0.5), --iou-thresh (0.5)
+  │                       --datasets filtre sur un sous-ensemble ; par défaut tous les datasets de <inference>/
   ├── predict_volume.py ← image.nii.gz + checkpoint → bbox_pred.nii.gz (overlay FSLeyes)
   │                       réoriente LAS, infère à --si-res (défaut 10.0mm), reprojette sur résolution native
   │                       zoom_factor = orig_si_mm / si_res → round(z_orig * zoom_factor) = z_inf

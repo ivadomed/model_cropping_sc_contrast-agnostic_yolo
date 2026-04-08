@@ -40,6 +40,13 @@ ENTRAÎNEMENTS RÉALISÉS
   → best.pt correspond à l'epoch ~4-5 (peak mAP50-95 ~0.5)
 - DÉCISION : train.py corrigé pour sauvegarder dans checkpoints/<run_id>/ (path absolu)
   les runs précédents sont dans runs/detect/checkpoints/
+- yolo26_10mm_aug_320_tassan : run principal de référence, 10mm SI résolution native axiale
+  → checkpoints/yolo26_10mm_aug_320_tassan/weights/best.pt
+  → best.pt = fitness = 0.1·mAP50 + 0.9·mAP50-95 sur val ; patience=20
+
+ÉVALUATIONS EN COURS / RÉALISÉES
+- yolo26_10mm_aug_320_tassan sur processed_10mm_SI          → predictions/yolo26_10mm_aug_320_tassan/
+- yolo26_10mm_aug_320_tassan sur processed_10mm_SI_1mm_axial → predictions/yolo26_10mm_aug_320_tassan_1mm_axial/ (EN COURS)
 
 STRUCTURE GÉNÉRALE
 - data/raw/ est en lecture seule, jamais écrit par du code
@@ -183,10 +190,14 @@ SCRIPTS — un script, une responsabilité
   scripts/
   ├── explore_stats.py  ← data/raw/ → dataset_stats.csv
   │                       reorientation virtuelle LAS, rapporte shape/résolution/FOV mm
-  ├── preprocess.py     ← data/raw/ → processed_{res}mm_SI/
-  │                       --si-res obligatoire, réoriente LAS, rééchantillonne axe SI,
-  │                       export PNG uint8 + txt YOLO + volume/bbox_3d.txt + meta.yaml
+  ├── preprocess.py     ← data/raw/ → processed_{res}mm_SI[_{axial}mm_axial][_3ch]/
+  │                       --si-res obligatoire, réoriente LAS, rééchantillonne via nibabel.processing (order=1)
+  │                       --axial-res : rééchantillonnage isotropique du plan axial (RL, AP) en même temps que SI
+  │                       --3ch : export PNG pseudo-RGB (R=slice-1, G=slice courante, B=slice+1), bords = noir
+  │                       export PNG + txt YOLO + volume/bbox_3d.txt + meta.yaml
   │                       meta.yaml inclut : shape_las, si_res_mm, rl_res_mm, ap_res_mm
+  │                                          axial_res_mm (si --axial-res), channels=3 (si --3ch)
+  │                       séquentiel (pas de multiprocessing — nibabel/scipy single-threadé, oversubscription)
   │                       --update-meta --out <dir> : patche les meta.yaml existants sans re-préprocesser
   ├── build_dataset.py  ← processed/ + data/datasplits/*.yaml → datasets/
   │                       --processed processed_10mm_SI --out datasets_10mm_SI

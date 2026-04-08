@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
 """
-Preprocess BIDS datasets: data/raw/ → processed_{res}mm_SI/<site>/<stem>/
+Preprocess BIDS datasets: data/raw/ → processed_{res}mm_SI[_{axial}mm_axial]/<site>/<stem>/
 
 For each (image, mask) pair in each BIDS dataset:
   1. Reorient to LAS
   2. Resample along SI axis (axis 2) to --si-res mm
-  3. Export axial slices → png/slice_NNN.png  (native in-plane resolution, normalised uint8)
-  4. Compute YOLO GT bbox per slice → txt/slice_NNN.txt
-  5. Compute 3D GT bbox → volume/bbox_3d.txt
-  6. Write meta.yaml (raw paths, LAS shape after resampling, SI/RL/AP resolutions)
+  3. Optionally resample axes 0 and 1 (RL, AP) to --axial-res mm isotropically
+  4. Export axial slices → png/slice_NNN.png  (normalised uint8)
+  5. Compute YOLO GT bbox per slice → txt/slice_NNN.txt
+  6. Compute 3D GT bbox → volume/bbox_3d.txt
+  7. Write meta.yaml (raw paths, LAS shape after resampling, SI/RL/AP resolutions)
 
-No in-plane resampling — YOLO handles HxW resize via imgsz.
 Mask discovery: per-dataset explicit suffix table in DATASET_MASK_SUFFIX.
   Crashes on unknown dataset name.
 
 Usage:
-    python scripts/preprocess.py --si-res 1.0
-    python scripts/preprocess.py --si-res 10.0 --raw data/raw --workers 8
+    python scripts/preprocess.py --si-res 10.0
+    python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --raw data/raw
     python scripts/preprocess.py --update-meta --out processed_10mm_SI   ← patch existing meta.yaml with rl/ap res
 """
 
 import argparse
 import sys
-from multiprocessing import Pool, cpu_count
 from pathlib import Path
 
 import nibabel as nib
@@ -32,9 +31,11 @@ from PIL import Image as PILImage
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent))
+from nibabel.processing import resample_to_output
+
 from utils import (
     bbox_3d_from_txts, nifti_stem, normalize_to_uint8,
-    reorient_to_las, resample_z, seg_to_yolo_bbox, write_bbox_3d,
+    reorient_to_las, seg_to_yolo_bbox, write_bbox_3d,
 )
 
 # Explicit SC mask suffix per dataset — crashes on unknown dataset name
@@ -77,7 +78,7 @@ def find_pairs(dataset_root: Path):
 
 
 def process_pair(args: tuple):
-    img_path_str, mask_path_str, dataset_name, processed_str, si_res_mm = args
+    img_path_str, mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm = args
     img_path = Path(img_path_str)
     patient_dir = Path(processed_str) / dataset_name / nifti_stem(img_path)
 
@@ -87,10 +88,13 @@ def process_pair(args: tuple):
     for d in ("png", "txt", "volume"):
         (patient_dir / d).mkdir(parents=True, exist_ok=True)
 
-    img_las = reorient_to_las(nib.load(str(img_path)))
+    img_las  = reorient_to_las(nib.load(str(img_path)))
+    mask_las = reorient_to_las(nib.load(str(mask_path_str)))
     rl_res_mm, ap_res_mm = float(img_las.header.get_zooms()[0]), float(img_las.header.get_zooms()[1])
-    img_r  = resample_z(img_las,                                          si_res_mm, order=3)
-    mask_r = resample_z(reorient_to_las(nib.load(str(mask_path_str))), si_res_mm, order=0)
+
+    voxel_sizes = (axial_res_mm or rl_res_mm, axial_res_mm or ap_res_mm, si_res_mm)
+    img_r  = resample_to_output(img_las,  voxel_sizes=voxel_sizes, order=1)
+    mask_r = resample_to_output(mask_las, voxel_sizes=voxel_sizes, order=0)
 
     img_data  = img_r.get_fdata(dtype=np.float32)
     mask_data = mask_r.get_fdata().astype(np.uint8)
@@ -119,14 +123,17 @@ def process_pair(args: tuple):
     if box is not None:
         write_bbox_3d(patient_dir / "volume" / "bbox_3d.txt", **box)
 
-    (patient_dir / "meta.yaml").write_text(yaml.dump({
+    meta = {
         "raw_image": str(img_path),
         "raw_mask":  str(mask_path_str),
         "shape_las": [H, W, Z],
         "si_res_mm": si_res_mm,
-        "rl_res_mm": round(rl_res_mm, 4),
-        "ap_res_mm": round(ap_res_mm, 4),
-    }))
+        "rl_res_mm": round(axial_res_mm or rl_res_mm, 4),
+        "ap_res_mm": round(axial_res_mm or ap_res_mm, 4),
+    }
+    if axial_res_mm is not None:
+        meta["axial_res_mm"] = axial_res_mm
+    (patient_dir / "meta.yaml").write_text(yaml.dump(meta))
 
     return "processed"
 
@@ -145,17 +152,13 @@ def update_meta_one(meta_path_str: str) -> str:
     return "updated"
 
 
-def update_meta_resolutions(processed_dir: Path, workers: int = None) -> None:
+def update_meta_resolutions(processed_dir: Path) -> None:
     """Patch all existing meta.yaml in processed_dir to add rl_res_mm and ap_res_mm."""
     metas = sorted(processed_dir.rglob("meta.yaml"))
     print(f"Found {len(metas)} meta.yaml files in {processed_dir}")
     counts = {"updated": 0, "skipped": 0}
-    with Pool(processes=workers or cpu_count()) as pool:
-        for status in tqdm(
-            pool.imap_unordered(update_meta_one, [str(m) for m in metas]),
-            total=len(metas), desc="meta.yaml", unit="file",
-        ):
-            counts[status] += 1
+    for meta_path in tqdm(metas, desc="meta.yaml", unit="file"):
+        counts[update_meta_one(str(meta_path))] += 1
     print(f"Done — updated: {counts['updated']}  skipped (already had fields): {counts['skipped']}")
 
 
@@ -165,21 +168,27 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--si-res",      type=float, default=None, help="Target SI (Z) resolution in mm (required unless --update-meta)")
+    parser.add_argument("--axial-res",   type=float, default=None, help="Target in-plane (RL, AP) isotropic resolution in mm (optional)")
     parser.add_argument("--raw",         default="data/raw",  help="BIDS root directory")
-    parser.add_argument("--out",         default=None,        help="Output directory (default: processed_{si_res}mm_SI)")
-    parser.add_argument("--workers",     type=int, default=None, help="Parallel workers")
+    parser.add_argument("--out",         default=None,        help="Output directory (default: processed_{si_res}mm_SI[_{axial_res}mm_axial])")
     parser.add_argument("--update-meta", action="store_true",
                         help="Only patch existing meta.yaml with rl_res_mm/ap_res_mm (no re-preprocessing). Requires --out.")
     args = parser.parse_args()
 
     if args.update_meta:
         assert args.out, "--out is required with --update-meta"
-        update_meta_resolutions(Path(args.out), args.workers)
+        update_meta_resolutions(Path(args.out))
         return
 
     assert args.si_res is not None, "--si-res is required"
     si_res = args.si_res
-    processed_dir = str(Path(args.out or f"processed_{si_res:g}mm_SI"))
+    axial_res = args.axial_res
+    if args.out:
+        processed_dir = str(Path(args.out))
+    elif axial_res is not None:
+        processed_dir = f"processed_{si_res:g}mm_SI_{axial_res:g}mm_axial"
+    else:
+        processed_dir = f"processed_{si_res:g}mm_SI"
 
     worker_args = []
     for dataset_dir in sorted(Path(args.raw).iterdir()):
@@ -188,7 +197,7 @@ def main():
         pairs = find_pairs(dataset_dir)
         print(f"{dataset_dir.name}: {len(pairs)} pairs")
         worker_args.extend(
-            (str(img), str(mask), dataset_dir.name, processed_dir, si_res) for img, mask in pairs
+            (str(img), str(mask), dataset_dir.name, processed_dir, si_res, axial_res) for img, mask in pairs
         )
 
     if not worker_args:
@@ -196,12 +205,8 @@ def main():
         return
 
     counts = {"processed": 0, "skipped": 0}
-    with Pool(processes=args.workers or cpu_count()) as pool:
-        for status in tqdm(
-            pool.imap_unordered(process_pair, worker_args),
-            total=len(worker_args), desc="Volumes", unit="vol",
-        ):
-            counts[status] += 1
+    for args_tuple in tqdm(worker_args, desc="Volumes", unit="vol"):
+        counts[process_pair(args_tuple)] += 1
 
     print(f"\nDone — processed: {counts['processed']}  skipped: {counts['skipped']}")
 

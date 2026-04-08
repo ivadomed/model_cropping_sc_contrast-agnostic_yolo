@@ -1,4 +1,4 @@
-"""Shared helpers: normalisation, bbox, LAS reorientation, SI resampling."""
+"""Shared helpers: normalisation, bbox, LAS reorientation, SI and axial resampling."""
 from pathlib import Path
 
 import nibabel as nib
@@ -51,6 +51,21 @@ def resample_z(img: nib.Nifti1Image, target_z_mm: float, order: int) -> nib.Nift
     data = ndimage.zoom(img.get_fdata(dtype=np.float32), (1.0, 1.0, zoom_factor), order=order)
     affine = img.affine.copy()
     affine[:3, 2] *= target_z_mm / current_z
+    return nib.Nifti1Image(data, affine)
+
+
+def resample_axial(img: nib.Nifti1Image, target_mm: float, order: int) -> nib.Nifti1Image:
+    """Resample NIfTI axes 0 and 1 (RL, AP in LAS) to target_mm isotropically.
+    order=3 for images, order=0 for binary masks.
+    No-op if both spacings already match target (within 0.01 mm).
+    """
+    rl, ap = float(img.header.get_zooms()[0]), float(img.header.get_zooms()[1])
+    if abs(rl - target_mm) < 0.01 and abs(ap - target_mm) < 0.01:
+        return img
+    data = ndimage.zoom(img.get_fdata(dtype=np.float32), (rl / target_mm, ap / target_mm, 1.0), order=order)
+    affine = img.affine.copy()
+    affine[:3, 0] *= target_mm / rl
+    affine[:3, 1] *= target_mm / ap
     return nib.Nifti1Image(data, affine)
 
 

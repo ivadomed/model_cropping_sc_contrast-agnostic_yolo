@@ -78,7 +78,7 @@ def find_pairs(dataset_root: Path):
 
 
 def process_pair(args: tuple):
-    img_path_str, mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm = args
+    img_path_str, mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm, three_ch = args
     img_path = Path(img_path_str)
     patient_dir = Path(processed_str) / dataset_name / nifti_stem(img_path)
 
@@ -103,13 +103,25 @@ def process_pair(args: tuple):
     # YOLO rejects images with any dimension < 10px — pad to at least 10 if needed
     H_out, W_out = max(H, 10), max(W, 10)
 
-    for z in range(Z):
+    blank = np.zeros((H_out, W_out), dtype=np.uint8)
+
+    def get_slice(z: int) -> np.ndarray:
+        if z < 0 or z >= Z:
+            return blank
         arr = normalize_to_uint8(img_data[:, :, z])
         if H_out != H or W_out != W:
-            padded = np.zeros((H_out, W_out), dtype=np.uint8)
+            padded = blank.copy()
             padded[:H, :W] = arr
-            arr = padded
-        PILImage.fromarray(arr).save(str(patient_dir / "png" / f"slice_{z:03d}.png"))
+            return padded
+        return arr
+
+    for z in range(Z):
+        arr = get_slice(z)
+        if three_ch:
+            rgb = np.stack([get_slice(z - 1), arr, get_slice(z + 1)], axis=2)
+            PILImage.fromarray(rgb).save(str(patient_dir / "png" / f"slice_{z:03d}.png"))
+        else:
+            PILImage.fromarray(arr).save(str(patient_dir / "png" / f"slice_{z:03d}.png"))
         bbox = seg_to_yolo_bbox(mask_data[:, :, z])
         # rescale bbox coords to padded dimensions
         if bbox is not None and (H_out != H or W_out != W):
@@ -133,6 +145,8 @@ def process_pair(args: tuple):
     }
     if axial_res_mm is not None:
         meta["axial_res_mm"] = axial_res_mm
+    if three_ch:
+        meta["channels"] = 3
     (patient_dir / "meta.yaml").write_text(yaml.dump(meta))
 
     return "processed"
@@ -171,6 +185,8 @@ def main():
     parser.add_argument("--axial-res",   type=float, default=None, help="Target in-plane (RL, AP) isotropic resolution in mm (optional)")
     parser.add_argument("--raw",         default="data/raw",  help="BIDS root directory")
     parser.add_argument("--out",         default=None,        help="Output directory (default: processed_{si_res}mm_SI[_{axial_res}mm_axial])")
+    parser.add_argument("--3ch",          action="store_true", dest="three_ch",
+                        help="Export pseudo-RGB PNG (R=prev slice, G=current, B=next). Appends '_3ch' to output dir name.")
     parser.add_argument("--update-meta", action="store_true",
                         help="Only patch existing meta.yaml with rl_res_mm/ap_res_mm (no re-preprocessing). Requires --out.")
     args = parser.parse_args()
@@ -181,14 +197,18 @@ def main():
         return
 
     assert args.si_res is not None, "--si-res is required"
-    si_res = args.si_res
+    si_res    = args.si_res
     axial_res = args.axial_res
+    three_ch  = args.three_ch
     if args.out:
         processed_dir = str(Path(args.out))
-    elif axial_res is not None:
-        processed_dir = f"processed_{si_res:g}mm_SI_{axial_res:g}mm_axial"
     else:
-        processed_dir = f"processed_{si_res:g}mm_SI"
+        name = f"processed_{si_res:g}mm_SI"
+        if axial_res is not None:
+            name += f"_{axial_res:g}mm_axial"
+        if three_ch:
+            name += "_3ch"
+        processed_dir = name
 
     worker_args = []
     for dataset_dir in sorted(Path(args.raw).iterdir()):
@@ -197,7 +217,7 @@ def main():
         pairs = find_pairs(dataset_dir)
         print(f"{dataset_dir.name}: {len(pairs)} pairs")
         worker_args.extend(
-            (str(img), str(mask), dataset_dir.name, processed_dir, si_res, axial_res) for img, mask in pairs
+            (str(img), str(mask), dataset_dir.name, processed_dir, si_res, axial_res, three_ch) for img, mask in pairs
         )
 
     if not worker_args:

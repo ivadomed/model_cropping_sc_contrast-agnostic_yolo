@@ -25,10 +25,11 @@ ENVIRONNEMENT
 - wandb installé, compte : quentin-revillon (neuropoly), project : spine_detection
 
 ÉTAT DES DONNÉES
-- processed_10mm_SI/ : COMPLET — tous datasets préprocessés à 10mm SI
-- processed_1mm_SI/  : EN COURS — preprocessing lancé, pas encore terminé
-- datasets/          : dataset YOLO 10mm construit depuis processed_10mm_SI/
-- datasets_1mm_SI/   : à construire une fois processed_1mm_SI/ terminé
+- processed_10mm_SI/            : COMPLET — tous datasets, 10mm SI, résolution native axiale, PNG grayscale
+- processed_10mm_SI_1mm_axial/  : EN COURS — 10mm SI + 1mm isotropique axial (nibabel order=1), PNG grayscale
+- processed_10mm_SI_1mm_axial_3ch/ : À CRÉER — même resampling + PNG pseudo-RGB 3ch (R=prev, G=cur, B=next)
+- datasets/                     : dataset YOLO 10mm construit depuis processed_10mm_SI/
+- datasets_1mm_SI/              : à construire une fois processed_10mm_SI_1mm_axial/ terminé
 
 ENTRAÎNEMENTS RÉALISÉS
 - yolo26_10mm_SI : premier run complet, 10mm SI, yolo26n, epochs 100, imgsz 640

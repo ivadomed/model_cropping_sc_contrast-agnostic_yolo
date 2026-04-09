@@ -12,6 +12,9 @@ For every slice of every patient:
 Per-patient slice table saved to:
   predictions/<run_id>/<dataset>/<patient>/metrics/slices.csv
 
+Per-patient aggregated table saved to:
+  predictions/<run_id>/patients.csv
+
 Aggregated metrics (cross-dataset/contrast/split) saved to:
   predictions/<run_id>/metrics.csv
 
@@ -200,6 +203,37 @@ def summarise_group(df: pd.DataFrame, conf_thresh: float) -> dict:
     }
 
 
+def build_patients(full_df: pd.DataFrame) -> pd.DataFrame:
+    """One row per patient volume with aggregated FP/FN/IoU and a failure score."""
+    rows = []
+    for (dataset, subject, contrast, split, stem), g in full_df.groupby(
+        ["dataset", "subject", "contrast", "split", "stem"], sort=False
+    ):
+        n_slices = len(g)
+        n_gt     = int(g["has_gt"].sum())
+        n_pred   = int(g["has_pred"].sum())
+        n_fp     = int(g["is_fp"].sum())
+        n_fn     = int(g["is_fn"].sum())
+        matched      = g[g["has_gt"] & g["has_pred"]]
+        iou_mean     = float(matched["iou"].mean()) if len(matched) else float("nan")
+        # iou_gt_mean: IoU averaged over ALL GT slices (FN counted as 0)
+        gt_slices    = g[g["has_gt"]]
+        iou_gt_mean  = float(gt_slices["iou"].mean()) if len(gt_slices) else float("nan")
+        fp_rate  = n_fp / n_slices if n_slices else float("nan")
+        fn_rate  = n_fn / n_gt     if n_gt     else float("nan")
+        rows.append({
+            "dataset": dataset, "subject": subject, "contrast": contrast,
+            "split": split, "stem": stem,
+            "n_slices": n_slices, "n_gt_slices": n_gt, "n_pred_slices": n_pred,
+            "n_fp": n_fp, "n_fn": n_fn,
+            "fp_rate":     round(fp_rate,     4) if not np.isnan(fp_rate)     else float("nan"),
+            "fn_rate":     round(fn_rate,     4) if not np.isnan(fn_rate)     else float("nan"),
+            "iou_mean":    round(iou_mean,    4) if not np.isnan(iou_mean)    else float("nan"),
+            "iou_gt_mean": round(iou_gt_mean, 4) if not np.isnan(iou_gt_mean) else float("nan"),
+        })
+    return pd.DataFrame(rows)
+
+
 def build_report(df: pd.DataFrame, conf_thresh: float) -> pd.DataFrame:
     rows = []
 
@@ -364,6 +398,7 @@ def main():
             df["subject"]  = subject
             df["contrast"] = contrast
             df["split"]    = split
+            df["stem"]     = stem
             all_records.append(df)
 
     if not all_records:
@@ -374,6 +409,11 @@ def main():
     n_patients = full_df.groupby(["dataset", "subject"]).ngroups
     print(f"Processed {n_patients} patients — {len(full_df)} slices total"
           + (f" [{args.split}]" if args.split else ""))
+
+    patients_df  = build_patients(full_df)
+    patients_csv = pred_root / "patients.csv"
+    patients_df.to_csv(patients_csv, index=False)
+    print(f"Patients → {patients_csv}")
 
     report    = build_report(full_df, args.conf)
     out_csv   = pred_root / "metrics.csv"

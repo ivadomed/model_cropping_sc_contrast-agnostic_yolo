@@ -212,25 +212,32 @@ SCRIPTS — un script, une responsabilité
   │                       format txt préd : "0 cx cy w h conf" (champ conf en plus du format YOLO standard)
   ├── metrics.py        ← --inference predictions/<run_id>/ --processed processed/
   │                       → predictions/<run_id>/<dataset>/<patient>/metrics/slices.csv  (une ligne par slice)
+  │                       → predictions/<run_id>/patients.csv  (une ligne par volume 3D : fp_rate, fn_rate, iou_mean, score_fail)
   │                       → predictions/<run_id>/metrics.csv  (agrégé cross-dataset/contrast/split)
   │                       → predictions/<run_id>/report.html  (tableau IoU par dataset et par dataset×contraste)
   │                       colonnes slices.csv : slice_idx, has_gt, has_pred, pred_conf,
   │                         iou (vs GT même slice, 0 si absent), iou_nearest_gt (vs GT voisin si pas de GT, 0 si pas de pred),
   │                         z_dist_to_ref_gt, ref_gt_slice, is_fp, is_fn
   │                       seuil CONF_THRESH=0.5 (injectable via --conf) pour precision/recall/f1
-  ├── find_failures.py  ← --inference predictions/<run_id>/ --processed processed/ → predictions/<run_id>/failures.csv
-  │                       pour chaque slice prédite : IoU vs GT de la slice la plus proche ayant un GT
-  │                       (même slice si GT présent, sinon voisin en z le plus proche)
-  │                       trié par iou_nearest_gt croissant — pires cas en premier
-  ├── border_metrics.py ← --inference predictions/<run_id>/ --processed processed/
-  │                       → predictions/<run_id>/<dataset>/metrics/border_metrics.csv  (une ligne par slice par niveau)
-  │                       → predictions/<run_id>/<dataset>/metrics/border_iou.png      (violin IoU, niveaux -N à 0)
-  │                       → predictions/<run_id>/<dataset>/metrics/border_fp_fn.png   (barres FP/FN, niveaux -N à +N)
-  │                       niveau 0 = dernière slice avec GT (jonction moelle/cerveau, bord supérieur)
-  │                       niveau -k = k slices sous le bord (GT présent) ; niveau +k = k slices au-dessus (pas de GT)
+  │                       SOURCE DE VÉRITÉ : slices.csv et patients.csv sont la base de tous les scripts aval
+  ├── find_failures.py  ← --inference predictions/<run_id>/  (requiert patients.csv de metrics.py)
+  │                       → predictions/<run_id>/<dataset>/failures/failures.csv  (top-K volumes par score_fail)
+  │                       → predictions/<run_id>/<dataset>/failures/NNN_<stem> → ../<stem>  (symlinks)
+  │                       score_fail = (fp_rate + fn_rate) / 2 ; --top-k (défaut 20) ; --split optionnel
+  ├── border_metrics.py ← --inference predictions/<run_id>/  (requiert slices.csv de metrics.py)
+  │                       analyse les deux extrémités de la moelle indépendamment :
+  │                         SUPERIOR (jonction moelle/cerveau) : boundary_z = max GT slice
+  │                           niveau 0 = dernière slice avec GT ; -k = dans la moelle ; +k = au-dessus (FP zone)
+  │                         INFERIOR (début des lombaires) : boundary_z = min GT slice
+  │                           niveau 0 = première slice avec GT ; -k = en dessous (FP zone) ; +k = dans la moelle
+  │                       → border_metrics_{superior,inferior}.csv  (une ligne par slice par niveau)
+  │                       → border_iou_{superior,inferior}.png      (violin IoU, GT slices uniquement)
+  │                       → border_fp_fn_{superior,inferior}.png    (barres FP/FN, niveaux -N à +N)
+  │                       n_total affiché dans les labels de l'axe x des barres (dénominateur réel)
   │                       FP = prédiction présente avec IoU < seuil ; FN = GT présent sans aucune prédiction
   │                       splits traités : test + unknown ; paramètres : --n (défaut 5), --conf (0.5), --iou-thresh (0.5)
-  │                       --datasets filtre sur un sous-ensemble ; par défaut tous les datasets de <inference>/
+  │                       --datasets filtre sur un sous-ensemble ; par défaut auto-détection via slices.csv existants
+  │                       PAS de --processed : lit slices.csv depuis predictions/<run_id>/<dataset>/<patient>/metrics/
   ├── predict_volume.py ← image.nii.gz + checkpoint → bbox_pred.nii.gz (overlay FSLeyes)
   │                       réoriente LAS, infère à --si-res (défaut 10.0mm), reprojette sur résolution native
   │                       zoom_factor = orig_si_mm / si_res → round(z_orig * zoom_factor) = z_inf

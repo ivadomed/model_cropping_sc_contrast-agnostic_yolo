@@ -164,32 +164,40 @@ def collect_rows(
 
 
 def level_label(level: int) -> str:
-    return "last" if level == 0 else f"last{level:+d}"
+    return str(level)
 
 
 def plot_violin(ax, df: pd.DataFrame, col: str, levels: list, color: str, title: str, ylabel: str):
     data = [df.loc[df["level"] == l, col].dropna().values for l in levels]
-    plot_data = [d if len(d) > 0 else np.array([np.nan]) for d in data]
 
-    parts = ax.violinplot(plot_data, positions=range(len(levels)), showmedians=True, showextrema=True)
-    for pc in parts["bodies"]:
-        pc.set_facecolor(color)
-        pc.set_alpha(0.7)
-    for key in ("cmedians", "cmins", "cmaxes", "cbars"):
-        if key in parts:
-            parts[key].set_color("black")
-            parts[key].set_linewidth(0.8)
+    # violinplot requires >= 2 points per group — plot single points separately
+    violin_idx  = [i for i, d in enumerate(data) if len(d) >= 2]
+    single_idx  = [i for i, d in enumerate(data) if len(d) == 1]
+
+    if violin_idx:
+        plot_data = [data[i] for i in violin_idx]
+        parts = ax.violinplot(plot_data, positions=violin_idx, showmedians=True, showextrema=True)
+        for pc in parts["bodies"]:
+            pc.set_facecolor(color)
+            pc.set_alpha(0.7)
+        for key in ("cmedians", "cmins", "cmaxes", "cbars"):
+            if key in parts:
+                parts[key].set_color("black")
+                parts[key].set_linewidth(0.8)
+
+    for i in single_idx:
+        ax.scatter([i], data[i], color=color, zorder=5, s=30)
 
     ax.set_xticks(range(len(levels)))
-    ax.set_xticklabels([level_label(l) for l in levels], rotation=45, ha="right")
+    ax.set_xticklabels([level_label(l) for l in levels], rotation=0, ha="center", fontsize=8)
     ax.set_ylabel(ylabel)
-    ax.set_xlabel("Level relative to last GT slice")
+    ax.set_xlabel("Slice index relative to last slice containing spinal cord (0 = last GT slice)")
     ax.set_title(title)
     ax.grid(axis="y", alpha=0.3)
 
     y_min = ax.get_ylim()[0]
     for i, d in enumerate(data):
-        ax.text(i, y_min, f"n={len(d)}", ha="center", va="bottom", fontsize=7, color="#555")
+        ax.text(i, y_min, f"n={len(d)}", ha="center", va="bottom", fontsize=6, color="#555")
 
 
 def plot_bar(ax, df: pd.DataFrame, col: str, levels: list, color: str, title: str, ylabel: str):
@@ -209,15 +217,16 @@ def plot_bar(ax, df: pd.DataFrame, col: str, levels: list, color: str, title: st
     ax.text(boundary_x + 0.05, 95, "↑ no GT", fontsize=8, color="red", va="top")
 
     ax.set_xticks(range(len(levels)))
-    ax.set_xticklabels([level_label(l) for l in levels], rotation=45, ha="right")
+    ax.set_xticklabels([level_label(l) for l in levels], rotation=0, ha="center", fontsize=8)
     ax.set_ylabel(ylabel)
-    ax.set_xlabel("Level relative to last GT slice")
+    ax.set_xlabel("Slice index relative to last slice containing spinal cord (0 = last GT slice)")
     ax.set_title(title)
-    ax.set_ylim(0, 105)
+    ax.set_ylim(0, 120)
     ax.grid(axis="y", alpha=0.3)
 
     for i, (pct, n) in enumerate(zip(pcts, ns)):
-        ax.text(i, pct + 1, f"{pct:.2f}%\n(n={n})", ha="center", va="bottom", fontsize=7)
+        label = f"{pct:.2f}%\n(n={n})"
+        ax.text(i, pct + 1, label, ha="center", va="bottom", fontsize=6, rotation=90)
 
 
 def run_dataset(
@@ -253,8 +262,12 @@ def run_dataset(
     )
     gt_df = df[df["has_gt"]].copy()
 
+    # Scale figure width with number of levels (min 10, 0.4 inch per level)
+    iou_width = max(10, len(levels_iou) * 0.4)
+    bar_width  = max(14, len(levels_bar) * 0.4)
+
     # Figure 1: IoU violin
-    fig1, ax_iou = plt.subplots(figsize=(10, 5))
+    fig1, ax_iou = plt.subplots(figsize=(iou_width, 5))
     fig1.suptitle(f"IoU — {title_base}", fontsize=10)
     plot_violin(ax_iou, gt_df, "iou", levels_iou, "#4C72B0", "IoU (GT slices only)", "IoU")
     fig1.tight_layout()
@@ -264,7 +277,7 @@ def run_dataset(
     plt.close(fig1)
 
     # Figure 2: FP and FN bars
-    fig2, (ax_fp, ax_fn) = plt.subplots(1, 2, figsize=(14, 6))
+    fig2, (ax_fp, ax_fn) = plt.subplots(1, 2, figsize=(bar_width, 6))
     fig2.suptitle(f"FP / FN — {title_base}", fontsize=10)
     plot_bar(ax_fp, df, "is_fp", levels_bar, "#C44E52", "FP", "FP (%)")
     plot_bar(ax_fn, df, "is_fn", levels_bar, "#DD8452", "FN without any prediction", "FN (%)")

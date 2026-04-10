@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Compute 2D bbox metrics from saved predictions: IoU, Dice, AP50, AP50:95.
+Compute 2D bbox metrics from saved predictions: IoU, Dice, AP50, AP50:95, and 3D IoU.
 
 For every slice of every patient:
   - iou            : IoU vs same-slice GT (0 if either is absent)
@@ -14,6 +14,7 @@ Per-patient slice table saved to:
 
 Per-patient aggregated table saved to:
   predictions/<run_id>/patients.csv
+  Includes iou_3d: 3D IoU between predicted bbox_3d.txt and GT bbox_3d.txt from processed/.
 
 Aggregated metrics (cross-dataset/contrast/split) saved to:
   predictions/<run_id>/metrics.csv
@@ -96,6 +97,18 @@ def read_pred(txt_path: Path):
         return None, 0.0
     p = content.split()
     return (float(p[1]), float(p[2]), float(p[3]), float(p[4])), (float(p[5]) if len(p) > 5 else 1.0)
+
+
+def iou_3d(b1: list, b2: list) -> float:
+    """3D IoU between two boxes [row1, row2, col1, col2, z1, z2]."""
+    inter_r = max(0, min(b1[1], b2[1]) - max(b1[0], b2[0]))
+    inter_c = max(0, min(b1[3], b2[3]) - max(b1[2], b2[2]))
+    inter_z = max(0, min(b1[5], b2[5]) - max(b1[4], b2[4]))
+    inter   = inter_r * inter_c * inter_z
+    vol1    = (b1[1]-b1[0]) * (b1[3]-b1[2]) * (b1[5]-b1[4])
+    vol2    = (b2[1]-b2[0]) * (b2[3]-b2[2]) * (b2[5]-b2[4])
+    union   = vol1 + vol2 - inter
+    return inter / union if union > 0 else 0.0
 
 
 def bbox_iou(a, b) -> float:
@@ -203,8 +216,8 @@ def summarise_group(df: pd.DataFrame, conf_thresh: float) -> dict:
     }
 
 
-def build_patients(full_df: pd.DataFrame) -> pd.DataFrame:
-    """One row per patient volume with aggregated FP/FN/IoU and a failure score."""
+def build_patients(full_df: pd.DataFrame, pred_root: Path, processed_dir: Path) -> pd.DataFrame:
+    """One row per patient volume with aggregated FP/FN/IoU and 3D IoU."""
     rows = []
     for (dataset, subject, contrast, split, stem), g in full_df.groupby(
         ["dataset", "subject", "contrast", "split", "stem"], sort=False
@@ -219,8 +232,18 @@ def build_patients(full_df: pd.DataFrame) -> pd.DataFrame:
         # iou_gt_mean: IoU averaged over ALL GT slices (FN counted as 0)
         gt_slices    = g[g["has_gt"]]
         iou_gt_mean  = float(gt_slices["iou"].mean()) if len(gt_slices) else float("nan")
-        fp_rate  = n_fp / n_slices if n_slices else float("nan")
-        fn_rate  = n_fn / n_gt     if n_gt     else float("nan")
+        fp_rate      = n_fp / n_slices if n_slices else float("nan")
+        fn_rate      = n_fn / n_gt     if n_gt     else float("nan")
+
+        pred_bbox_path = pred_root    / dataset / stem / "volume" / "bbox_3d.txt"
+        gt_bbox_path   = processed_dir / dataset / stem / "volume" / "bbox_3d.txt"
+        if pred_bbox_path.exists() and gt_bbox_path.exists():
+            b_pred  = list(map(int, pred_bbox_path.read_text().split()))
+            b_gt    = list(map(int, gt_bbox_path.read_text().split()))
+            iou3d   = round(iou_3d(b_pred, b_gt), 4)
+        else:
+            iou3d = float("nan")
+
         rows.append({
             "dataset": dataset, "subject": subject, "contrast": contrast,
             "split": split, "stem": stem,
@@ -230,6 +253,7 @@ def build_patients(full_df: pd.DataFrame) -> pd.DataFrame:
             "fn_rate":     round(fn_rate,     4) if not np.isnan(fn_rate)     else float("nan"),
             "iou_mean":    round(iou_mean,    4) if not np.isnan(iou_mean)    else float("nan"),
             "iou_gt_mean": round(iou_gt_mean, 4) if not np.isnan(iou_gt_mean) else float("nan"),
+            "iou_3d":      iou3d,
         })
     return pd.DataFrame(rows)
 
@@ -356,7 +380,7 @@ def main():
     )
     parser.add_argument("--inference",  required=True,
                         help="Path to inference run directory (predictions/<run-id>/)")
-    parser.add_argument("--processed",  default="processed", help="processed/ root dir (GT source)")
+    parser.add_argument("--processed",  default="processed/10mm_SI", help="processed/<variant> dir (GT source)")
     parser.add_argument("--splits-dir", default="data/datasplits")
     parser.add_argument("--conf",       type=float, default=CONF_THRESH,
                         help="Confidence threshold for precision/recall/f1 fixed-threshold metrics")
@@ -410,7 +434,7 @@ def main():
     print(f"Processed {n_patients} patients — {len(full_df)} slices total"
           + (f" [{args.split}]" if args.split else ""))
 
-    patients_df  = build_patients(full_df)
+    patients_df  = build_patients(full_df, pred_root, Path(args.processed))
     patients_csv = pred_root / "patients.csv"
     patients_df.to_csv(patients_csv, index=False)
     print(f"Patients → {patients_csv}")

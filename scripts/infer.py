@@ -95,7 +95,7 @@ def main():
     parser.add_argument("--split",      default="data/splits/global.yaml")
     parser.add_argument("--partition",  default="val",  choices=["train", "val", "test", "all"])
     parser.add_argument("--conf",       type=float, default=0.25)
-    parser.add_argument("--processed",  default="processed")
+    parser.add_argument("--processed",  default="processed/10mm_SI")
     parser.add_argument("--out",        default="predictions")
     args = parser.parse_args()
 

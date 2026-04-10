@@ -1,9 +1,9 @@
-processed*/
+processed/
 predictions/
 reconstructions/
 inference/
 sandbox/
-datasets*/
+datasets/
 checkpoints/
 runs/
 data/raw/

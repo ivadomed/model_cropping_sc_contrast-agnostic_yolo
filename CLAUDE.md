@@ -25,11 +25,12 @@ ENVIRONNEMENT
 - wandb installé, compte : quentin-revillon (neuropoly), project : spine_detection
 
 ÉTAT DES DONNÉES
-- processed_10mm_SI/            : COMPLET — tous datasets, 10mm SI, résolution native axiale, PNG grayscale
-- processed_10mm_SI_1mm_axial/  : EN COURS — 10mm SI + 1mm isotropique axial (nibabel order=1), PNG grayscale
-- processed_10mm_SI_1mm_axial_3ch/ : À CRÉER — même resampling + PNG pseudo-RGB 3ch (R=prev, G=cur, B=next)
-- datasets/                     : dataset YOLO 10mm construit depuis processed_10mm_SI/
-- datasets_1mm_SI/              : à construire une fois processed_10mm_SI_1mm_axial/ terminé
+- processed/10mm_SI/            : COMPLET — tous datasets, 10mm SI, résolution native axiale, PNG grayscale
+- processed/10mm_SI_1mm_axial/  : COMPLET — 10mm SI + 1mm isotropique axial (nibabel order=1), PNG grayscale
+- processed/10mm_SI_1mm_axial_3ch/ : COMPLET — même resampling + PNG pseudo-RGB 3ch (R=prev, G=cur, B=next)
+- datasets/10mm_SI/             : dataset YOLO construit depuis processed/10mm_SI/
+- datasets/10mm_SI_1mm_axial/   : dataset YOLO construit depuis processed/10mm_SI_1mm_axial/
+- datasets/10mm_SI_1mm_axial_3ch/ : dataset YOLO construit depuis processed/10mm_SI_1mm_axial_3ch/
 
 ENTRAÎNEMENTS RÉALISÉS
 - yolo26_10mm_SI : premier run complet, 10mm SI, yolo26n, epochs 100, imgsz 640
@@ -45,15 +46,17 @@ ENTRAÎNEMENTS RÉALISÉS
   → best.pt = fitness = 0.1·mAP50 + 0.9·mAP50-95 sur val ; patience=20
 
 ÉVALUATIONS EN COURS / RÉALISÉES
-- yolo26_10mm_aug_320_tassan sur processed_10mm_SI          → predictions/yolo26_10mm_aug_320_tassan/
-- yolo26_10mm_aug_320_tassan sur processed_10mm_SI_1mm_axial → predictions/yolo26_10mm_aug_320_tassan_1mm_axial/ (EN COURS)
+- yolo26_10mm_aug_320_tassan sur processed/10mm_SI          → predictions/yolo26_10mm_aug_320_tassan/
+- yolo26_10mm_aug_320_tassan sur processed/10mm_SI_1mm_axial → predictions/yolo26_10mm_aug_320_tassan_1mm_axial/
+- yolo26_1mm_axial sur processed/10mm_SI_1mm_axial          → predictions/yolo26_1mm_axial/
 
 STRUCTURE GÉNÉRALE
 - data/raw/ est en lecture seule, jamais écrit par du code
-- processed_{res}mm_SI/ contient uniquement les slices 2D extraites des volumes, pas de volumes
+- processed/<variant>/ contient uniquement les slices 2D extraites des volumes, pas de volumes
+- datasets/<variant>/ contient les symlinks plats vers processed/ pour YOLO
 - predictions/ et reconstructions/ sont organisés par run id
 - sandbox/ est un espace de test, pas de sous-dossier run id, écrasé à chaque run
-- gitignored : processed*/, predictions/, reconstructions/, sandbox/, datasets*/, checkpoints/, runs/,
+- gitignored : processed/, predictions/, reconstructions/, sandbox/, datasets/, checkpoints/, runs/,
                dataset_stats.csv, metrics_*.csv
 
 PRÉPROCESSING
@@ -62,7 +65,7 @@ PRÉPROCESSING
   order=3 pour les images, order=0 pour les masques binaires (scipy.ndimage.zoom)
 - export PNG : slices natives normalisées uint8, pas de resize ni de padding in-plane
 - resize in-plane délégué à YOLO via le paramètre imgsz (training et inférence)
-- dossier de sortie nommé automatiquement processed_{res}mm_SI (ex: processed_1mm_SI)
+- dossier de sortie nommé automatiquement processed/{res}mm_SI (ex: processed/10mm_SI)
 - Z = min(img, mask) sur l'axe SI : le zoom scipy arrondit indépendamment → peut différer d'1 voxel
 - meta.yaml par patient : raw_image, raw_mask, shape_las [H,W,Z], si_res_mm, rl_res_mm, ap_res_mm
   rl_res_mm/ap_res_mm = résolution native dans le plan axial (LAS axes 0 et 1), non modifiée par resampling

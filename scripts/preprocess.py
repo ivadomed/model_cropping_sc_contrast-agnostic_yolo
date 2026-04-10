@@ -184,7 +184,7 @@ def main():
     parser.add_argument("--si-res",      type=float, default=None, help="Target SI (Z) resolution in mm (required unless --update-meta)")
     parser.add_argument("--axial-res",   type=float, default=None, help="Target in-plane (RL, AP) isotropic resolution in mm (optional)")
     parser.add_argument("--raw",         default="data/raw",  help="BIDS root directory")
-    parser.add_argument("--out",         default=None,        help="Output directory (default: processed_{si_res}mm_SI[_{axial_res}mm_axial])")
+    parser.add_argument("--out",         default=None,        help="Output directory (default: processed/{si_res}mm_SI[_{axial_res}mm_axial])")
     parser.add_argument("--3ch",          action="store_true", dest="three_ch",
                         help="Export pseudo-RGB PNG (R=prev slice, G=current, B=next). Appends '_3ch' to output dir name.")
     parser.add_argument("--update-meta", action="store_true",
@@ -203,12 +203,12 @@ def main():
     if args.out:
         processed_dir = str(Path(args.out))
     else:
-        name = f"processed_{si_res:g}mm_SI"
+        name = f"{si_res:g}mm_SI"
         if axial_res is not None:
             name += f"_{axial_res:g}mm_axial"
         if three_ch:
             name += "_3ch"
-        processed_dir = name
+        processed_dir = str(Path("processed") / name)
 
     worker_args = []
     for dataset_dir in sorted(Path(args.raw).iterdir()):

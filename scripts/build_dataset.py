@@ -64,8 +64,8 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--splits-dir", default="data/datasplits", help="Directory with datasplit_*.yaml files")
-    parser.add_argument("--processed",  default="processed",       help="Processed data root")
-    parser.add_argument("--out",        default="datasets",        help="Output dataset directory")
+    parser.add_argument("--processed",  default="processed/10mm_SI", help="processed/<variant> dir")
+    parser.add_argument("--out",        default="datasets/10mm_SI",  help="Output dataset directory")
     args = parser.parse_args()
 
     processed_dir = Path(args.processed)

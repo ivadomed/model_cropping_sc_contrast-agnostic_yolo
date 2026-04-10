@@ -8,12 +8,14 @@ Three independent failure categories (a volume can appear in multiple):
   fn_dominant  : highest fn_rate  = n_fn / n_gt_slices   (GT slices with no prediction)
   fp_dominant  : highest fp_rate  = n_fp / n_slices       (predictions on non-GT slices)
   low_iou      : lowest iou_gt_mean = mean IoU over all GT slices (FN counted as 0)
+  low_iou_3d   : lowest iou_3d = 3D IoU between predicted bbox_3d and GT bbox_3d
 
 Outputs per dataset in <inference>/<dataset>/failures/:
   - failures.csv          : full patient table with all metrics
   - fn_dominant/          : top-K symlinks + fn_failures.csv
   - fp_dominant/          : top-K symlinks + fp_failures.csv
   - low_iou/              : top-K symlinks + low_iou_failures.csv
+  - low_iou_3d/           : top-K symlinks + low_iou_3d_failures.csv
 
 Symlinks: NNN_<stem> -> ../../<stem>  (relative, pointing to prediction dir)
 
@@ -89,11 +91,16 @@ def main():
         iou_top = group.dropna(subset=["iou_gt_mean"]).sort_values("iou_gt_mean", ascending=True).head(args.top_k)
         write_category(failures_dir, "low_iou", iou_top, "low_iou_failures.csv")
 
+        # Low 3D IoU — lowest iou_3d (3D bbox pred vs GT)
+        iou3d_top = group.dropna(subset=["iou_3d"]).sort_values("iou_3d", ascending=True).head(args.top_k)
+        write_category(failures_dir, "low_iou_3d", iou3d_top, "low_iou_3d_failures.csv")
+
         print(
             f"[{dataset}] failures → {failures_dir}\n"
             f"  fn_dominant : worst {fn_top.iloc[0]['stem']}  fn_rate={fn_top.iloc[0]['fn_rate']:.3f}\n"
             f"  fp_dominant : worst {fp_top.iloc[0]['stem']}  fp_rate={fp_top.iloc[0]['fp_rate']:.3f}\n"
-            f"  low_iou     : worst {iou_top.iloc[0]['stem']}  iou_gt_mean={iou_top.iloc[0]['iou_gt_mean']:.3f}"
+            f"  low_iou     : worst {iou_top.iloc[0]['stem']}  iou_gt_mean={iou_top.iloc[0]['iou_gt_mean']:.3f}\n"
+            f"  low_iou_3d  : worst {iou3d_top.iloc[0]['stem']}  iou_3d={iou3d_top.iloc[0]['iou_3d']:.3f}"
         )
 
 

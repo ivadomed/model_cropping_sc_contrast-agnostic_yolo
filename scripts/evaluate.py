@@ -4,7 +4,7 @@ Run YOLO inference on processed/ slices → predictions/<run-id>/
 
 Mirrors processed/ hierarchy:
   predictions/<run-id>/<dataset>/<patient>/
-    png/slice_NNN.png   ← GT (green) + pred (red) overlay
+    png/slice_NNN.png   ← GT (green filled) + pred (red 1px outline) overlay
     txt/slice_NNN.txt   ← predicted bbox: "0 cx cy w h conf" (empty if no detection)
     volume/bbox_3d.txt  ← 3D bbox union from predicted slices
 
@@ -15,8 +15,13 @@ Usage:
         --checkpoint checkpoints/yolo_spine_v1/weights/best.pt \
         --run-id yolo_spine_v1 \
         --processed processed_10mm_SI \
-        --splits-dir data/datasplits \
         [--conf 0.25] [--split val] [--batch -1] [--no-viz] [--out predictions]
+
+    # Regenerate overlay images from existing predictions (no inference):
+    python scripts/evaluate.py \
+        --viz-only \
+        --run-id yolo_spine_v1 \
+        --processed processed_10mm_SI
 """
 
 import argparse
@@ -26,7 +31,7 @@ from pathlib import Path
 
 import numpy as np
 import yaml
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
 from ultralytics import YOLO
 
@@ -58,19 +63,39 @@ def read_gt_box(txt_path: Path):
 
 
 def draw_boxes(png_path: str, gt_box, pred_box) -> Image.Image:
-    """Draw GT (green) and pred (red) bboxes on the slice. Returns RGB image."""
+    """Draw GT (green filled area) and pred (red 1px outline) on the slice. Returns RGB image."""
     img = Image.open(png_path).convert("RGB")
     W, H = img.size
-    draw = ImageDraw.Draw(img)
 
     def to_pixels(box):
         cx, cy, w, h = box
         return [(cx - w / 2) * W, (cy - h / 2) * H, (cx + w / 2) * W, (cy + h / 2) * H]
 
     if gt_box is not None:
-        draw.rectangle(to_pixels(gt_box), outline=(0, 255, 0), width=2)
+        overlay = Image.new("RGB", img.size, (0, 0, 0))
+        ImageDraw.Draw(overlay).rectangle(to_pixels(gt_box), fill=(0, 255, 0))
+        img = Image.blend(img, overlay, alpha=0.3)
+
     if pred_box is not None:
-        draw.rectangle(to_pixels(pred_box), outline=(255, 0, 0), width=2)
+        ImageDraw.Draw(img).rectangle(to_pixels(pred_box), outline=(255, 0, 0), width=1)
+
+    # Legend
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=10)
+    except OSError:
+        font = ImageFont.load_default()
+    entries = []
+    if gt_box is not None:
+        entries.append(("GT", (0, 200, 0)))
+    if pred_box is not None:
+        entries.append(("Pred", (255, 0, 0)))
+    x, y = 4, 4
+    for label, color in entries:
+        draw.rectangle([x, y, x + 8, y + 8], fill=color)
+        draw.text((x + 11, y - 1), label, fill=(255, 255, 255), font=font)
+        x += 11 + draw.textlength(label, font=font) + 6
+
     return img
 
 
@@ -137,14 +162,42 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
         write_bbox_3d(pred_vol_dir / "bbox_3d.txt", **box)
 
 
+def render_overlays(pred_root: Path, processed_dir: Path) -> None:
+    """Regenerate overlay PNGs from existing txt predictions without re-running inference."""
+    patients = [
+        (pred_dataset_dir.name, pred_patient_dir)
+        for pred_dataset_dir in sorted(pred_root.iterdir()) if pred_dataset_dir.is_dir()
+        for pred_patient_dir in sorted(pred_dataset_dir.iterdir())
+        if (pred_patient_dir / "txt").is_dir()
+    ]
+    print(f"Rendering overlays for {len(patients)} patients → {pred_root}")
+    for dataset, pred_patient_dir in tqdm(patients, desc="Patients", unit="pat"):
+        stem        = pred_patient_dir.name
+        gt_txt_dir  = processed_dir / dataset / stem / "txt"
+        src_png_dir = processed_dir / dataset / stem / "png"
+        out_png_dir = pred_patient_dir / "png"
+        out_png_dir.mkdir(parents=True, exist_ok=True)
+        for pred_txt in sorted((pred_patient_dir / "txt").glob("slice_*.txt")):
+            png_src = src_png_dir / (pred_txt.stem + ".png")
+            if not png_src.exists():
+                continue
+            content  = pred_txt.read_text().strip()
+            pred_box = None
+            if content:
+                p = content.split()
+                pred_box = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+            gt_box = read_gt_box(gt_txt_dir / pred_txt.name)
+            draw_boxes(str(png_src), gt_box, pred_box).save(str(out_png_dir / png_src.name))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="YOLO inference on processed/ slices → predictions/<run-id>/",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--checkpoint",  required=True, help="Path to best.pt")
+    parser.add_argument("--checkpoint",  default=None, help="Path to best.pt (not needed with --viz-only)")
     parser.add_argument("--run-id",      required=True, help="Output run identifier")
-    parser.add_argument("--processed",   default="processed", help="processed/ root dir")
+    parser.add_argument("--processed",   default="processed/10mm_SI", help="processed/<variant> dir")
     parser.add_argument("--splits-dir",  default="data/datasplits")
     parser.add_argument("--conf",        type=float, default=CONF_THRESH,
                         help="Confidence threshold for inference and visualisations")
@@ -154,10 +207,18 @@ def main():
                         help="Restrict inference to subjects in this split (default: all)")
     parser.add_argument("--out",         default="predictions", help="Output root directory")
     parser.add_argument("--no-viz",      action="store_true", help="Skip saving overlay images")
+    parser.add_argument("--viz-only",    action="store_true",
+                        help="Regenerate overlay PNGs from existing predictions (no inference)")
     args = parser.parse_args()
 
     processed_dir = Path(args.processed)
-    pred_root = Path(args.out) / args.run_id
+    pred_root     = Path(args.out) / args.run_id
+
+    if args.viz_only:
+        render_overlays(pred_root, processed_dir)
+        return
+
+    assert args.checkpoint is not None, "--checkpoint is required unless --viz-only is set"
 
     split_subjects = None
     if args.split:

@@ -71,7 +71,7 @@ def main():
     )
     parser.add_argument("--run-id",      required=True)
     parser.add_argument("--predictions", default="predictions")
-    parser.add_argument("--processed",   default="processed")
+    parser.add_argument("--processed",   default="processed/10mm_SI")
     parser.add_argument("--out",         default="reconstructions")
     args = parser.parse_args()
 

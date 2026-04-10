@@ -37,6 +37,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
+from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -216,7 +217,8 @@ def summarise_group(df: pd.DataFrame, conf_thresh: float) -> dict:
     }
 
 
-def build_patients(full_df: pd.DataFrame, pred_root: Path, processed_dir: Path) -> pd.DataFrame:
+def build_patients(full_df: pd.DataFrame, pred_root: Path, processed_dir: Path,
+                   fp_iou_thresh: float) -> pd.DataFrame:
     """One row per patient volume with aggregated FP/FN/IoU and 3D IoU."""
     rows = []
     for (dataset, subject, contrast, split, stem), g in full_df.groupby(
@@ -234,6 +236,13 @@ def build_patients(full_df: pd.DataFrame, pred_root: Path, processed_dir: Path) 
         iou_gt_mean  = float(gt_slices["iou"].mean()) if len(gt_slices) else float("nan")
         fp_rate      = n_fp / n_slices if n_slices else float("nan")
         fn_rate      = n_fn / n_gt     if n_gt     else float("nan")
+        # fp_iou_rate: pred present AND IoU < thresh / total pred slices
+        pred_slices  = g[g["has_pred"]]
+        n_fp_iou     = int((pred_slices["iou"] < fp_iou_thresh).sum())
+        fp_iou_rate  = n_fp_iou / n_pred if n_pred else float("nan")
+        # fn_iou_rate: GT present AND IoU < thresh / total GT slices
+        n_fn_iou     = int((gt_slices["iou"] < fp_iou_thresh).sum())
+        fn_iou_rate  = n_fn_iou / n_gt if n_gt else float("nan")
 
         pred_bbox_path = pred_root    / dataset / stem / "volume" / "bbox_3d.txt"
         gt_bbox_path   = processed_dir / dataset / stem / "volume" / "bbox_3d.txt"
@@ -254,6 +263,8 @@ def build_patients(full_df: pd.DataFrame, pred_root: Path, processed_dir: Path) 
             "iou_mean":    round(iou_mean,    4) if not np.isnan(iou_mean)    else float("nan"),
             "iou_gt_mean": round(iou_gt_mean, 4) if not np.isnan(iou_gt_mean) else float("nan"),
             "iou_3d":      iou3d,
+            "fp_iou_rate": round(fp_iou_rate, 4) if not np.isnan(fp_iou_rate) else float("nan"),
+            "fn_iou_rate": round(fn_iou_rate, 4) if not np.isnan(fn_iou_rate) else float("nan"),
         })
     return pd.DataFrame(rows)
 
@@ -382,8 +393,10 @@ def main():
                         help="Path to inference run directory (predictions/<run-id>/)")
     parser.add_argument("--processed",  default="processed/10mm_SI", help="processed/<variant> dir (GT source)")
     parser.add_argument("--splits-dir", default="data/datasplits")
-    parser.add_argument("--conf",       type=float, default=CONF_THRESH,
+    parser.add_argument("--conf",         type=float, default=CONF_THRESH,
                         help="Confidence threshold for precision/recall/f1 fixed-threshold metrics")
+    parser.add_argument("--fp-iou-thresh", type=float, default=0.1,
+                        help="IoU threshold below which a prediction is counted as FP (fp_iou_rate)")
     parser.add_argument("--split",      default=None, choices=["train", "val", "test"],
                         help="Restrict to a single split (default: all)")
     args = parser.parse_args()
@@ -393,37 +406,37 @@ def main():
     splits_map = load_splits(Path(args.splits_dir))
     all_records = []
 
-    for dataset_dir in sorted(Path(args.processed).iterdir()):
-        if not dataset_dir.is_dir():
+    patients = [
+        (dataset_dir.name, patient_dir)
+        for dataset_dir in sorted(Path(args.processed).iterdir()) if dataset_dir.is_dir()
+        for patient_dir in sorted(dataset_dir.iterdir()) if (patient_dir / "txt").is_dir()
+    ]
+
+    for dataset, patient_dir in tqdm(patients, desc="Patients", unit="pat"):
+        stem     = patient_dir.name
+        m        = re.match(r"(sub-[^_]+)_?(.*)", stem)
+        subject  = m.group(1)
+        contrast = m.group(2) or "default"
+        split    = splits_map.get((dataset, subject), "unknown")
+
+        if args.split and split != args.split:
             continue
-        dataset = dataset_dir.name
-        for patient_dir in sorted(dataset_dir.iterdir()):
-            if not (patient_dir / "txt").is_dir():
-                continue
-            stem     = patient_dir.name
-            m        = re.match(r"(sub-[^_]+)_?(.*)", stem)
-            subject  = m.group(1)
-            contrast = m.group(2) or "default"
-            split    = splits_map.get((dataset, subject), "unknown")
 
-            if args.split and split != args.split:
-                continue
+        pred_txt_dir = pred_root / dataset / stem / "txt"
+        df = patient_slices(patient_dir / "txt", pred_txt_dir)
+        if df.empty:
+            continue
 
-            pred_txt_dir = pred_root / dataset / stem / "txt"
-            df = patient_slices(patient_dir / "txt", pred_txt_dir)
-            if df.empty:
-                continue
+        metrics_dir = pred_root / dataset / stem / "metrics"
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        df.to_csv(metrics_dir / "slices.csv", index=False)
 
-            metrics_dir = pred_root / dataset / stem / "metrics"
-            metrics_dir.mkdir(parents=True, exist_ok=True)
-            df.to_csv(metrics_dir / "slices.csv", index=False)
-
-            df["dataset"]  = dataset
-            df["subject"]  = subject
-            df["contrast"] = contrast
-            df["split"]    = split
-            df["stem"]     = stem
-            all_records.append(df)
+        df["dataset"]  = dataset
+        df["subject"]  = subject
+        df["contrast"] = contrast
+        df["split"]    = split
+        df["stem"]     = stem
+        all_records.append(df)
 
     if not all_records:
         print("No data found.")
@@ -434,7 +447,7 @@ def main():
     print(f"Processed {n_patients} patients — {len(full_df)} slices total"
           + (f" [{args.split}]" if args.split else ""))
 
-    patients_df  = build_patients(full_df, pred_root, Path(args.processed))
+    patients_df  = build_patients(full_df, pred_root, Path(args.processed), args.fp_iou_thresh)
     patients_csv = pred_root / "patients.csv"
     patients_df.to_csv(patients_csv, index=False)
     print(f"Patients → {patients_csv}")

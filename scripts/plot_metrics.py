@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-Violin plots of per-patient IoU from patients.csv.
+Violin plots of per-patient metrics from patients.csv.
 
 Each violin = one dataset, each point = one patient.
 
-Two metrics available via --metric:
+Metrics available via --metric:
   iou_gt_mean  (default) : mean IoU over all GT slices (FN slices counted as 0)
   iou_3d                 : 3D IoU between predicted bbox_3d and GT bbox_3d
+  fp_rate                : FP slices / total slices per patient (%)
+  fn_rate                : FN slices / GT slices per patient (%)
 
 Default splits: test + unknown.
 
 Usage:
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --metric iou_3d
+    python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --metric fp_rate
+    python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --metric fn_rate
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --splits train val
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --datasets data-multi-subject canproco
 """
@@ -28,10 +32,18 @@ import pandas as pd
 METRIC_LABELS = {
     "iou_gt_mean": "Mean of IoU slices per patient",
     "iou_3d":      "3D IoU (smallest enclosing box pred vs GT)",
+    "fp_rate":     "FP rate per patient (pred on non-GT slices / total slices)",
+    "fn_rate":     "FN rate per patient (GT slices with no pred / GT slices)",
+    "fp_iou_rate": "FP IoU rate per patient (pred with IoU < thresh / total pred slices)",
+    "fn_iou_rate": "FN IoU rate per patient (GT slices with IoU < thresh / GT slices)",
 }
+
+# Metrics expressed as percentages [0, 1] → displayed as [0%, 100%]
+PCT_METRICS = {"fp_rate", "fn_rate", "fp_iou_rate", "fn_iou_rate"}
 
 
 def plot_violins(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi: int) -> None:
+    is_pct   = metric in PCT_METRICS
     datasets = sorted(df["dataset"].unique())
     n        = len(datasets)
 
@@ -44,6 +56,8 @@ def plot_violins(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi:
 
     for dataset in datasets:
         vals = df[df["dataset"] == dataset][metric].dropna().values
+        if is_pct:
+            vals = vals * 100
         data_per_dataset.append(vals)
         labels.append(f"{dataset}\n(n={len(vals)})")
 
@@ -73,19 +87,24 @@ def plot_violins(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi:
         ax.scatter([positions[i]], data_per_dataset[i], color="#4C72B0", zorder=5, s=40)
 
     for i in empty_idx:
-        ax.text(positions[i], 0.5, "—", ha="center", va="center", color="#aaa", fontsize=10)
+        center = 50 if is_pct else 0.5
+        ax.text(positions[i], center, "—", ha="center", va="center", color="#aaa", fontsize=10)
 
     ax.set_xticks(positions)
     ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
-    ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
-    ax.set_ylim(-0.05, 1.05)
+    if is_pct:
+        ax.set_ylabel(METRIC_LABELS[metric] + " (%)", fontsize=10)
+        ax.set_ylim(-2, 102)
+    else:
+        ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
+        ax.set_ylim(-0.05, 1.05)
     ax.yaxis.grid(True, linestyle="--", alpha=0.5)
     ax.set_axisbelow(True)
 
     if violin_idx:
         ax.legend(handles=[mpatches.Patch(color="red", label="Mean"),
                             mpatches.Patch(color="orange", label="Median")],
-                  loc="lower right", fontsize=9)
+                  loc="upper right" if is_pct else "lower right", fontsize=9)
 
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +120,7 @@ def main():
     )
     parser.add_argument("--inference", required=True, help="Inference run directory (predictions/<run_id>/)")
     parser.add_argument("--metric",    default="iou_gt_mean", choices=list(METRIC_LABELS),
+                        metavar="{" + ",".join(METRIC_LABELS) + "}",
                         help="Metric to plot")
     parser.add_argument("--splits",    nargs="+", default=["test", "unknown"],
                         choices=["train", "val", "test", "unknown"],

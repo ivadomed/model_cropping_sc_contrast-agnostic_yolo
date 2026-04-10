@@ -1,23 +1,36 @@
 #!/usr/bin/env python3
 """
-Preprocess BIDS datasets: data/raw/ → processed_{res}mm_SI[_{axial}mm_axial]/<site>/<stem>/
+Preprocess BIDS datasets: data/raw/ → processed/<variant>/<dataset>/<stem>/
 
 For each (image, mask) pair in each BIDS dataset:
-  1. Reorient to LAS
-  2. Resample along SI axis (axis 2) to --si-res mm
-  3. Optionally resample axes 0 and 1 (RL, AP) to --axial-res mm isotropically
-  4. Export axial slices → png/slice_NNN.png  (normalised uint8)
-  5. Compute YOLO GT bbox per slice → txt/slice_NNN.txt
-  6. Compute 3D GT bbox → volume/bbox_3d.txt
-  7. Write meta.yaml (raw paths, LAS shape after resampling, SI/RL/AP resolutions)
+  1. Reorient to LAS (nibabel axis permutation, no interpolation)
+  2. Resample SI axis (axis 2) to --si-res mm  (image: order=1, mask: order=0)
+  3. Optionally resample RL and AP axes (0 and 1) to --axial-res mm isotropically
+     (nibabel.processing.resample_to_output, image: order=1, mask: order=0)
+  4. Export axial slices → png/slice_NNN.png
+       2D mode  : grayscale uint8 (H×W), min-max normalised per slice
+       2.5D mode: pseudo-RGB uint8 (H×W×3), R=slice z-1, G=slice z, B=slice z+1
+                  border slices (z=0, z=Z-1) use a black frame for missing neighbours
+  5. Compute YOLO GT bbox per slice → txt/slice_NNN.txt  ("0 cx cy w h", normalised [0,1])
+  6. Compute 3D GT bbox → volume/bbox_3d.txt  ("row1 row2 col1 col2 z1 z2", voxels)
+  7. Write meta.yaml (raw_image, raw_mask, shape_las, si_res_mm, rl_res_mm, ap_res_mm,
+                      axial_res_mm if --axial-res, channels=3 if --3ch)
 
-Mask discovery: per-dataset explicit suffix table in DATASET_MASK_SUFFIX.
-  Crashes on unknown dataset name.
+Mask discovery: per-dataset explicit suffix table DATASET_MASK_SUFFIX — crashes on unknown dataset.
+Output dir named automatically: processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch]
 
 Usage:
+    # 10mm SI, native axial resolution, grayscale → processed/10mm_SI/
     python scripts/preprocess.py --si-res 10.0
-    python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --raw data/raw
-    python scripts/preprocess.py --update-meta --out processed_10mm_SI   ← patch existing meta.yaml with rl/ap res
+
+    # 10mm SI + 1mm isotropic axial resampling, grayscale → processed/10mm_SI_1mm_axial/
+    python scripts/preprocess.py --si-res 10.0 --axial-res 1.0
+
+    # 10mm SI + 1mm isotropic axial resampling, pseudo-RGB 2.5D → processed/10mm_SI_1mm_axial_3ch/
+    python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --3ch
+
+    # Patch existing meta.yaml with rl_res_mm/ap_res_mm without re-preprocessing
+    python scripts/preprocess.py --update-meta --out processed/10mm_SI
 """
 
 import argparse

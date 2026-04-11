@@ -38,7 +38,7 @@ from ultralytics import YOLO
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import bbox_3d_from_txts, write_bbox_3d
 
-CONF_THRESH = 0.25  # default confidence threshold for inference and visualisations
+CONF_THRESH = 0.0  # default confidence threshold for inference (filter at metrics stage)
 
 
 def load_split_subjects(splits_dir: Path, split: str) -> set:
@@ -62,8 +62,8 @@ def read_gt_box(txt_path: Path):
     return (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
 
 
-def draw_boxes(png_path: str, gt_box, pred_box) -> Image.Image:
-    """Draw GT (green filled area) and pred (red 1px outline) on the slice. Returns RGB image."""
+def draw_boxes(png_path: str, gt_box, pred_box, pred_conf: float = None) -> Image.Image:
+    """Draw GT (green filled area) and pred (red 1px outline + conf score) on the slice."""
     img = Image.open(png_path).convert("RGB")
     W, H = img.size
 
@@ -71,20 +71,28 @@ def draw_boxes(png_path: str, gt_box, pred_box) -> Image.Image:
         cx, cy, w, h = box
         return [(cx - w / 2) * W, (cy - h / 2) * H, (cx + w / 2) * W, (cy + h / 2) * H]
 
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=10)
+    except OSError:
+        font = ImageFont.load_default()
+
     if gt_box is not None:
         overlay = Image.new("RGB", img.size, (0, 0, 0))
         ImageDraw.Draw(overlay).rectangle(to_pixels(gt_box), fill=(0, 255, 0))
         img = Image.blend(img, overlay, alpha=0.3)
 
     if pred_box is not None:
-        ImageDraw.Draw(img).rectangle(to_pixels(pred_box), outline=(255, 0, 0), width=1)
+        draw = ImageDraw.Draw(img)
+        coords = to_pixels(pred_box)
+        draw.rectangle(coords, outline=(255, 0, 0), width=1)
+        if pred_conf is not None:
+            label = f"{pred_conf:.2f}"
+            x_text = coords[0] + 2
+            y_text = max(coords[1] - 12, 0)
+            draw.text((x_text, y_text), label, fill=(255, 0, 0), font=font)
 
     # Legend
     draw = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=10)
-    except OSError:
-        font = ImageFont.load_default()
     entries = []
     if gt_box is not None:
         entries.append(("GT", (0, 200, 0)))
@@ -153,7 +161,8 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
 
             if save_viz:
                 gt_box = read_gt_box(gt_txt_dir / (png.stem + ".txt"))
-                draw_boxes(str(png), gt_box, pred_box).save(str(pred_dir / "png" / png.name))
+                draw_boxes(str(png), gt_box, pred_box, pred_conf if pred_box is not None else None).save(
+                    str(pred_dir / "png" / png.name))
 
     meta = yaml.safe_load((patient_dir / "meta.yaml").read_text())
     H, W = meta["shape_las"][0], meta["shape_las"][1]
@@ -181,13 +190,15 @@ def render_overlays(pred_root: Path, processed_dir: Path) -> None:
             png_src = src_png_dir / (pred_txt.stem + ".png")
             if not png_src.exists():
                 continue
-            content  = pred_txt.read_text().strip()
-            pred_box = None
+            content   = pred_txt.read_text().strip()
+            pred_box  = None
+            pred_conf = None
             if content:
                 p = content.split()
-                pred_box = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+                pred_box  = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+                pred_conf = float(p[5]) if len(p) >= 6 else None
             gt_box = read_gt_box(gt_txt_dir / pred_txt.name)
-            draw_boxes(str(png_src), gt_box, pred_box).save(str(out_png_dir / png_src.name))
+            draw_boxes(str(png_src), gt_box, pred_box, pred_conf).save(str(out_png_dir / png_src.name))
 
 
 def main():

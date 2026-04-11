@@ -63,7 +63,7 @@ def main():
         description="Build YOLO dataset (flat symlinks) from processed/ + datasplit YAMLs",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--splits-dir", default="data/datasplits", help="Directory with datasplit_*.yaml files")
+    parser.add_argument("--splits-dir", default="data/datasplits/from_raw", help="Directory with datasplit_*.yaml files")
     parser.add_argument("--processed",  default="processed/10mm_SI", help="processed/<variant> dir")
     parser.add_argument("--out",        default="datasets/10mm_SI",  help="Output dataset directory")
     args = parser.parse_args()

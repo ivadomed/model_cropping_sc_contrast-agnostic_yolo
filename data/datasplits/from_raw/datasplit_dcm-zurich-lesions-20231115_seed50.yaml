@@ -1,0 +1,45 @@
+test:
+- sub-05
+- sub-30
+- sub-36
+- sub-15
+- sub-21
+- sub-35
+- sub-06
+- sub-22
+- sub-31
+- sub-16
+- sub-24
+- sub-18
+- sub-32
+train:
+- sub-40
+- sub-17
+- sub-09
+- sub-02
+- sub-33
+- sub-10
+- sub-19
+- sub-38
+- sub-42
+- sub-28
+- sub-01
+- sub-23
+- sub-39
+- sub-26
+- sub-13
+- sub-34
+- sub-41
+- sub-37
+- sub-14
+- sub-20
+- sub-25
+val:
+- sub-03
+- sub-07
+- sub-08
+- sub-11
+- sub-29
+- sub-04
+- sub-27
+- sub-12

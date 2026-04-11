@@ -1,0 +1,17 @@
+test:
+- sub-060
+- sub-053
+- sub-050
+- sub-057
+train:
+- sub-059
+- sub-054
+- sub-058
+- sub-046
+- sub-047
+- sub-065
+- sub-045
+val:
+- sub-064
+- sub-072
+- sub-049

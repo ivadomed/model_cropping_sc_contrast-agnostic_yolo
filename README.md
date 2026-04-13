@@ -25,7 +25,7 @@ pip install -r requirements.txt
 
 ## Step 1 — Download datasets
 
-Requires SSH access to `data.neuro.polymtl.ca`.
+Requires SSH access to `data.neuro.polymtl.ca` and git-annex.
 
 ```bash
 bash scripts/download_all_datasets.sh

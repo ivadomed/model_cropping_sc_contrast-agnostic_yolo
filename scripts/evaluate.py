@@ -4,24 +4,31 @@ Run YOLO inference on processed/ slices → predictions/<run-id>/
 
 Mirrors processed/ hierarchy:
   predictions/<run-id>/<dataset>/<patient>/
-    png/slice_NNN.png   ← GT (green filled) + pred (red 1px outline) overlay
+    png/slice_NNN.png   ← GT (green filled) + pred (red 1px outline + conf score) overlay
     txt/slice_NNN.txt   ← predicted bbox: "0 cx cy w h conf" (empty if no detection)
     volume/bbox_3d.txt  ← 3D bbox union from predicted slices
+
+conf=0 by default: all boxes are saved regardless of confidence.
+Filter by confidence at the metrics stage (metrics.py --conf).
 
 Run metrics.py afterwards to compute aggregated performance metrics from saved predictions.
 
 Usage:
     python scripts/evaluate.py \
-        --checkpoint checkpoints/yolo_spine_v1/weights/best.pt \
-        --run-id yolo_spine_v1 \
-        --processed processed_10mm_SI \
-        [--conf 0.25] [--split val] [--batch -1] [--no-viz] [--out predictions]
+        --checkpoint checkpoints/yolo26_1mm_axial/weights/best.pt \
+        --processed processed/10mm_SI_1mm_axial
+
+    # Custom run-id (default: derived from checkpoint parent dir name):
+    python scripts/evaluate.py \
+        --checkpoint checkpoints/yolo26_1mm_axial/weights/best.pt \
+        --run-id yolo26_1mm_axial_conf25 \
+        --processed processed/10mm_SI_1mm_axial
 
     # Regenerate overlay images from existing predictions (no inference):
     python scripts/evaluate.py \
         --viz-only \
-        --run-id yolo_spine_v1 \
-        --processed processed_10mm_SI
+        --run-id yolo26_1mm_axial \
+        --processed processed/10mm_SI_1mm_axial
 """
 
 import argparse
@@ -69,7 +76,9 @@ def draw_boxes(png_path: str, gt_box, pred_box, pred_conf: float = None) -> Imag
 
     def to_pixels(box):
         cx, cy, w, h = box
-        return [(cx - w / 2) * W, (cy - h / 2) * H, (cx + w / 2) * W, (cy + h / 2) * H]
+        x0, y0 = (cx - w / 2) * W, (cy - h / 2) * H
+        x1, y1 = (cx + w / 2) * W, (cy + h / 2) * H
+        return [min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)]
 
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=10)
@@ -86,7 +95,7 @@ def draw_boxes(png_path: str, gt_box, pred_box, pred_conf: float = None) -> Imag
         coords = to_pixels(pred_box)
         draw.rectangle(coords, outline=(255, 0, 0), width=1)
         if pred_conf is not None:
-            label = f"{pred_conf:.2f}"
+            label = f"{pred_conf:.4f}"
             x_text = coords[0] + 2
             y_text = max(coords[1] - 12, 0)
             draw.text((x_text, y_text), label, fill=(255, 0, 0), font=font)
@@ -207,7 +216,8 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--checkpoint",  default=None, help="Path to best.pt (not needed with --viz-only)")
-    parser.add_argument("--run-id",      required=True, help="Output run identifier")
+    parser.add_argument("--run-id",      default=None,
+                        help="Output run identifier (default: derived from checkpoint directory name)")
     parser.add_argument("--processed",   default="processed/10mm_SI", help="processed/<variant> dir")
     parser.add_argument("--splits-dir",  default="data/datasplits")
     parser.add_argument("--conf",        type=float, default=CONF_THRESH,
@@ -223,13 +233,19 @@ def main():
     args = parser.parse_args()
 
     processed_dir = Path(args.processed)
-    pred_root     = Path(args.out) / args.run_id
+
+    if args.viz_only:
+        assert args.run_id is not None, "--run-id is required with --viz-only"
+    else:
+        assert args.checkpoint is not None, "--checkpoint is required unless --viz-only is set"
+        if args.run_id is None:
+            args.run_id = Path(args.checkpoint).parent.parent.name
+
+    pred_root = Path(args.out) / args.run_id
 
     if args.viz_only:
         render_overlays(pred_root, processed_dir)
         return
-
-    assert args.checkpoint is not None, "--checkpoint is required unless --viz-only is set"
 
     split_subjects = None
     if args.split:

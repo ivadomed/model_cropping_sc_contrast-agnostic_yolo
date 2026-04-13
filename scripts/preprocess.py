@@ -110,7 +110,7 @@ def process_pair(args: tuple):
     mask_r = resample_to_output(mask_las, voxel_sizes=voxel_sizes, order=0)
 
     img_data  = img_r.get_fdata(dtype=np.float32)
-    mask_data = mask_r.get_fdata().astype(np.uint8)
+    mask_data = np.round(mask_r.get_fdata()).astype(np.uint8)
     H, W = img_data.shape[:2]
     Z = min(img_data.shape[2], mask_data.shape[2])  # zoom rounding can differ by 1 voxel
     # YOLO rejects images with any dimension < 10px — pad to at least 10 if needed

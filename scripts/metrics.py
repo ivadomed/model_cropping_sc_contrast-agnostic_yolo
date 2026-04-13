@@ -12,7 +12,9 @@ Per-patient outputs saved to predictions/<run_id>/<dataset>/<patient>/metrics/:
   slices.csv   — one row per slice (source of truth)
   patient.csv  — one row per conf threshold (CONF_STEPS: 0.0, 0.001, 0.01, 0.05, 0.1…1.0)
                  columns: conf_thresh, iou_gt_mean, iou_all_mean, fp_rate, fn_rate,
-                          fp_iou_rate, fn_iou_rate, iou_3d
+                          fp_iou_rate, fn_iou_rate, fp_on_gt_rate, iou_3d
+                 fp_on_gt_rate:       among GT slices with a detection (conf >= thresh), fraction with IoU == 0
+                 fp_on_gt_inner_rate: same but restricted to inner GT slices (excluding first and last GT slice in Z)
 
 Run-level outputs:
   patients.csv — index of all patients: dataset, stem (no metrics, no split)
@@ -196,15 +198,22 @@ def patient_slices(gt_txt_dir: Path, pred_txt_dir: Path) -> pd.DataFrame:
 def build_patient_csv_rows(slices_df: pd.DataFrame, pred_boxes: dict, H: int, W: int,
                             gt_bbox: list, fp_iou_thresh: float) -> pd.DataFrame:
     """One row per conf threshold: aggregated metrics + iou_3d reconstructed at each threshold."""
+    gt_zs        = slices_df.loc[slices_df["has_gt"].astype(bool), "slice_idx"]
+    is_inner_gt  = (slices_df["has_gt"].astype(bool)
+                    & (slices_df["slice_idx"] > gt_zs.min())
+                    & (slices_df["slice_idx"] < gt_zs.max())) if len(gt_zs) > 2 else pd.Series(False, index=slices_df.index)
+
     rows = []
     for conf_thresh in CONF_STEPS:
         has_gt   = slices_df["has_gt"].astype(bool)
         has_pred = slices_df["has_pred"].astype(bool) & (slices_df["pred_conf"] >= conf_thresh)
         iou      = slices_df["iou"].where(has_pred, 0.0)
 
-        gt_count   = int(has_gt.sum())
-        pred_count = int(has_pred.sum())
-        total      = len(slices_df)
+        gt_count                = int(has_gt.sum())
+        pred_count              = int(has_pred.sum())
+        total                   = len(slices_df)
+        gt_with_pred_count      = int((has_gt & has_pred).sum())
+        inner_gt_with_pred_count = int((is_inner_gt & has_pred).sum())
 
         active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
         if active and gt_bbox is not None:
@@ -213,14 +222,18 @@ def build_patient_csv_rows(slices_df: pd.DataFrame, pred_boxes: dict, H: int, W:
             iou3d = float("nan")
 
         rows.append({
-            "conf_thresh":  round(float(conf_thresh), 3),
-            "iou_gt_mean":  round(float(iou[has_gt].mean()), 4)                                    if gt_count > 0   else float("nan"),
-            "iou_all_mean": round(float(iou.mean()), 4)                                            if total > 0      else float("nan"),
-            "fp_rate":      round(float((has_pred & ~has_gt).sum()) / total, 4)                    if total > 0      else float("nan"),
-            "fn_rate":      round(float((has_gt & ~has_pred).sum()) / gt_count, 4)                 if gt_count > 0   else float("nan"),
-            "fp_iou_rate":  round(float((has_pred & (iou < fp_iou_thresh)).sum()) / pred_count, 4) if pred_count > 0 else float("nan"),
-            "fn_iou_rate":  round(float((has_gt & (iou < fp_iou_thresh)).sum()) / gt_count, 4)     if gt_count > 0   else float("nan"),
-            "iou_3d":       iou3d,
+            "conf_thresh":    round(float(conf_thresh), 3),
+            "iou_gt_mean":    round(float(iou[has_gt].mean()), 4)                                    if gt_count > 0          else float("nan"),
+            "iou_all_mean":   round(float(iou.mean()), 4)                                            if total > 0             else float("nan"),
+            "fp_rate":        round(float((has_pred & ~has_gt).sum()) / total, 4)                    if total > 0             else float("nan"),
+            "fn_rate":        round(float((has_gt & ~has_pred).sum()) / gt_count, 4)                 if gt_count > 0          else float("nan"),
+            "fp_iou_rate":    round(float((has_pred & (iou < fp_iou_thresh)).sum()) / pred_count, 4) if pred_count > 0        else float("nan"),
+            "fn_iou_rate":    round(float((has_gt & (iou < fp_iou_thresh)).sum()) / gt_count, 4)     if gt_count > 0          else float("nan"),
+            "fp_on_gt_rate":       round(float((has_gt & has_pred & (slices_df["iou"] == 0)).sum()) / gt_with_pred_count, 4)
+                                   if gt_with_pred_count > 0 else float("nan"),
+            "fp_on_gt_inner_rate": round(float((is_inner_gt & has_pred & (slices_df["iou"] == 0)).sum()) / inner_gt_with_pred_count, 4)
+                                   if inner_gt_with_pred_count > 0 else float("nan"),
+            "iou_3d":         iou3d,
         })
     return pd.DataFrame(rows)
 

@@ -32,8 +32,18 @@ from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
 
 METRICS = {
-    "iou_gt_mean":  True,   # ascending=True → lowest (worst) first
-    "iou_all_mean": True,
+    "iou_gt_mean":         True,    # ascending=True  → lowest (worst) first
+    "iou_all_mean":        True,
+    "fp_on_gt_rate":       False,   # ascending=False → highest (worst) first
+    "fp_on_gt_inner_rate": False,
+}
+
+# IoU threshold used in metric definition (None = no IoU threshold)
+METRIC_IOU_THRESH = {
+    "iou_gt_mean":         None,
+    "iou_all_mean":        None,
+    "fp_on_gt_rate":       "FP if IoU=0",
+    "fp_on_gt_inner_rate": "FP if IoU=0  inner GT only",
 }
 
 
@@ -69,8 +79,13 @@ def load_patients_at_conf(pred_root: Path, patients_idx: pd.DataFrame, splits_ma
     return pd.DataFrame(rows)
 
 
+def ordinal(n: int) -> str:
+    suffix = {1: "st", 2: "nd", 3: "rd"}.get(n if n < 20 else n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def make_overview(pred_root: Path, dataset: str, stem: str, out_path: Path,
-                  metric_name: str, metric_val: float) -> None:
+                  metric_name: str, metric_val: float, conf_thresh: float, rank: int) -> None:
     """Tile all overlay slice PNGs into a near-square composite image."""
     pngs = sorted((pred_root / dataset / stem / "png").glob("slice_*.png"))
     if not pngs:
@@ -82,25 +97,36 @@ def make_overview(pred_root: Path, dataset: str, stem: str, out_path: Path,
     imgs = [Image.open(p).convert("RGB") for p in pngs]
     W, H = imgs[0].size
 
-    header_h = 24
+    try:
+        font_large  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size=20)
+        font_small  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",      size=11)
+    except OSError:
+        font_large = font_small = ImageFont.load_default()
+
+    header_h = 48
     canvas = Image.new("RGB", (cols * W, rows * H + header_h), (20, 20, 20))
     for i, img in enumerate(imgs):
         r, c = divmod(i, cols)
         canvas.paste(img, (c * W, header_h + r * H))
 
-    draw = ImageDraw.Draw(canvas)
-    try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", size=14)
-    except OSError:
-        font = ImageFont.load_default()
-
+    draw    = ImageDraw.Draw(canvas)
     val_str = f"{metric_val:.4f}" if not pd.isna(metric_val) else "NaN"
-    draw.text((4, 5), f"{dataset}/{stem}   {metric_name} = {val_str}",
-              fill=(255, 255, 255), font=font)
+
+    iou_label  = METRIC_IOU_THRESH.get(metric_name)
+    thresholds = f"conf≥{conf_thresh}"
+    if iou_label is not None:
+        thresholds += f"  {iou_label}"
+
+    # Large: rank + dataset name + metric score + thresholds
+    draw.text((8, 4),  f"{ordinal(rank)} worst — {dataset}   {metric_name} = {val_str}   ({thresholds})", fill=(255, 255, 255), font=font_large)
+    # Small: patient stem, dimmed
+    draw.text((8, 30), stem, fill=(160, 160, 160), font=font_small)
+
     canvas.save(out_path)
 
 
-def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, pred_root: Path, dataset: str) -> None:
+def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, pred_root: Path,
+                   dataset: str, conf_thresh: float) -> None:
     """Create ranking.csv + per-patient folders with data symlink and overview image."""
     if out_dir.exists():
         for p in out_dir.iterdir():
@@ -124,7 +150,7 @@ def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, pred_root: Pat
         data_link.symlink_to(Path("../../../../") / row["stem"])
 
         make_overview(pred_root, dataset, row["stem"],
-                      patient_dir / "overview.png", metric, row[metric])
+                      patient_dir / "overview.png", metric, row[metric], conf_thresh, rank)
 
 
 def main():
@@ -159,7 +185,7 @@ def main():
 
         for dataset, metric, top in tqdm(jobs, desc=split, unit="dataset×metric"):
             out_dir = pred_root / dataset / "failures" / split / metric
-            write_failures(out_dir, top, metric, pred_root, dataset)
+            write_failures(out_dir, top, metric, pred_root, dataset, args.conf)
         print(f"  [{split}] conf={args.conf} → done")
 
 

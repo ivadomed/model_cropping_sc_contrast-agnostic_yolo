@@ -49,7 +49,8 @@ def main():
     parser.add_argument("--train", type=float, default=0.5,            help="Fraction for train split")
     parser.add_argument("--val",   type=float, default=0.2,            help="Fraction for val split")
     parser.add_argument("--test",  type=float, default=0.3,            help="Fraction for test split (remainder)")
-    parser.add_argument("--seed",  type=int,   default=50,             help="Random seed")
+    parser.add_argument("--seed",     type=int,   default=50,             help="Random seed")
+    parser.add_argument("--datasets", nargs="+",  default=None,           help="Restrict to these dataset names (default: all)")
     args = parser.parse_args()
 
     assert abs(args.train + args.val + args.test - 1.0) < 1e-6, \
@@ -61,6 +62,8 @@ def main():
 
     for dataset_dir in sorted(raw_dir.iterdir()):
         if not dataset_dir.is_dir() or dataset_dir.name.startswith("."):
+            continue
+        if args.datasets and dataset_dir.name not in args.datasets:
             continue
         subjects = sorted(d.name for d in dataset_dir.iterdir()
                           if d.is_dir() and d.name.startswith("sub-"))

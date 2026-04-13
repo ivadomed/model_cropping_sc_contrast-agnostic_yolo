@@ -1,7 +1,7 @@
 # Spinal Cord Detection with YOLO
 
 2D bounding-box detection of the spinal cord on axial MRI slices using YOLOv26n.  
-The model is trained on 14 open-access MRI datasets covering cervical and lumbar SC, multiple contrasts and pathologies.
+The model is trained on 15 open-access MRI datasets covering cervical and lumbar SC, multiple contrasts and pathologies.
 
 ## Pipeline overview
 
@@ -31,8 +31,8 @@ Requires SSH access to `data.neuro.polymtl.ca` and git-annex.
 bash scripts/download_all_datasets.sh
 ```
 
-Datasets are downloaded to `data/raw/`. The 14 datasets are:
-`basel-mp2rage`, `canproco`, `data-multi-subject`, `dcm-brno`, `dcm-zurich`, `dcm-zurich-lesions`, `dcm-zurich-lesions-20231115`, `lumbar-epfl`, `lumbar-vanderbilt`, `nih-ms-mp2rage`, `sci-colorado`, `sci-paris`, `sci-zurich`, `sct-testing-large`.
+Datasets are downloaded to `data/raw/`. The 15 datasets are:
+`basel-mp2rage`, `canproco`, `data-multi-subject`, `dcm-brno`, `dcm-zurich`, `dcm-zurich-lesions`, `dcm-zurich-lesions-20231115`, `lumbar-epfl`, `lumbar-vanderbilt`, `nih-ms-mp2rage`, `sci-colorado`, `sci-paris`, `sci-zurich`, `sct-testing-large`, `spider-challenge-2023`.
 
 ---
 

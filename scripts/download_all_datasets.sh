@@ -29,6 +29,7 @@ DATASETS=(
     "sci-paris"
     "sci-zurich"
     "sct-testing-large"
+    "spider-challenge-2023"
     # "site_006_praxis"
     # "site_007_praxis"
 )

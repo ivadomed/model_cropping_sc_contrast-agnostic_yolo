@@ -7,12 +7,15 @@ Reads patients.csv (index: dataset, stem) + per-patient patient.csv
 runtime from --splits-dir YAMLs.
 
 Metrics:
-  iou_gt_mean  : mean IoU over GT slices (FN counted as 0)
-  iou_3d       : 3D IoU between predicted bbox_3d and GT bbox_3d
-  fp_rate      : FP slices / total slices per patient
-  fn_rate      : FN slices / GT slices per patient
-  fp_iou_rate  : pred with IoU < iou-thresh / total pred slices
-  fn_iou_rate  : GT slices with IoU < iou-thresh / GT slices
+  iou_gt_mean   : mean IoU over GT slices (FN counted as 0)
+  iou_all_mean  : mean IoU over all slices (FP and FN counted as 0)
+  iou_3d        : 3D IoU between predicted bbox_3d and GT bbox_3d
+  fp_rate       : FP slices / total slices per patient
+  fn_rate       : FN slices / GT slices per patient
+  fp_iou_rate   : pred with IoU < iou-thresh / total pred slices
+  fn_iou_rate   : GT slices with IoU < iou-thresh / GT slices
+  fp_on_gt_rate       : pred with IoU == 0 / GT slices with a detection (conf >= thresh)
+  fp_on_gt_inner_rate : same, restricted to inner GT slices (excluding first and last GT slice in Z)
 
 Usage:
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial
@@ -32,17 +35,19 @@ import pandas as pd
 import yaml
 
 METRIC_LABELS = {
-    "iou_gt_mean":  "Mean IoU on SC slices",
-    "iou_all_mean": "Mean IoU on all slices",
-    "iou_3d":       "3D IoU",
-    "fp_rate":      "FP rate (pred on non-SC slices / total slices)",
-    "fn_rate":      "FN rate (SC slices missed / SC slices)",
-    "fp_iou_rate":  "FP IoU rate (pred with IoU < thresh / total pred slices)",
-    "fn_iou_rate":  "FN IoU rate (SC slices with IoU < thresh / SC slices)",
+    "iou_gt_mean":   "Mean IoU on SC slices",
+    "iou_all_mean":  "Mean IoU on all slices",
+    "iou_3d":        "3D IoU",
+    "fp_rate":       "FP rate (pred on non-SC slices / total slices)",
+    "fn_rate":       "FN rate (SC slices missed / SC slices)",
+    "fp_iou_rate":   "FP IoU rate (pred with IoU < thresh / total pred slices)",
+    "fn_iou_rate":   "FN IoU rate (SC slices with IoU < thresh / SC slices)",
+    "fp_on_gt_rate":       "FP on GT slices (pred with IoU = 0 / GT slices with pred)",
+    "fp_on_gt_inner_rate": "FP on inner GT slices (excl. first & last GT slice)",
 }
 
-SWEEP_METRICS = ["iou_gt_mean", "iou_all_mean"]
-PCT_METRICS   = {"fp_rate", "fn_rate", "fp_iou_rate", "fn_iou_rate"}
+SWEEP_METRICS = ["iou_gt_mean", "iou_all_mean", "iou_3d", "fp_on_gt_rate", "fp_on_gt_inner_rate"]
+PCT_METRICS   = {"fp_rate", "fn_rate", "fp_iou_rate", "fn_iou_rate", "fp_on_gt_rate", "fp_on_gt_inner_rate"}
 CONF_STEPS    = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
 
 

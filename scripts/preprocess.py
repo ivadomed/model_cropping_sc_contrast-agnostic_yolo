@@ -31,6 +31,9 @@ Usage:
 
     # Patch existing meta.yaml with rl_res_mm/ap_res_mm without re-preprocessing
     python scripts/preprocess.py --update-meta --out processed/10mm_SI
+
+    # Process a single dataset only
+    python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --datasets spider-challenge-2023
 """
 
 import argparse
@@ -67,6 +70,7 @@ DATASET_MASK_SUFFIX = {
     "dcm-brno":                     "_seg.nii.gz",
     "dcm-zurich-lesions":           "_label-SC_mask-manual.nii.gz",
     "dcm-zurich-lesions-20231115":  "_label-SC_mask-manual.nii.gz",
+    "spider-challenge-2023":        "_label-SC_seg.nii.gz",
 }
 
 
@@ -198,6 +202,7 @@ def main():
     parser.add_argument("--axial-res",   type=float, default=None, help="Target in-plane (RL, AP) isotropic resolution in mm (optional)")
     parser.add_argument("--raw",         default="data/raw",  help="BIDS root directory")
     parser.add_argument("--out",         default=None,        help="Output directory (default: processed/{si_res}mm_SI[_{axial_res}mm_axial])")
+    parser.add_argument("--datasets",   nargs="+", default=None, help="Restrict to these dataset names (default: all)")
     parser.add_argument("--3ch",          action="store_true", dest="three_ch",
                         help="Export pseudo-RGB PNG (R=prev slice, G=current, B=next). Appends '_3ch' to output dir name.")
     parser.add_argument("--update-meta", action="store_true",
@@ -226,6 +231,8 @@ def main():
     worker_args = []
     for dataset_dir in sorted(Path(args.raw).iterdir()):
         if not dataset_dir.is_dir():
+            continue
+        if args.datasets and dataset_dir.name not in args.datasets:
             continue
         pairs = find_pairs(dataset_dir)
         print(f"{dataset_dir.name}: {len(pairs)} pairs")

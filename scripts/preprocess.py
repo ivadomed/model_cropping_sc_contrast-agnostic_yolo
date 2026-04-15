@@ -71,6 +71,8 @@ DATASET_MASK_SUFFIX = {
     "dcm-zurich-lesions":           "_label-SC_mask-manual.nii.gz",
     "dcm-zurich-lesions-20231115":  "_label-SC_mask-manual.nii.gz",
     "spider-challenge-2023":        "_label-SC_seg.nii.gz",
+    "data-single-subject":          "_label-SC_seg.nii.gz",
+    "whole-spine":                  "_label-SC_seg.nii.gz",  # TODO: verify after download
 }
 
 

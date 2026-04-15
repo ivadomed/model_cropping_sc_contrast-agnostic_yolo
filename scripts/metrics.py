@@ -7,14 +7,20 @@ For every slice of every patient:
   - iou_nearest_gt : IoU vs nearest GT slice in z (0 if no pred)
   - is_fp          : pred present but no GT on this slice
   - is_fn          : GT present but no pred on this slice
+  - pred_class     : predicted class id (-1 if no pred)
+  - gt_class       : GT class id (-1 if no GT on this slice)
 
 Per-patient outputs saved to predictions/<run_id>/<dataset>/<patient>/metrics/:
   slices.csv   — one row per slice (source of truth)
   patient.csv  — one row per conf threshold (CONF_STEPS: 0.0, 0.001, 0.01, 0.05, 0.1…1.0)
                  columns: conf_thresh, iou_gt_mean, iou_all_mean, fp_rate, fn_rate,
-                          fp_iou_rate, fn_iou_rate, fp_on_gt_rate, iou_3d
+                          fp_iou_rate, fn_iou_rate, fp_on_gt_rate, iou_3d, iou_sc_mid_box
                  fp_on_gt_rate:       among GT slices with a detection (conf >= thresh), fraction with IoU == 0
                  fp_on_gt_inner_rate: same but restricted to inner GT slices (excluding first and last GT slice in Z)
+                 iou_sc_mid_box:      3D IoU between pred sc_mid expansion box and GT sc_mid box
+                                      pred box: expand from max-conf sc_mid (class=0) slice until
+                                                first sc_tip (class=1) or gap in each Z direction
+                                      GT box:   union of all GT sc_mid (class=0) slices
 
 Run-level outputs:
   patients.csv — index of all patients: dataset, stem (no metrics, no split)
@@ -102,7 +108,7 @@ def read_pred(txt_path: Path):
 
 
 def read_pred_boxes(pred_txt_dir: Path) -> dict:
-    """Returns {z: (cx, cy, w, h, conf)} for all predicted slices."""
+    """Returns {z: (cx, cy, w, h, conf, class_id)} for all predicted slices."""
     if not pred_txt_dir.is_dir():
         return {}
     boxes = {}
@@ -112,7 +118,20 @@ def read_pred_boxes(pred_txt_dir: Path) -> dict:
         if content:
             p = content.split()
             boxes[z] = (float(p[1]), float(p[2]), float(p[3]), float(p[4]),
-                        float(p[5]) if len(p) > 5 else 1.0)
+                        float(p[5]) if len(p) > 5 else 1.0,
+                        int(p[0]))
+    return boxes
+
+
+def read_gt_boxes(gt_txt_dir: Path) -> dict:
+    """Returns {z: (cx, cy, w, h, class_id)} for all GT slices with annotation."""
+    boxes = {}
+    for txt in sorted(gt_txt_dir.glob("slice_*.txt")):
+        z = int(txt.stem.split("_")[1])
+        content = txt.read_text().strip()
+        if content:
+            p = content.split()
+            boxes[z] = (float(p[1]), float(p[2]), float(p[3]), float(p[4]), int(p[0]))
     return boxes
 
 
@@ -128,10 +147,11 @@ def iou_3d(b1: list, b2: list) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def reconstruct_bbox3d(pred_boxes: dict, H: int, W: int) -> list:
-    """Reconstruct 3D bbox union from {z: (cx,cy,w,h,conf)}. Returns [row1,row2,col1,col2,z1,z2]."""
+def reconstruct_bbox3d(boxes: dict, H: int, W: int) -> list:
+    """Reconstruct 3D bbox union from {z: (cx,cy,w,h,...)}. Returns [row1,row2,col1,col2,z1,z2]."""
     rows1, rows2, cols1, cols2, zs = [], [], [], [], []
-    for z, (cx, cy, w, h, _) in pred_boxes.items():
+    for z, b in boxes.items():
+        cx, cy, w, h = b[0], b[1], b[2], b[3]
         rows1.append(max(0, int((cy - h / 2) * H)))
         rows2.append(min(H, int((cy + h / 2) * H)))
         cols1.append(max(0, int((cx - w / 2) * W)))
@@ -150,7 +170,10 @@ def bbox_iou(a, b) -> float:
 
 
 def patient_slices(gt_txt_dir: Path, pred_txt_dir: Path) -> pd.DataFrame:
-    """Build one row per slice for a patient."""
+    """Build one row per slice for a patient.
+
+    pred_class / gt_class: predicted / GT class id (-1 if absent on this slice).
+    """
     gt_txts   = {int(p.stem.split("_")[1]): p for p in sorted(gt_txt_dir.glob("slice_*.txt"))}
     pred_txts = {int(p.stem.split("_")[1]): p
                  for p in sorted(pred_txt_dir.glob("slice_*.txt"))} if pred_txt_dir.is_dir() else {}
@@ -159,17 +182,33 @@ def patient_slices(gt_txt_dir: Path, pred_txt_dir: Path) -> pd.DataFrame:
     if not all_z:
         return pd.DataFrame()
 
-    gt_by_z   = {z: read_gt_box(p) for z, p in gt_txts.items()}
-    gt_by_z   = {z: b for z, b in gt_by_z.items() if b is not None}
+    gt_by_z, gt_class_by_z = {}, {}
+    for z, p in gt_txts.items():
+        raw = p.read_text().strip()
+        if raw:
+            parts = raw.split()
+            gt_class_by_z[z] = int(parts[0])
+            gt_by_z[z] = (float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4]))
+
     gt_slices = np.array(sorted(gt_by_z)) if gt_by_z else np.array([], dtype=int)
 
     rows = []
     for z in all_z:
-        gt_box              = gt_by_z.get(z)
-        pred_box, pred_conf = read_pred(pred_txts[z]) if z in pred_txts else (None, 0.0)
-        has_gt              = gt_box is not None
-        has_pred            = pred_box is not None
-        iou                 = bbox_iou(gt_box, pred_box) if (has_gt and has_pred) else 0.0
+        gt_box   = gt_by_z.get(z)
+        gt_class = gt_class_by_z.get(z, -1)
+
+        pred_box, pred_conf, pred_class = None, 0.0, -1
+        if z in pred_txts:
+            raw = pred_txts[z].read_text().strip()
+            if raw:
+                p          = raw.split()
+                pred_class = int(p[0])
+                pred_box   = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+                pred_conf  = float(p[5]) if len(p) > 5 else 1.0
+
+        has_gt   = gt_box is not None
+        has_pred = pred_box is not None
+        iou      = bbox_iou(gt_box, pred_box) if (has_gt and has_pred) else 0.0
 
         if not has_pred or len(gt_slices) == 0:
             iou_nearest_gt, z_dist_to_ref, ref_gt_slice = 0.0, None, None
@@ -185,6 +224,8 @@ def patient_slices(gt_txt_dir: Path, pred_txt_dir: Path) -> pd.DataFrame:
             "has_gt":           has_gt,
             "has_pred":         has_pred,
             "pred_conf":        round(pred_conf, 4),
+            "pred_class":       pred_class,
+            "gt_class":         gt_class,
             "iou":              round(iou, 4),
             "iou_nearest_gt":   round(iou_nearest_gt, 4),
             "z_dist_to_ref_gt": z_dist_to_ref,
@@ -195,8 +236,42 @@ def patient_slices(gt_txt_dir: Path, pred_txt_dir: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def sc_mid_box_iou(pred_boxes: dict, conf_thresh: float, gt_boxes: dict,
+                   H: int, W: int) -> float:
+    """3D IoU between pred sc_mid expansion box and GT sc_mid box.
+
+    Pred: among detections with conf >= conf_thresh, start from max-conf sc_mid (class=0)
+          slice, expand in both Z directions stopping at first sc_tip (class=1) or gap.
+    GT:   union box of all GT slices.
+    Returns nan if no sc_mid pred above threshold or no GT slices.
+    """
+    active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
+
+    sc_mid_active = {z: b for z, b in active.items() if b[5] == 0}
+    if not sc_mid_active:
+        return float("nan")
+    z_peak = max(sc_mid_active, key=lambda z: sc_mid_active[z][4])
+
+    selected = {z_peak}
+    for step in (+1, -1):
+        z = z_peak + step
+        while z in active:
+            selected.add(z)
+            if active[z][5] == 1:   # first sc_tip encountered → include and stop
+                break
+            z += step
+
+    pred_3d = reconstruct_bbox3d({z: active[z] for z in selected}, H, W)
+
+    if not gt_boxes:
+        return float("nan")
+    gt_3d = reconstruct_bbox3d(gt_boxes, H, W)
+
+    return round(iou_3d(pred_3d, gt_3d), 4)
+
+
 def build_patient_csv_rows(slices_df: pd.DataFrame, pred_boxes: dict, H: int, W: int,
-                            gt_bbox: list, fp_iou_thresh: float) -> pd.DataFrame:
+                            gt_bbox: list, gt_boxes: dict, fp_iou_thresh: float) -> pd.DataFrame:
     """One row per conf threshold: aggregated metrics + iou_3d reconstructed at each threshold."""
     gt_zs        = slices_df.loc[slices_df["has_gt"].astype(bool), "slice_idx"]
     is_inner_gt  = (slices_df["has_gt"].astype(bool)
@@ -233,7 +308,8 @@ def build_patient_csv_rows(slices_df: pd.DataFrame, pred_boxes: dict, H: int, W:
                                    if gt_with_pred_count > 0 else float("nan"),
             "fp_on_gt_inner_rate": round(float((is_inner_gt & has_pred & (slices_df["iou"] == 0)).sum()) / inner_gt_with_pred_count, 4)
                                    if inner_gt_with_pred_count > 0 else float("nan"),
-            "iou_3d":         iou3d,
+            "iou_3d":           iou3d,
+            "iou_sc_mid_box":   sc_mid_box_iou(pred_boxes, conf_thresh, gt_boxes, H, W),
         })
     return pd.DataFrame(rows)
 
@@ -254,7 +330,7 @@ def ap_at_iou(df: pd.DataFrame, iou_col: str, iou_thresh: float) -> float:
     recall    = np.concatenate([[0.0], recall])
     for i in range(len(precision) - 2, -1, -1):
         precision[i] = max(precision[i], precision[i + 1])
-    return float(np.trapezoid(precision, recall))
+    return float(np.trapz(precision, recall))
 
 
 def summarise_group(df: pd.DataFrame, conf_thresh: float) -> dict:
@@ -413,6 +489,10 @@ def main():
                         help="Confidence threshold used for report.html summary")
     parser.add_argument("--fp-iou-thresh", type=float, default=0.1,
                         help="IoU threshold for fp_iou_rate / fn_iou_rate in patient.csv")
+    parser.add_argument("--split",         default=None, choices=["train", "val", "test", "unknown"],
+                        help="Restrict computation to subjects in this split (default: all)")
+    parser.add_argument("--no-html",       action="store_true",
+                        help="Skip generating report.html")
     args = parser.parse_args()
 
     pred_root  = Path(args.inference)
@@ -425,6 +505,12 @@ def main():
         for dataset_dir in sorted(Path(args.processed).iterdir()) if dataset_dir.is_dir()
         for patient_dir in sorted(dataset_dir.iterdir()) if (patient_dir / "txt").is_dir()
     ]
+
+    if args.split:
+        patients = [
+            (dataset, patient_dir) for dataset, patient_dir in patients
+            if splits_map.get((dataset, re.match(r"(sub-[^_]+)", patient_dir.name).group(1)), "unknown") == args.split
+        ]
 
     for dataset, patient_dir in tqdm(patients, desc="Patients", unit="pat"):
         stem     = patient_dir.name
@@ -448,7 +534,8 @@ def main():
         gt_bbox = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None
 
         pred_boxes = read_pred_boxes(pred_txt_dir)
-        build_patient_csv_rows(slices_df, pred_boxes, H, W, gt_bbox, args.fp_iou_thresh).to_csv(
+        gt_boxes   = read_gt_boxes(patient_dir / "txt")
+        build_patient_csv_rows(slices_df, pred_boxes, H, W, gt_bbox, gt_boxes, args.fp_iou_thresh).to_csv(
             metrics_dir / "patient.csv", index=False
         )
 
@@ -473,11 +560,12 @@ def main():
     report = build_report(full_df, args.conf)
     print(report[report["dataset"] == "ALL"].to_string(index=False))
 
-    acq_by_dataset, acq_by_contrast = count_acq_per_split(pred_root, splits_map)
-    html = build_html(report, acq_by_dataset, acq_by_contrast, run_id, args.conf, SPLITS)
-    out_html = pred_root / "report.html"
-    out_html.write_text(html)
-    print(f"HTML   → {out_html}")
+    if not args.no_html:
+        acq_by_dataset, acq_by_contrast = count_acq_per_split(pred_root, splits_map)
+        html = build_html(report, acq_by_dataset, acq_by_contrast, run_id, args.conf, SPLITS)
+        out_html = pred_root / "report.html"
+        out_html.write_text(html)
+        print(f"HTML   → {out_html}")
 
 
 if __name__ == "__main__":

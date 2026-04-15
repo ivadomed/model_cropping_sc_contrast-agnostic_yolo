@@ -35,18 +35,19 @@ import pandas as pd
 import yaml
 
 METRIC_LABELS = {
-    "iou_gt_mean":   "Mean IoU on SC slices",
-    "iou_all_mean":  "Mean IoU on all slices",
-    "iou_3d":        "3D IoU",
-    "fp_rate":       "FP rate (pred on non-SC slices / total slices)",
-    "fn_rate":       "FN rate (SC slices missed / SC slices)",
-    "fp_iou_rate":   "FP IoU rate (pred with IoU < thresh / total pred slices)",
-    "fn_iou_rate":   "FN IoU rate (SC slices with IoU < thresh / SC slices)",
+    "iou_gt_mean":        "Mean IoU on SC slices",
+    "iou_all_mean":       "Mean IoU on all slices",
+    "iou_3d":             "3D IoU (full spine box)",
+    "iou_sc_mid_box":     "3D IoU (sc_mid expansion box)",
+    "fp_rate":            "FP rate (pred on non-SC slices / total slices)",
+    "fn_rate":            "FN rate (SC slices missed / SC slices)",
+    "fp_iou_rate":        "FP IoU rate (pred with IoU < thresh / total pred slices)",
+    "fn_iou_rate":        "FN IoU rate (SC slices with IoU < thresh / SC slices)",
     "fp_on_gt_rate":       "FP on GT slices (pred with IoU = 0 / GT slices with pred)",
     "fp_on_gt_inner_rate": "FP on inner GT slices (excl. first & last GT slice)",
 }
 
-SWEEP_METRICS = ["iou_gt_mean", "iou_all_mean", "iou_3d", "fp_on_gt_rate", "fp_on_gt_inner_rate"]
+SWEEP_METRICS = ["iou_gt_mean", "iou_all_mean", "iou_3d", "iou_sc_mid_box", "fp_on_gt_rate", "fp_on_gt_inner_rate"]
 PCT_METRICS   = {"fp_rate", "fn_rate", "fp_iou_rate", "fn_iou_rate", "fp_on_gt_rate", "fp_on_gt_inner_rate"}
 CONF_STEPS    = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
 

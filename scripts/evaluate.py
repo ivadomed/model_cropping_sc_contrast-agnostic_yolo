@@ -69,8 +69,16 @@ def read_gt_box(txt_path: Path):
     return (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
 
 
-def draw_boxes(png_path: str, gt_box, pred_box, pred_conf: float = None) -> Image.Image:
-    """Draw GT (green filled area) and pred (red 1px outline + conf score) on the slice."""
+CLASS_COLORS = {0: (255, 0, 0), 1: (255, 220, 0)}   # sc_mid=red, sc_tip=yellow
+CLASS_NAMES  = {0: "sc_mid",   1: "sc_tip"}
+
+
+def draw_boxes(png_path: str, gt_box, pred_box, pred_conf: float = None,
+               pred_class_id: int = 0) -> Image.Image:
+    """Draw GT (green filled area) and pred (coloured 1px outline + conf score) on the slice.
+
+    pred_class_id: 0=sc_mid (red), 1=sc_tip (yellow).
+    """
     img = Image.open(png_path).convert("RGB")
     W, H = img.size
 
@@ -90,15 +98,16 @@ def draw_boxes(png_path: str, gt_box, pred_box, pred_conf: float = None) -> Imag
         ImageDraw.Draw(overlay).rectangle(to_pixels(gt_box), fill=(0, 255, 0))
         img = Image.blend(img, overlay, alpha=0.3)
 
+    pred_color = CLASS_COLORS.get(pred_class_id, (255, 0, 0))
+    pred_label = CLASS_NAMES.get(pred_class_id, f"class{pred_class_id}")
+
     if pred_box is not None:
         draw = ImageDraw.Draw(img)
         coords = to_pixels(pred_box)
-        draw.rectangle(coords, outline=(255, 0, 0), width=1)
+        draw.rectangle(coords, outline=pred_color, width=1)
         if pred_conf is not None:
-            label = f"{pred_conf:.4f}"
-            x_text = coords[0] + 2
-            y_text = max(coords[1] - 12, 0)
-            draw.text((x_text, y_text), label, fill=(255, 0, 0), font=font)
+            draw.text((coords[0] + 2, max(coords[1] - 12, 0)),
+                      f"{pred_conf:.4f}", fill=pred_color, font=font)
 
     # Legend
     draw = ImageDraw.Draw(img)
@@ -106,7 +115,7 @@ def draw_boxes(png_path: str, gt_box, pred_box, pred_conf: float = None) -> Imag
     if gt_box is not None:
         entries.append(("GT", (0, 200, 0)))
     if pred_box is not None:
-        entries.append(("Pred", (255, 0, 0)))
+        entries.append((pred_label, pred_color))
     x, y = 4, 4
     for label, color in entries:
         draw.rectangle([x, y, x + 8, y + 8], fill=color)
@@ -153,25 +162,28 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
         results = model.predict([str(p) for p in chunk], conf=conf, verbose=False)
         for png, res in zip(chunk, results):
             boxes = res.boxes
-            pred_box, pred_conf = None, 0.0
+            pred_box, pred_conf, pred_class_id = None, 0.0, 0
             if boxes is not None and len(boxes) > 0:
                 best = int(boxes.conf.argmax())
                 cx, cy, w, h = boxes.xywhn[best].tolist()
-                pred_conf = float(boxes.conf[best])
-                pred_box = (cx, cy, w, h)
+                pred_conf     = float(boxes.conf[best])
+                pred_class_id = int(boxes.cls[best])
+                pred_box      = (cx, cy, w, h)
 
             txt_out = pred_txt_dir / (png.stem + ".txt")
             if pred_box is not None:
                 txt_out.write_text(
-                    f"0 {pred_box[0]:.6f} {pred_box[1]:.6f} {pred_box[2]:.6f} {pred_box[3]:.6f} {pred_conf:.6f}\n"
+                    f"{pred_class_id} {pred_box[0]:.6f} {pred_box[1]:.6f}"
+                    f" {pred_box[2]:.6f} {pred_box[3]:.6f} {pred_conf:.6f}\n"
                 )
             else:
                 txt_out.write_text("")
 
             if save_viz:
                 gt_box = read_gt_box(gt_txt_dir / (png.stem + ".txt"))
-                draw_boxes(str(png), gt_box, pred_box, pred_conf if pred_box is not None else None).save(
-                    str(pred_dir / "png" / png.name))
+                draw_boxes(str(png), gt_box, pred_box,
+                           pred_conf if pred_box is not None else None,
+                           pred_class_id).save(str(pred_dir / "png" / png.name))
 
     meta = yaml.safe_load((patient_dir / "meta.yaml").read_text())
     H, W = meta["shape_las"][0], meta["shape_las"][1]
@@ -199,15 +211,18 @@ def render_overlays(pred_root: Path, processed_dir: Path) -> None:
             png_src = src_png_dir / (pred_txt.stem + ".png")
             if not png_src.exists():
                 continue
-            content   = pred_txt.read_text().strip()
-            pred_box  = None
-            pred_conf = None
+            content       = pred_txt.read_text().strip()
+            pred_box      = None
+            pred_conf     = None
+            pred_class_id = 0
             if content:
-                p = content.split()
-                pred_box  = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
-                pred_conf = float(p[5]) if len(p) >= 6 else None
+                p             = content.split()
+                pred_class_id = int(p[0])
+                pred_box      = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+                pred_conf     = float(p[5]) if len(p) >= 6 else None
             gt_box = read_gt_box(gt_txt_dir / pred_txt.name)
-            draw_boxes(str(png_src), gt_box, pred_box, pred_conf).save(str(out_png_dir / png_src.name))
+            draw_boxes(str(png_src), gt_box, pred_box, pred_conf, pred_class_id).save(
+                str(out_png_dir / png_src.name))
 
 
 def main():

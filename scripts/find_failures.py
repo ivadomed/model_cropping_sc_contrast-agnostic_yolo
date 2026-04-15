@@ -34,6 +34,8 @@ from tqdm import tqdm
 METRICS = {
     "iou_gt_mean":         True,    # ascending=True  → lowest (worst) first
     "iou_all_mean":        True,
+    "iou_3d":              True,
+    "iou_sc_mid_box":      True,
     "fp_on_gt_rate":       False,   # ascending=False → highest (worst) first
     "fp_on_gt_inner_rate": False,
 }
@@ -42,6 +44,8 @@ METRICS = {
 METRIC_IOU_THRESH = {
     "iou_gt_mean":         None,
     "iou_all_mean":        None,
+    "iou_3d":              None,
+    "iou_sc_mid_box":      None,
     "fp_on_gt_rate":       "FP if IoU=0",
     "fp_on_gt_inner_rate": "FP if IoU=0  inner GT only",
 }
@@ -165,6 +169,9 @@ def main():
     parser.add_argument("--conf",       type=float, default=0.001,
                         help="Confidence threshold")
     parser.add_argument("--top-k",      type=int, default=10)
+    parser.add_argument("--metrics",    nargs="+", default=None,
+                        choices=list(METRICS), metavar="METRIC",
+                        help="Metrics to compute (default: all)")
     args = parser.parse_args()
 
     pred_root    = Path(args.inference)
@@ -176,8 +183,10 @@ def main():
         if df.empty:
             print(f"  [{split}] no data at conf={args.conf}")
             continue
+        metrics_to_run = {m: v for m, v in METRICS.items()
+                          if args.metrics is None or m in args.metrics}
         jobs = []
-        for metric, ascending in METRICS.items():
+        for metric, ascending in metrics_to_run.items():
             for dataset, group in df.groupby("dataset"):
                 top = group.dropna(subset=[metric]).sort_values(metric, ascending=ascending).head(args.top_k)
                 if not top.empty:

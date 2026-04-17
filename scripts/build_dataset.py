@@ -14,7 +14,9 @@ Oversampling (train split only, requires --regions-csv):
   --balance-regions : oversample lumbar slices so lumbar ≈ cervical slice count
   --balance-classes : oversample sc_tip slices to reach --tip-ratio (default 0.2)
                       requires convert_labels.py to have been run first
+  --dataset-factors : per-dataset multipliers, e.g. sci-zurich:5 lumbar-epfl:3
   Oversampling creates additional symlinks _r2, _r3, ... pointing to the same files.
+  All factors are multiplicative (region_factor × dataset_factor × tip_factor).
   Val and test splits are never oversampled.
 
 Usage:
@@ -23,7 +25,8 @@ Usage:
         --out datasets/10mm_SI_1mm_axial_3ch_2cls \\
         --nc 2 --class-names sc_mid sc_tip \\
         --regions-csv data/dataset_regions.csv \\
-        --balance-regions --balance-classes --tip-ratio 0.2
+        --balance-regions --balance-classes --tip-ratio 0.2 \\
+        --dataset-factors sci-zurich:5
 """
 
 import argparse
@@ -46,15 +49,15 @@ def find_stem_dirs(dataset_dir: Path, subject: str) -> list[Path]:
             if d.is_dir() and (d.name == subject or d.name.startswith(subject + "_"))]
 
 
-def collect_slices(stem_dir: Path, prefix: str, region: str) -> list[dict]:
-    """Return one dict per slice: {png, txt, prefix, region, class_id}."""
+def collect_slices(stem_dir: Path, prefix: str, region: str, dataset: str) -> list[dict]:
+    """Return one dict per slice: {png, txt, prefix, region, dataset, class_id}."""
     slices = []
     for png in sorted((stem_dir / "png").glob("slice_*.png")):
         txt     = stem_dir / "txt" / (png.stem + ".txt")
         content = txt.read_text().strip() if txt.exists() else ""
         class_id = int(content.split()[0]) if content else -1
         slices.append({"png": png, "txt": txt, "prefix": prefix,
-                        "region": region, "class_id": class_id})
+                        "region": region, "dataset": dataset, "class_id": class_id})
     return slices
 
 
@@ -77,11 +80,13 @@ def make_symlinks(slices: list[dict], images_out: Path, labels_out: Path,
 
 
 def compute_factors(train_slices: list[dict], balance_regions: bool,
-                    balance_classes: bool, tip_ratio: float) -> tuple[float, float]:
+                    balance_classes: bool, tip_ratio: float,
+                    dataset_factors: dict) -> tuple[float, float]:
     """
     Returns (region_factor, tip_factor).
     region_factor : multiplier applied to every lumbar slice
     tip_factor    : additional multiplier applied to sc_tip slices (on top of region_factor)
+    dataset_factors are applied multiplicatively on top of region_factor in n_copies_fn.
     """
     region_factor = 1.0
     tip_factor    = 1.0
@@ -97,9 +102,9 @@ def compute_factors(train_slices: list[dict], balance_regions: bool,
             print("  Region balance: no lumbar slices found, skipping.")
 
     if balance_classes:
-        # Effective counts after region oversampling
+        # Effective counts after region + dataset oversampling
         def eff(s):
-            return region_factor if s["region"] == "lumbar" else 1.0
+            return (region_factor if s["region"] == "lumbar" else 1.0) * dataset_factors.get(s["dataset"], 1.0)
 
         eff_mid = sum(eff(s) for s in train_slices if s["class_id"] == 0)
         eff_tip = sum(eff(s) for s in train_slices if s["class_id"] == 1)
@@ -134,10 +139,17 @@ def main():
                         help="Oversample sc_tip slices in train to reach --tip-ratio")
     parser.add_argument("--tip-ratio",       type=float, default=0.2,
                         help="Target tip/(mid+tip) fraction for --balance-classes")
+    parser.add_argument("--dataset-factors", nargs="*", default=[],
+                        metavar="DATASET:N",
+                        help="Per-dataset oversampling multipliers, e.g. sci-zurich:5 lumbar-epfl:3")
     args = parser.parse_args()
 
     assert not (args.balance_regions or args.balance_classes) or args.regions_csv, \
         "--regions-csv is required when using --balance-regions or --balance-classes"
+
+    dataset_factors = {k: float(v) for k, v in (f.split(":") for f in args.dataset_factors)}
+    if dataset_factors:
+        print(f"Dataset factors: {dataset_factors}")
 
     regions = {}
     if args.regions_csv:
@@ -173,14 +185,15 @@ def main():
                 for stem_dir in find_stem_dirs(dataset_dir, subject):
                     prefix = f"{dataset}_{stem_dir.name}"
                     all_slices[partition].extend(
-                        collect_slices(stem_dir, prefix, region)
+                        collect_slices(stem_dir, prefix, region, dataset)
                     )
 
     # Compute oversampling factors from train set
     region_factor, tip_factor = 1.0, 1.0
     if args.balance_regions or args.balance_classes:
         region_factor, tip_factor = compute_factors(
-            all_slices["train"], args.balance_regions, args.balance_classes, args.tip_ratio
+            all_slices["train"], args.balance_regions, args.balance_classes, args.tip_ratio,
+            dataset_factors
         )
 
     # Link all partitions
@@ -192,6 +205,7 @@ def main():
         if partition == "train":
             def n_copies_fn(s):
                 base = region_factor if s["region"] == "lumbar" else 1.0
+                base *= dataset_factors.get(s["dataset"], 1.0)
                 if s["class_id"] == 1:
                     base *= tip_factor
                 return max(1, round(base))

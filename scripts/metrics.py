@@ -14,10 +14,14 @@ Per-patient outputs saved to predictions/<run_id>/<dataset>/<patient>/metrics/:
   slices.csv   — one row per slice (source of truth)
   patient.csv  — one row per conf threshold (CONF_STEPS: 0.0, 0.001, 0.01, 0.05, 0.1…1.0)
                  columns: conf_thresh, iou_gt_mean, iou_all_mean, fp_rate, fn_rate,
-                          fp_iou_rate, fn_iou_rate, fp_on_gt_rate, iou_3d, iou_sc_mid_box
+                          fp_iou_rate, fn_iou_rate, fp_on_gt_rate, iou_3d, iou_3d_mm, iou_sc_mid_box
                  fp_on_gt_rate:       among GT slices with a detection (conf >= thresh), fraction with IoU == 0
                  fp_on_gt_inner_rate: same but restricted to inner GT slices (excluding first and last GT slice in Z)
+                 iou_3d:              voxel-space 3D IoU (broken for single-slice GT, kept for reference)
+                 iou_3d_mm:           physical-space 3D IoU in mm³; each detected slice contributes
+                                      si_res_mm in Z depth, in-plane pixels scaled by rl_res_mm/ap_res_mm
                  iou_sc_mid_box:      3D IoU between pred sc_mid expansion box and GT sc_mid box
+                 gap_mm_R/L/P/A/I/S: signed mm gap on each face (LAS: R=row_min, L=row_max, P=col_min, A=col_max, I=z_min, S=z_max); positive = pred must expand to contain GT
                                       pred box: expand from max-conf sc_mid (class=0) slice until
                                                 first sc_tip (class=1) or gap in each Z direction
                                       GT box:   union of all GT sc_mid (class=0) slices
@@ -27,13 +31,20 @@ Run-level outputs:
   report.html  — IoU summary per dataset/contrast/split (at --conf threshold)
 
 Usage:
+    # Full recompute (all splits):
     python scripts/metrics.py \\
         --inference predictions/yolo26_1mm_axial \\
         --processed processed/10mm_SI_1mm_axial
+
+    # Full recompute restricted to one split (patients.csv still covers all splits):
     python scripts/metrics.py \\
         --inference predictions/yolo26_1mm_axial \\
-        --processed processed/10mm_SI_1mm_axial \\
-        --splits-dir data/datasplits/from_raw --conf 0.25
+        --processed processed/10mm_SI_1mm_axial --split val
+
+    # Patch mode: recompute only bbox metrics in existing patient.csv (fast, no slices.csv):
+    python scripts/metrics.py \\
+        --inference predictions/yolo26_1mm_axial \\
+        --processed processed/10mm_SI_1mm_axial --split val --metrics iou_3d_mm iou_3d
 """
 
 import argparse
@@ -44,13 +55,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import yaml
+from sklearn.linear_model import RANSACRegressor
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-CONF_STEPS  = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
-CONF_REPORT = 0.25   # default threshold used only for report.html
-SPLITS      = ["test", "val", "train", "unknown"]
+CONF_STEPS        = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
+CONF_REPORT       = 0.25   # default threshold used only for report.html
+SPLITS            = ["test", "val", "train", "unknown"]
+# Metrics that depend only on pred bbox + GT bbox + meta (no slices.csv needed → fast patch)
+BBOX_ONLY_METRICS = {"iou_3d", "iou_3d_mm", "iou_3d_mm_filt", "iou_3d_mm_ransac",
+                     "iou_3d_mm_pad10", "gt_in_pad10",
+                     "iou_3d_mm_padz20", "gt_in_padz20",
+                     "pred_vol_ratio",
+                     "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A",
+                     "gap_mm_I", "gap_mm_S",
+                     "iou_sc_mid_box"}
 
 CSS = """
 <style>
@@ -136,13 +156,34 @@ def read_gt_boxes(gt_txt_dir: Path) -> dict:
 
 
 def iou_3d(b1: list, b2: list) -> float:
-    """3D IoU between two boxes [row1, row2, col1, col2, z1, z2]."""
+    """3D IoU between two boxes [row1, row2, col1, col2, z1, z2] in voxel space.
+
+    Note: returns 0 if either box has zero extent in any axis (e.g. single-slice GT with z1=z2).
+    Use iou_3d_mm for physically correct results.
+    """
     inter_r = max(0, min(b1[1], b2[1]) - max(b1[0], b2[0]))
     inter_c = max(0, min(b1[3], b2[3]) - max(b1[2], b2[2]))
     inter_z = max(0, min(b1[5], b2[5]) - max(b1[4], b2[4]))
     inter   = inter_r * inter_c * inter_z
     vol1    = (b1[1]-b1[0]) * (b1[3]-b1[2]) * (b1[5]-b1[4])
     vol2    = (b2[1]-b2[0]) * (b2[3]-b2[2]) * (b2[5]-b2[4])
+    union   = vol1 + vol2 - inter
+    return inter / union if union > 0 else 0.0
+
+
+def iou_3d_mm(b1: list, b2: list, si_res: float, rl_res: float, ap_res: float) -> float:
+    """3D IoU in mm³ between two boxes [row1, row2, col1, col2, z1, z2].
+
+    Each slice index z represents a slab from z*si_res to (z+1)*si_res mm.
+    In-plane pixel sizes: rl_res mm/px (rows) and ap_res mm/px (cols).
+    A single-slice box (z1=z2) correctly has Z depth = si_res mm.
+    """
+    inter_r = max(0.0, (min(b1[1], b2[1]) - max(b1[0], b2[0])) * rl_res)
+    inter_c = max(0.0, (min(b1[3], b2[3]) - max(b1[2], b2[2])) * ap_res)
+    inter_z = max(0.0, (min(b1[5]+1, b2[5]+1) - max(b1[4], b2[4])) * si_res)
+    inter   = inter_r * inter_c * inter_z
+    vol1    = (b1[1]-b1[0]) * rl_res * (b1[3]-b1[2]) * ap_res * (b1[5]-b1[4]+1) * si_res
+    vol2    = (b2[1]-b2[0]) * rl_res * (b2[3]-b2[2]) * ap_res * (b2[5]-b2[4]+1) * si_res
     union   = vol1 + vol2 - inter
     return inter / union if union > 0 else 0.0
 
@@ -270,9 +311,124 @@ def sc_mid_box_iou(pred_boxes: dict, conf_thresh: float, gt_boxes: dict,
     return round(iou_3d(pred_3d, gt_3d), 4)
 
 
+def ransac_filter_slices(boxes: dict) -> dict:
+    """Keep RANSAC inliers of a linear z → (cx, cy) fit. Requires >= 3 slices.
+
+    Fits two independent RANSAC linear regressors (z → cx, z → cy).
+    A slice is kept if it is an inlier in both fits.
+    Falls back to the full set if all slices would be removed.
+    """
+    if len(boxes) < 3:
+        return boxes
+    zs      = np.array(sorted(boxes)).reshape(-1, 1)
+    cxs     = np.array([boxes[z][0] for z in zs.ravel()])
+    cys     = np.array([boxes[z][1] for z in zs.ravel()])
+    inliers = (RANSACRegressor(min_samples=2, random_state=0).fit(zs, cxs).inlier_mask_ &
+               RANSACRegressor(min_samples=2, random_state=0).fit(zs, cys).inlier_mask_)
+    return {z: boxes[z] for z, keep in zip(zs.ravel(), inliers) if keep} or boxes
+
+
+def filter_outlier_slices(boxes: dict) -> dict:
+    """Remove slices with IoU=0 against every other slice (only when >= 3 slices).
+
+    Keeps a slice if it overlaps (IoU > 0) with at least one other slice.
+    Falls back to the full set if filtering would remove everything.
+    """
+    if len(boxes) < 3:
+        return boxes
+    zs   = list(boxes)
+    keep = {z: boxes[z] for z in zs
+            if any(bbox_iou(boxes[z][:4], boxes[other][:4]) > 0 for other in zs if other != z)}
+    return keep if keep else boxes
+
+
+def pad_bbox3d(bbox: list, pad_xy_mm: float, pad_z_mm: float, H: int, W: int, Z: int,
+               si_res: float, rl_res: float, ap_res: float) -> list:
+    """Expand bbox on all 6 faces (pad_xy_mm in-plane, pad_z_mm along Z), clamped to image bounds."""
+    pad_r = pad_xy_mm / rl_res
+    pad_c = pad_xy_mm / ap_res
+    pad_z = pad_z_mm  / si_res
+    return [max(0.0,      bbox[0] - pad_r), min(float(H), bbox[1] + pad_r),
+            max(0.0,      bbox[2] - pad_c), min(float(W), bbox[3] + pad_c),
+            max(0.0,      bbox[4] - pad_z), min(float(Z - 1), bbox[5] + pad_z)]
+
+
+def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
+                        gt_bbox: list, gt_boxes: dict, H: int, W: int, meta: dict) -> float:
+    """Compute one bbox-only metric at one conf threshold (no slices_df needed)."""
+    active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
+    if metric == "iou_3d":
+        if not active or gt_bbox is None:
+            return float("nan")
+        return round(iou_3d(reconstruct_bbox3d(active, H, W), gt_bbox), 4)
+    if metric == "iou_3d_mm":
+        if not active or gt_bbox is None:
+            return float("nan")
+        return round(iou_3d_mm(reconstruct_bbox3d(active, H, W), gt_bbox,
+                               meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0)), 4)
+    if metric == "iou_3d_mm_filt":
+        if not active or gt_bbox is None:
+            return float("nan")
+        return round(iou_3d_mm(reconstruct_bbox3d(filter_outlier_slices(active), H, W), gt_bbox,
+                               meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0)), 4)
+    if metric == "iou_3d_mm_ransac":
+        if not active or gt_bbox is None:
+            return float("nan")
+        return round(iou_3d_mm(reconstruct_bbox3d(ransac_filter_slices(active), H, W), gt_bbox,
+                               meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0)), 4)
+    if metric in ("iou_3d_mm_pad10", "gt_in_pad10", "iou_3d_mm_padz20", "gt_in_padz20"):
+        if not active or gt_bbox is None:
+            return float("nan")
+        Z        = meta["shape_las"][2]
+        si_res   = meta["si_res_mm"]
+        rl_res   = meta.get("rl_res_mm", 1.0)
+        ap_res   = meta.get("ap_res_mm", 1.0)
+        pad_xy   = 10.0
+        pad_z    = 20.0 if "padz20" in metric else 10.0
+        padded   = pad_bbox3d(reconstruct_bbox3d(active, H, W), pad_xy, pad_z, H, W, Z,
+                              si_res, rl_res, ap_res)
+        if "iou_3d_mm" in metric:
+            return round(iou_3d_mm(padded, gt_bbox, si_res, rl_res, ap_res), 4)
+        return float(padded[0] <= gt_bbox[0] and gt_bbox[1] <= padded[1] and
+                     padded[2] <= gt_bbox[2] and gt_bbox[3] <= padded[3] and
+                     padded[4] <= gt_bbox[4] and gt_bbox[5] <= padded[5])
+    if metric == "pred_vol_ratio":
+        if not active:
+            return float("nan")
+        Z      = meta["shape_las"][2]
+        si_res = meta["si_res_mm"]
+        rl_res = meta.get("rl_res_mm", 1.0)
+        ap_res = meta.get("ap_res_mm", 1.0)
+        b      = reconstruct_bbox3d(active, H, W)
+        pred_mm3  = (b[1]-b[0])*rl_res * (b[3]-b[2])*ap_res * (b[5]-b[4]+1)*si_res
+        total_mm3 = H*rl_res * W*ap_res * Z*si_res
+        return round(pred_mm3 / total_mm3, 6)
+    if metric in ("gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S"):
+        if not active or gt_bbox is None:
+            return float("nan")
+        si_res = meta["si_res_mm"]
+        rl_res = meta.get("rl_res_mm", 1.0)
+        ap_res = meta.get("ap_res_mm", 1.0)
+        b = reconstruct_bbox3d(active, H, W)
+        # LAS: row_min=Right, row_max=Left, col_min=Posterior, col_max=Anterior, z_min=Inferior, z_max=Superior
+        gaps = {
+            "gap_mm_R": (b[0] - gt_bbox[0]) * rl_res,
+            "gap_mm_L": (gt_bbox[1] - b[1]) * rl_res,
+            "gap_mm_P": (b[2] - gt_bbox[2]) * ap_res,
+            "gap_mm_A": (gt_bbox[3] - b[3]) * ap_res,
+            "gap_mm_I": (b[4] - gt_bbox[4]) * si_res,
+            "gap_mm_S": (gt_bbox[5] - b[5]) * si_res,
+        }
+        return round(gaps[metric], 2)
+    if metric == "iou_sc_mid_box":
+        return sc_mid_box_iou(pred_boxes, conf_thresh, gt_boxes, H, W)
+    return float("nan")
+
+
 def build_patient_csv_rows(slices_df: pd.DataFrame, pred_boxes: dict, H: int, W: int,
-                            gt_bbox: list, gt_boxes: dict, fp_iou_thresh: float) -> pd.DataFrame:
-    """One row per conf threshold: aggregated metrics + iou_3d reconstructed at each threshold."""
+                            gt_bbox: list, gt_boxes: dict, fp_iou_thresh: float,
+                            si_res_mm: float = 1.0, rl_res_mm: float = 1.0, ap_res_mm: float = 1.0) -> pd.DataFrame:
+    """One row per conf threshold: aggregated metrics + iou_3d / iou_3d_mm reconstructed at each threshold."""
     gt_zs        = slices_df.loc[slices_df["has_gt"].astype(bool), "slice_idx"]
     is_inner_gt  = (slices_df["has_gt"].astype(bool)
                     & (slices_df["slice_idx"] > gt_zs.min())
@@ -292,9 +448,12 @@ def build_patient_csv_rows(slices_df: pd.DataFrame, pred_boxes: dict, H: int, W:
 
         active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
         if active and gt_bbox is not None:
-            iou3d = round(iou_3d(reconstruct_bbox3d(active, H, W), gt_bbox), 4)
+            pred_3d_box = reconstruct_bbox3d(active, H, W)
+            iou3d    = round(iou_3d(pred_3d_box, gt_bbox), 4)
+            iou3d_mm = round(iou_3d_mm(pred_3d_box, gt_bbox, si_res_mm, rl_res_mm, ap_res_mm), 4)
         else:
-            iou3d = float("nan")
+            iou3d    = float("nan")
+            iou3d_mm = float("nan")
 
         rows.append({
             "conf_thresh":    round(float(conf_thresh), 3),
@@ -309,6 +468,7 @@ def build_patient_csv_rows(slices_df: pd.DataFrame, pred_boxes: dict, H: int, W:
             "fp_on_gt_inner_rate": round(float((is_inner_gt & has_pred & (slices_df["iou"] == 0)).sum()) / inner_gt_with_pred_count, 4)
                                    if inner_gt_with_pred_count > 0 else float("nan"),
             "iou_3d":           iou3d,
+            "iou_3d_mm":        iou3d_mm,
             "iou_sc_mid_box":   sc_mid_box_iou(pred_boxes, conf_thresh, gt_boxes, H, W),
         })
     return pd.DataFrame(rows)
@@ -481,7 +641,7 @@ def main():
     )
     parser.add_argument("--inference",    required=True,
                         help="Path to inference run directory (predictions/<run-id>/)")
-    parser.add_argument("--processed",    default="processed/10mm_SI",
+    parser.add_argument("--processed",    default="processed/10mm_SI_1mm_axial",
                         help="processed/<variant> dir (GT source)")
     parser.add_argument("--splits-dir",   default="data/datasplits/from_raw",
                         help="Directory with datasplit_*.yaml (used for report.html only)")
@@ -491,6 +651,8 @@ def main():
                         help="IoU threshold for fp_iou_rate / fn_iou_rate in patient.csv")
     parser.add_argument("--split",         default=None, choices=["train", "val", "test", "unknown"],
                         help="Restrict computation to subjects in this split (default: all)")
+    parser.add_argument("--metrics",       nargs="+", default=None, choices=sorted(BBOX_ONLY_METRICS),
+                        help="Patch only these bbox metrics in existing patient.csv (skips slices.csv)")
     parser.add_argument("--no-html",       action="store_true",
                         help="Skip generating report.html")
     args = parser.parse_args()
@@ -498,29 +660,65 @@ def main():
     pred_root  = Path(args.inference)
     run_id     = pred_root.name
     splits_map = load_splits(Path(args.splits_dir))
-    all_records = []
 
+    processed_dir = Path(args.processed)
+
+    # patients: driven by pred_root (what has predictions); processed/ only for GT lookup
     patients = [
-        (dataset_dir.name, patient_dir)
-        for dataset_dir in sorted(Path(args.processed).iterdir()) if dataset_dir.is_dir()
-        for patient_dir in sorted(dataset_dir.iterdir()) if (patient_dir / "txt").is_dir()
+        (d.name, p.name)
+        for d in sorted(pred_root.iterdir()) if d.is_dir()
+        for p in sorted(d.iterdir()) if (p / "txt").is_dir()
     ]
+
+    # patients.csv: full index, always written before any --split filter
+    pd.DataFrame([{"dataset": ds, "stem": st} for ds, st in patients]).to_csv(
+        pred_root / "patients.csv", index=False)
+    print(f"Patients index → {pred_root / 'patients.csv'} ({len(patients)} patients)")
 
     if args.split:
         patients = [
-            (dataset, patient_dir) for dataset, patient_dir in patients
-            if splits_map.get((dataset, re.match(r"(sub-[^_]+)", patient_dir.name).group(1)), "unknown") == args.split
+            (dataset, stem) for dataset, stem in patients
+            if splits_map.get((dataset, re.match(r"(sub-[^_]+)", stem).group(1)), "unknown") == args.split
         ]
 
-    for dataset, patient_dir in tqdm(patients, desc="Patients", unit="pat"):
-        stem     = patient_dir.name
+    # --- bbox-only mode: compute only the requested metrics, no slices.csv needed ---
+    if args.metrics:
+        for dataset, stem in tqdm(patients, desc="Metrics", unit="pat"):
+            pred_txt_dir = pred_root / dataset / stem / "txt"
+            proc_dir     = processed_dir / dataset / stem
+            if not (proc_dir / "meta.yaml").exists():
+                continue
+            meta         = yaml.safe_load((proc_dir / "meta.yaml").read_text())
+            H, W         = meta["shape_las"][0], meta["shape_las"][1]
+            gt_bbox_path = proc_dir / "volume" / "bbox_3d.txt"
+            gt_bbox      = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None
+            pred_boxes   = read_pred_boxes(pred_txt_dir)
+            gt_boxes     = read_gt_boxes(proc_dir / "txt")
+            metrics_dir  = pred_root / dataset / stem / "metrics"
+            patient_csv  = metrics_dir / "patient.csv"
+            df = pd.read_csv(patient_csv) if patient_csv.exists() \
+                 else pd.DataFrame({"conf_thresh": [round(float(c), 3) for c in CONF_STEPS]})
+            for metric in args.metrics:
+                df[metric] = [
+                    compute_bbox_column(metric, pred_boxes, conf, gt_bbox, gt_boxes, H, W, meta)
+                    for conf in CONF_STEPS
+                ]
+            metrics_dir.mkdir(parents=True, exist_ok=True)
+            df.to_csv(patient_csv, index=False)
+        print(f"Done — {args.metrics}")
+        return
+
+    # --- full mode ---
+    all_records = []
+    for dataset, stem in tqdm(patients, desc="Patients", unit="pat"):
         m        = re.match(r"(sub-[^_]+)_?(.*)", stem)
         subject  = m.group(1)
         contrast = m.group(2) or "default"
         split    = splits_map.get((dataset, subject), "unknown")
 
+        proc_dir     = processed_dir / dataset / stem
         pred_txt_dir = pred_root / dataset / stem / "txt"
-        slices_df    = patient_slices(patient_dir / "txt", pred_txt_dir)
+        slices_df    = patient_slices(proc_dir / "txt", pred_txt_dir)
         if slices_df.empty:
             continue
 
@@ -528,14 +726,15 @@ def main():
         metrics_dir.mkdir(parents=True, exist_ok=True)
         slices_df.to_csv(metrics_dir / "slices.csv", index=False)
 
-        meta    = yaml.safe_load((patient_dir / "meta.yaml").read_text())
+        meta    = yaml.safe_load((proc_dir / "meta.yaml").read_text())
         H, W    = meta["shape_las"][0], meta["shape_las"][1]
-        gt_bbox_path = patient_dir / "volume" / "bbox_3d.txt"
+        gt_bbox_path = proc_dir / "volume" / "bbox_3d.txt"
         gt_bbox = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None
 
         pred_boxes = read_pred_boxes(pred_txt_dir)
-        gt_boxes   = read_gt_boxes(patient_dir / "txt")
-        build_patient_csv_rows(slices_df, pred_boxes, H, W, gt_bbox, gt_boxes, args.fp_iou_thresh).to_csv(
+        gt_boxes   = read_gt_boxes(proc_dir / "txt")
+        build_patient_csv_rows(slices_df, pred_boxes, H, W, gt_bbox, gt_boxes, args.fp_iou_thresh,
+                               meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0)).to_csv(
             metrics_dir / "patient.csv", index=False
         )
 
@@ -552,10 +751,6 @@ def main():
 
     full_df = pd.concat(all_records, ignore_index=True)
     print(f"Processed {full_df.groupby(['dataset','subject']).ngroups} patients — {len(full_df)} slices")
-
-    patients_index = full_df[["dataset", "stem"]].drop_duplicates().reset_index(drop=True)
-    patients_index.to_csv(pred_root / "patients.csv", index=False)
-    print(f"Patients index → {pred_root / 'patients.csv'}")
 
     report = build_report(full_df, args.conf)
     print(report[report["dataset"] == "ALL"].to_string(index=False))

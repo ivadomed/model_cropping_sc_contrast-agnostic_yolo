@@ -234,7 +234,7 @@ def main():
     parser.add_argument("--run-id",      default=None,
                         help="Output run identifier (default: derived from checkpoint directory name)")
     parser.add_argument("--processed",   default="processed/10mm_SI", help="processed/<variant> dir")
-    parser.add_argument("--splits-dir",  default="data/datasplits")
+    parser.add_argument("--splits-dir",  default="data/datasplits/from_raw")
     parser.add_argument("--conf",        type=float, default=CONF_THRESH,
                         help="Confidence threshold for inference and visualisations")
     parser.add_argument("--batch",       type=int, default=-1,

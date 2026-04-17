@@ -35,9 +35,28 @@ METRICS = {
     "iou_gt_mean":         True,    # ascending=True  → lowest (worst) first
     "iou_all_mean":        True,
     "iou_3d":              True,
+    "iou_3d_mm":           True,
+    "iou_3d_mm_filt":      True,
+    "iou_3d_mm_ransac":    True,
+    "iou_3d_mm_pad10":     True,
+    "gt_in_pad10":         True,
+    "iou_3d_mm_padz20":    True,
+    "gt_in_padz20":        True,
     "iou_sc_mid_box":      True,
     "fp_on_gt_rate":       False,   # ascending=False → highest (worst) first
     "fp_on_gt_inner_rate": False,
+    "gap_mm_R":            False,   # highest positive gap = pred misses GT on that face
+    "gap_mm_L":            False,
+    "gap_mm_P":            False,
+    "gap_mm_A":            False,
+    "gap_mm_I":            False,
+    "gap_mm_S":            False,
+    "gap_mm_R_neg":        True,    # most negative gap = pred over-extends on that face
+    "gap_mm_L_neg":        True,
+    "gap_mm_P_neg":        True,
+    "gap_mm_A_neg":        True,
+    "gap_mm_I_neg":        True,
+    "gap_mm_S_neg":        True,
 }
 
 # IoU threshold used in metric definition (None = no IoU threshold)
@@ -45,10 +64,40 @@ METRIC_IOU_THRESH = {
     "iou_gt_mean":         None,
     "iou_all_mean":        None,
     "iou_3d":              None,
+    "iou_3d_mm":           None,
+    "iou_3d_mm_filt":      None,
+    "iou_3d_mm_ransac":    None,
+    "iou_3d_mm_pad10":     None,
+    "gt_in_pad10":         None,
+    "iou_3d_mm_padz20":    None,
+    "gt_in_padz20":        None,
     "iou_sc_mid_box":      None,
     "fp_on_gt_rate":       "FP if IoU=0",
     "fp_on_gt_inner_rate": "FP if IoU=0  inner GT only",
+    "gap_mm_R":            None,
+    "gap_mm_L":            None,
+    "gap_mm_P":            None,
+    "gap_mm_A":            None,
+    "gap_mm_I":            None,
+    "gap_mm_S":            None,
+    "gap_mm_R_neg":        None,
+    "gap_mm_L_neg":        None,
+    "gap_mm_P_neg":        None,
+    "gap_mm_A_neg":        None,
+    "gap_mm_I_neg":        None,
+    "gap_mm_S_neg":        None,
 }
+
+# Maps metric name → actual column in patient.csv (for _neg variants)
+METRIC_COLUMN = {m: m for m in METRIC_IOU_THRESH}
+METRIC_COLUMN.update({
+    "gap_mm_R_neg": "gap_mm_R",
+    "gap_mm_L_neg": "gap_mm_L",
+    "gap_mm_P_neg": "gap_mm_P",
+    "gap_mm_A_neg": "gap_mm_A",
+    "gap_mm_I_neg": "gap_mm_I",
+    "gap_mm_S_neg": "gap_mm_S",
+})
 
 
 def load_splits(splits_dir: Path) -> dict:
@@ -129,8 +178,8 @@ def make_overview(pred_root: Path, dataset: str, stem: str, out_path: Path,
     canvas.save(out_path)
 
 
-def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, pred_root: Path,
-                   dataset: str, conf_thresh: float) -> None:
+def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, col: str,
+                   pred_root: Path, dataset: str, conf_thresh: float) -> None:
     """Create ranking.csv + per-patient folders with data symlink and overview image."""
     if out_dir.exists():
         for p in out_dir.iterdir():
@@ -139,7 +188,7 @@ def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, pred_root: Pat
             elif p.is_dir():
                 shutil.rmtree(p)
     out_dir.mkdir(parents=True, exist_ok=True)
-    top[["stem", metric]].to_csv(out_dir / "ranking.csv", index=False)
+    top[["stem", col]].to_csv(out_dir / "ranking.csv", index=False)
 
     for rank, (_, row) in enumerate(top.iterrows(), start=1):
         patient_dir = out_dir / f"{rank:03d}_{row['stem']}"
@@ -154,7 +203,7 @@ def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, pred_root: Pat
         data_link.symlink_to(Path("../../../../") / row["stem"])
 
         make_overview(pred_root, dataset, row["stem"],
-                      patient_dir / "overview.png", metric, row[metric], conf_thresh, rank)
+                      patient_dir / "overview.png", metric, row[col], conf_thresh, rank)
 
 
 def main():
@@ -187,14 +236,17 @@ def main():
                           if args.metrics is None or m in args.metrics}
         jobs = []
         for metric, ascending in metrics_to_run.items():
+            col = METRIC_COLUMN.get(metric, metric)
+            if col not in df.columns:
+                continue
             for dataset, group in df.groupby("dataset"):
-                top = group.dropna(subset=[metric]).sort_values(metric, ascending=ascending).head(args.top_k)
+                top = group.dropna(subset=[col]).sort_values(col, ascending=ascending).head(args.top_k)
                 if not top.empty:
-                    jobs.append((dataset, metric, top))
+                    jobs.append((dataset, metric, col, top))
 
-        for dataset, metric, top in tqdm(jobs, desc=split, unit="dataset×metric"):
+        for dataset, metric, col, top in tqdm(jobs, desc=split, unit="dataset×metric"):
             out_dir = pred_root / dataset / "failures" / split / metric
-            write_failures(out_dir, top, metric, pred_root, dataset, args.conf)
+            write_failures(out_dir, top, metric, col, pred_root, dataset, args.conf)
         print(f"  [{split}] conf={args.conf} → done")
 
 

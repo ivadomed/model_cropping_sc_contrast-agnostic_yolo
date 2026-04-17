@@ -37,7 +37,15 @@ import yaml
 METRIC_LABELS = {
     "iou_gt_mean":        "Mean IoU on SC slices",
     "iou_all_mean":       "Mean IoU on all slices",
-    "iou_3d":             "3D IoU (full spine box)",
+    "iou_3d":             "3D IoU voxel (full spine box)",
+    "iou_3d_mm":          "3D IoU mm³ (full spine box, slice thickness = si_res_mm)",
+    "iou_3d_mm_filt":     "3D IoU mm³ filtered (outlier slices with IoU=0 vs all others removed)",
+    "iou_3d_mm_ransac":   "3D IoU mm³ RANSAC (linear z→cx,cy fit, outlier slices rejected)",
+    "iou_3d_mm_pad10":    "3D IoU mm³ with 10mm padding on all faces",
+    "gt_in_pad10":        "GT fully inside pred + 10mm padding (proportion per dataset)",
+    "iou_3d_mm_padz20":   "3D IoU mm³ with 10mm xy + 20mm Z padding",
+    "gt_in_padz20":       "GT fully inside pred + 10mm xy / 20mm Z padding (proportion per dataset)",
+    "pred_vol_ratio":     "Pred bbox volume / total image volume",
     "iou_sc_mid_box":     "3D IoU (sc_mid expansion box)",
     "fp_rate":            "FP rate (pred on non-SC slices / total slices)",
     "fn_rate":            "FN rate (SC slices missed / SC slices)",
@@ -45,10 +53,23 @@ METRIC_LABELS = {
     "fn_iou_rate":        "FN IoU rate (SC slices with IoU < thresh / SC slices)",
     "fp_on_gt_rate":       "FP on GT slices (pred with IoU = 0 / GT slices with pred)",
     "fp_on_gt_inner_rate": "FP on inner GT slices (excl. first & last GT slice)",
+    "gap_mm_R":            "Gap Right face — mm to expand pred to cover GT (+=expand, −=already covers)",
+    "gap_mm_L":            "Gap Left face — mm to expand pred to cover GT (+=expand, −=already covers)",
+    "gap_mm_P":            "Gap Posterior face — mm to expand pred to cover GT (+=expand, −=already covers)",
+    "gap_mm_A":            "Gap Anterior face — mm to expand pred to cover GT (+=expand, −=already covers)",
+    "gap_mm_I":            "Gap Inferior face — mm to expand pred to cover GT (+=expand, −=already covers)",
+    "gap_mm_S":            "Gap Superior face — mm to expand pred to cover GT (+=expand, −=already covers)",
 }
 
-SWEEP_METRICS = ["iou_gt_mean", "iou_all_mean", "iou_3d", "iou_sc_mid_box", "fp_on_gt_rate", "fp_on_gt_inner_rate"]
-PCT_METRICS   = {"fp_rate", "fn_rate", "fp_iou_rate", "fn_iou_rate", "fp_on_gt_rate", "fp_on_gt_inner_rate"}
+SWEEP_METRICS      = ["iou_gt_mean", "iou_all_mean", "iou_3d", "iou_3d_mm", "iou_3d_mm_filt",
+                      "iou_3d_mm_ransac", "iou_3d_mm_pad10", "gt_in_pad10",
+                      "iou_3d_mm_padz20", "gt_in_padz20", "pred_vol_ratio",
+                      "iou_sc_mid_box", "fp_on_gt_rate", "fp_on_gt_inner_rate",
+                      "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S"]
+PCT_METRICS        = {"fp_rate", "fn_rate", "fp_iou_rate", "fn_iou_rate", "fp_on_gt_rate", "fp_on_gt_inner_rate"}
+PROPORTION_METRICS = {"gt_in_pad10", "gt_in_padz20"}   # binary 0/1 → bar chart of % per dataset
+FREE_SCALE_METRICS = {"pred_vol_ratio",
+                      "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S"}
 CONF_STEPS    = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
 
 
@@ -144,6 +165,10 @@ def plot_violins(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi:
     if is_pct:
         ax.set_ylabel(METRIC_LABELS[metric] + " (%)", fontsize=10)
         ax.set_ylim(-2, 102)
+    elif metric in FREE_SCALE_METRICS:
+        ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
+        if metric.startswith("gap_mm_"):
+            ax.axhline(0, color="#888", linewidth=1.0, linestyle="--", zorder=1)
     else:
         ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
         ax.set_ylim(-0.05, 1.05)
@@ -155,6 +180,38 @@ def plot_violins(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi:
                             mpatches.Patch(color="orange", label="Median")],
                   loc="upper right" if is_pct else "lower right", fontsize=9)
 
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  → {out_path}")
+
+
+def plot_bars(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi: int) -> None:
+    """Bar chart of proportion (mean of 0/1 metric) per dataset."""
+    datasets  = sorted(df["dataset"].unique())
+    positions = list(range(1, len(datasets) + 1))
+
+    fig, ax = plt.subplots(figsize=(max(8, len(datasets) * 1.4), 5))
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+
+    for pos, dataset in zip(positions, datasets):
+        vals = df[df["dataset"] == dataset][metric].dropna().values
+        if len(vals) == 0:
+            ax.text(pos, 1, "—", ha="center", va="bottom", color="#aaa", fontsize=10)
+            continue
+        pct   = float(vals.mean()) * 100
+        color = "#1a7a1a" if pct >= 80 else "#7a6a00" if pct >= 50 else "#aa1a1a"
+        ax.bar(pos, pct, color=color, alpha=0.8)
+        ax.text(pos, pct + 1, f"{pct:.0f}%", ha="center", va="bottom", fontsize=9)
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels([f"{d}\n(n={len(df[df['dataset']==d][metric].dropna())})"
+                        for d in datasets], rotation=30, ha="right", fontsize=8)
+    ax.set_ylabel("% patients", fontsize=10)
+    ax.set_ylim(0, 115)
+    ax.yaxis.grid(True, linestyle="--", alpha=0.5)
+    ax.set_axisbelow(True)
     plt.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
@@ -182,12 +239,18 @@ def main():
                         help="Confidence threshold (ignored with --conf-sweep)")
     parser.add_argument("--conf-sweep", action="store_true",
                         help="Generate one violin plot per metric per conf threshold (0.0→1.0)")
+    parser.add_argument("--exclude",    nargs="+", default=None,
+                        help="Stems to exclude (e.g. sub-nih184_UNIT1)")
+    parser.add_argument("--suffix",     default="",
+                        help="Suffix appended to output filename (e.g. _no_nih)")
     parser.add_argument("--dpi",        type=int, default=150)
     args = parser.parse_args()
 
     pred_root    = Path(args.inference)
     splits_map   = load_splits(Path(args.splits_dir))
     patients_idx = pd.read_csv(pred_root / "patients.csv")
+    if args.exclude:
+        patients_idx = patients_idx[~patients_idx["stem"].isin(args.exclude)]
 
     def conf_label(c: float) -> str:
         return f"conf{c:.3f}".rstrip("0").rstrip(".")
@@ -197,10 +260,13 @@ def main():
             df = load_patients_at_conf(pred_root, patients_idx, splits_map,
                                        args.conf, [split], args.datasets)
             title    = f"{METRIC_LABELS[args.metric]} — {pred_root.name} [{split}] conf≥{args.conf}"
-            out_path = pred_root / "plots" / split / args.metric / f"{conf_label(args.conf)}.png"
+            out_path = pred_root / "plots" / split / args.metric / f"{conf_label(args.conf)}{args.suffix}.png"
             print(f"{len(df)} patients — {df['dataset'].nunique()} datasets [{split}] "
                   f"({args.metric}) conf≥{args.conf}")
-            plot_violins(df, args.metric, title, out_path, args.dpi)
+            if args.metric in PROPORTION_METRICS:
+                plot_bars(df, args.metric, title, out_path, args.dpi)
+            else:
+                plot_violins(df, args.metric, title, out_path, args.dpi)
         return
 
     print(f"Sweeping {len(CONF_STEPS)} thresholds × {len(SWEEP_METRICS)} metrics {args.splits}...")
@@ -210,8 +276,11 @@ def main():
                                        conf, [split], args.datasets)
             for metric in SWEEP_METRICS:
                 title    = f"{METRIC_LABELS[metric]} — {pred_root.name} [{split}] conf≥{conf}"
-                out_path = pred_root / "plots" / split / metric / f"{conf_label(conf)}.png"
-                plot_violins(df, metric, title, out_path, args.dpi)
+                out_path = pred_root / "plots" / split / metric / f"{conf_label(conf)}{args.suffix}.png"
+                if metric in PROPORTION_METRICS:
+                    plot_bars(df, metric, title, out_path, args.dpi)
+                else:
+                    plot_violins(df, metric, title, out_path, args.dpi)
 
 
 if __name__ == "__main__":

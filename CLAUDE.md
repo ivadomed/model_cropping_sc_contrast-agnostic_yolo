@@ -71,8 +71,8 @@ PRÉPROCESSING
   rl_res_mm/ap_res_mm = résolution native dans le plan axial (LAS axes 0 et 1), non modifiée par resampling
   pour patcher des meta.yaml existants sans re-préprocesser : preprocess.py --update-meta --out <dir>
 
-DÉCOUVERTE DES MASQUES — table explicite par dataset dans preprocess.py
-  DATASET_MASK_SUFFIX = {
+DÉCOUVERTE DES MASQUES — tables explicites par dataset dans preprocess.py
+  DATASET_MASK_SUFFIX (SC, class 0) = {
     "data-multi-subject":           "_label-SC_seg.nii.gz",
     "basel-mp2rage":                "_label-SC_seg.nii.gz",
     "dcm-zurich":                   "_label-SC_seg.nii.gz",
@@ -87,10 +87,18 @@ DÉCOUVERTE DES MASQUES — table explicite par dataset dans preprocess.py
     "dcm-brno":                     "_seg.nii.gz",
     "dcm-zurich-lesions":           "_label-SC_mask-manual.nii.gz",
     "dcm-zurich-lesions-20231115":  "_label-SC_mask-manual.nii.gz",
+    "spider-challenge-2023":        "_label-SC_seg.nii.gz",
+    "whole-spine":                  "_label-SC_seg.nii.gz",
+  }
+  DATASET_CANAL_SUFFIX (canal rachidien, class 1) = {
+    "data-multi-subject":    "_label-canal_seg.nii.gz",
+    "spider-challenge-2023": "_label-canal_seg.nii.gz",
+    "whole-spine":           "_label-canal_seg.nii.gz",
   }
   - plante sur dataset inconnu (pas de fallback)
   - cherche toujours dans derivatives/labels/<sub>/[ses-*/]anat/
   - DWI exclu (pas de sous-dossier dwi/)
+  - --with-canal : active l'extraction canal ; si canal mask absent pour un patient, seul SC est écrit
 
 DATA SOURCES — structure par source dans data/raw/
   data-multi-subject/
@@ -108,9 +116,11 @@ DATA/PROCESSED — hiérarchie exacte
           ├── png/                ← slices 2D natives normalisées uint8
           │   └── slice_NNN.png
           ├── txt/                ← labels YOLO GT par slice (toujours présent, vide si pas de SC)
-          │   └── slice_NNN.txt   format : "0 cx cy w h" normalisé [0,1], ou vide
+          │   └── slice_NNN.txt   format sans canal : "0 cx cy w h" normalisé [0,1], ou vide
+          │                       format avec canal : jusqu'à 2 lignes — "0 cx cy w h" (SC) + "1 cx cy w h" (canal)
           ├── volume/
-          │   └── bbox_3d.txt     ← bbox 3D GT : row1 row2 col1 col2 z1 z2 (voxels)
+          │   ├── bbox_3d.txt        ← bbox 3D GT SC  : row1 row2 col1 col2 z1 z2 (voxels)
+          │   └── bbox_3d_canal.txt  ← bbox 3D GT canal (seulement si --with-canal, même format)
           └── meta.yaml           ← raw_image, raw_mask, shape_las [H,W,Z],
                                      si_res_mm, rl_res_mm, ap_res_mm
 

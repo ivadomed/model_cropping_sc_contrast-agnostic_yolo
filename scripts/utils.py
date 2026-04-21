@@ -89,23 +89,25 @@ def write_bbox_3d(path: Path, row1, row2, col1, col2, z1, z2) -> None:
     path.write_text(f"{row1} {row2} {col1} {col2} {z1} {z2}\n")
 
 
-def bbox_3d_from_txts(txt_dir: Path, H: int, W: int):
-    """Aggregate YOLO slice txts into a 3D bbox union.
+def bbox_3d_from_txts(txt_dir: Path, H: int, W: int, class_id: int = 0):
+    """Aggregate YOLO slice txts into a 3D bbox union for a given class_id (default 0 = SC).
     YOLO format: class cx cy w h  (cx=col/W, cy=row/H, all in [0,1]).
     Returns {row1,row2,col1,col2,z1,z2} in voxel coords, or None if no detections.
     """
     row1s, row2s, col1s, col2s, zs = [], [], [], [], []
     for txt in sorted(txt_dir.glob("slice_*.txt")):
-        content = txt.read_text().strip()
-        if not content:
-            continue
-        z = int(txt.stem.split("_")[1])
-        _, cx, cy, w, h, *_ = map(float, content.split())
-        col1s.append(int((cx - w / 2) * W))
-        col2s.append(int((cx + w / 2) * W))
-        row1s.append(int((cy - h / 2) * H))
-        row2s.append(int((cy + h / 2) * H))
-        zs.append(z)
+        for line in txt.read_text().splitlines():
+            parts = line.split()
+            if not parts or int(parts[0]) != class_id:
+                continue
+            z = int(txt.stem.split("_")[1])
+            cx, cy, w, h = float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])
+            col1s.append(int((cx - w / 2) * W))
+            col2s.append(int((cx + w / 2) * W))
+            row1s.append(int((cy - h / 2) * H))
+            row2s.append(int((cy + h / 2) * H))
+            zs.append(z)
+            break  # one bbox per class per slice
     if not zs:
         return None
     return {"row1": min(row1s), "row2": max(row2s), "col1": min(col1s), "col2": max(col2s), "z1": min(zs), "z2": max(zs)}

@@ -31,6 +31,7 @@ Usage:
 import argparse
 import re
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 import yaml
@@ -59,7 +60,7 @@ def collect_slices(stem_dir: Path, prefix: str, region: str, dataset: str) -> li
 
 
 def make_symlinks(slices: list[dict], images_out: Path, labels_out: Path,
-                  n_copies_fn, keep_classes: set[int] | None = None) -> int:
+                  n_copies_fn, keep_classes: Optional[set] = None) -> int:
     """Create symlinks for each slice, n_copies_fn(slice) times. Returns total links.
 
     If keep_classes is set, label files are written with filtered content instead of symlinked.

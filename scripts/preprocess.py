@@ -48,6 +48,7 @@ Usage:
 import argparse
 import sys
 from pathlib import Path
+from typing import Optional
 
 import nibabel as nib
 import numpy as np
@@ -82,6 +83,8 @@ DATASET_MASK_SUFFIX = {  # noqa: E241
     "spider-challenge-2023":        "_label-SC_seg.nii.gz",
     "data-single-subject":          "_label-SC_seg.nii.gz",
     "whole-spine":                  "_label-SC_seg.nii.gz",
+    "site_006":                     "_label-SC_seg.nii.gz",
+    "site_007":                     "_label-SC_seg.nii.gz"
 }
 
 # Canal mask suffix — only for datasets that have canal segmentations (class 1)
@@ -129,7 +132,7 @@ def _rescale_bbox(bbox, H, W, H_out, W_out):
 
 
 def _bbox3d_from_mask(mask_data: np.ndarray, H: int, W: int, Z: int,
-                      H_out: int, W_out: int) -> dict | None:
+                      H_out: int, W_out: int) -> Optional[dict]:
     """Compute 3D bbox directly from a 3D mask array. Returns {row1,row2,col1,col2,z1,z2} or None."""
     rows1, rows2, cols1, cols2, zs = [], [], [], [], []
     for z in range(Z):

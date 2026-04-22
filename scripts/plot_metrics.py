@@ -22,6 +22,7 @@ Usage:
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --conf-sweep
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --splits val train test --conf-sweep
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --metric iou_3d --splits test
+    python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --metrics iou_3d_mm gap_mm_R gap_mm_L --splits val test
 """
 
 import argparse
@@ -226,9 +227,12 @@ def main():
     )
     parser.add_argument("--inference",  required=True,
                         help="Inference run directory (predictions/<run_id>/)")
-    parser.add_argument("--metric",     default="iou_gt_mean", choices=list(METRIC_LABELS),
+    parser.add_argument("--metric",     default=None, choices=list(METRIC_LABELS),
                         metavar="{" + ",".join(METRIC_LABELS) + "}",
-                        help="Metric to plot (ignored with --conf-sweep)")
+                        help="Single metric to plot (ignored with --conf-sweep or --metrics)")
+    parser.add_argument("--metrics",    nargs="+", default=None, choices=list(METRIC_LABELS),
+                        metavar="METRIC",
+                        help="One or more metrics to plot (ignored with --conf-sweep)")
     parser.add_argument("--splits",      nargs="+", default=["val", "train", "test"],
                         choices=["train", "val", "test", "unknown"])
     parser.add_argument("--datasets",   nargs="+", default=None,
@@ -256,17 +260,19 @@ def main():
         return f"conf{c:.3f}".rstrip("0").rstrip(".")
 
     if not args.conf_sweep:
+        metrics_to_plot = args.metrics or ([args.metric] if args.metric else ["iou_gt_mean"])
         for split in args.splits:
             df = load_patients_at_conf(pred_root, patients_idx, splits_map,
                                        args.conf, [split], args.datasets)
-            title    = f"{METRIC_LABELS[args.metric]} — {pred_root.name} [{split}] conf≥{args.conf}"
-            out_path = pred_root / "plots" / split / args.metric / f"{conf_label(args.conf)}{args.suffix}.png"
-            print(f"{len(df)} patients — {df['dataset'].nunique()} datasets [{split}] "
-                  f"({args.metric}) conf≥{args.conf}")
-            if args.metric in PROPORTION_METRICS:
-                plot_bars(df, args.metric, title, out_path, args.dpi)
-            else:
-                plot_violins(df, args.metric, title, out_path, args.dpi)
+            for metric in metrics_to_plot:
+                title    = f"{METRIC_LABELS[metric]} — {pred_root.name} [{split}] conf≥{args.conf}"
+                out_path = pred_root / "plots" / split / metric / f"{conf_label(args.conf)}{args.suffix}.png"
+                print(f"{len(df)} patients — {df['dataset'].nunique()} datasets [{split}] "
+                      f"({metric}) conf≥{args.conf}")
+                if metric in PROPORTION_METRICS:
+                    plot_bars(df, metric, title, out_path, args.dpi)
+                else:
+                    plot_violins(df, metric, title, out_path, args.dpi)
         return
 
     print(f"Sweeping {len(CONF_STEPS)} thresholds × {len(SWEEP_METRICS)} metrics {args.splits}...")

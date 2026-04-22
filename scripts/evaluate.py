@@ -58,26 +58,32 @@ def load_split_subjects(splits_dir: Path, split: str) -> set:
     return result
 
 
-def read_gt_box(txt_path: Path):
-    """Returns (cx,cy,w,h) or None if file empty/missing."""
+def read_gt_boxes(txt_path: Path) -> dict:
+    """Returns {class_id: (cx,cy,w,h)} for all lines in the GT txt, or {} if missing/empty."""
     if not txt_path.exists():
-        return None
-    content = txt_path.read_text().strip()
-    if not content:
-        return None
-    p = content.split()
-    return (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+        return {}
+    boxes = {}
+    for line in txt_path.read_text().splitlines():
+        p = line.split()
+        if len(p) >= 5:
+            boxes[int(p[0])] = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+    return boxes
 
 
-CLASS_COLORS = {0: (255, 0, 0), 1: (255, 220, 0)}   # sc_mid=red, sc_tip=yellow
-CLASS_NAMES  = {0: "sc_mid",   1: "sc_tip"}
+# GT fill colours per class (semi-transparent overlay)
+GT_COLORS   = {0: (0, 255, 0),   1: (0, 200, 255)}   # sc=green, canal=cyan
+# Pred outline colours per class
+CLASS_COLORS = {0: (255, 0, 0),  1: (255, 220, 0)}    # sc=red, canal=yellow
+CLASS_NAMES  = {0: "sc",         1: "canal"}
 
 
-def draw_boxes(png_path: str, gt_box, pred_box, pred_conf: float = None,
-               pred_class_id: int = 0) -> Image.Image:
-    """Draw GT (green filled area) and pred (coloured 1px outline + conf score) on the slice.
+def draw_boxes(png_path: str, gt_boxes: dict, pred_boxes: dict,
+               pred_confs: dict) -> Image.Image:
+    """Draw GT (filled area) and pred (1px outline + conf score) for all classes.
 
-    pred_class_id: 0=sc_mid (red), 1=sc_tip (yellow).
+    gt_boxes   : {class_id: (cx,cy,w,h)}
+    pred_boxes : {class_id: (cx,cy,w,h)}
+    pred_confs : {class_id: float}
     """
     img = Image.open(png_path).convert("RGB")
     W, H = img.size
@@ -93,29 +99,28 @@ def draw_boxes(png_path: str, gt_box, pred_box, pred_conf: float = None,
     except OSError:
         font = ImageFont.load_default()
 
-    if gt_box is not None:
+    for cls_id, gt_box in gt_boxes.items():
+        color = GT_COLORS.get(cls_id, (0, 255, 0))
         overlay = Image.new("RGB", img.size, (0, 0, 0))
-        ImageDraw.Draw(overlay).rectangle(to_pixels(gt_box), fill=(0, 255, 0))
+        ImageDraw.Draw(overlay).rectangle(to_pixels(gt_box), fill=color)
         img = Image.blend(img, overlay, alpha=0.3)
 
-    pred_color = CLASS_COLORS.get(pred_class_id, (255, 0, 0))
-    pred_label = CLASS_NAMES.get(pred_class_id, f"class{pred_class_id}")
-
-    if pred_box is not None:
-        draw = ImageDraw.Draw(img)
+    draw = ImageDraw.Draw(img)
+    for cls_id, pred_box in pred_boxes.items():
+        color = CLASS_COLORS.get(cls_id, (255, 0, 0))
         coords = to_pixels(pred_box)
-        draw.rectangle(coords, outline=pred_color, width=1)
-        if pred_conf is not None:
+        draw.rectangle(coords, outline=color, width=1)
+        conf = pred_confs.get(cls_id)
+        if conf is not None:
             draw.text((coords[0] + 2, max(coords[1] - 12, 0)),
-                      f"{pred_conf:.4f}", fill=pred_color, font=font)
+                      f"{conf:.4f}", fill=color, font=font)
 
     # Legend
-    draw = ImageDraw.Draw(img)
     entries = []
-    if gt_box is not None:
-        entries.append(("GT", (0, 200, 0)))
-    if pred_box is not None:
-        entries.append((pred_label, pred_color))
+    for cls_id in sorted(gt_boxes):
+        entries.append((f"GT {CLASS_NAMES.get(cls_id, str(cls_id))}", GT_COLORS.get(cls_id, (0,255,0))))
+    for cls_id in sorted(pred_boxes):
+        entries.append((CLASS_NAMES.get(cls_id, str(cls_id)), CLASS_COLORS.get(cls_id, (255,0,0))))
     x, y = 4, 4
     for label, color in entries:
         draw.rectangle([x, y, x + 8, y + 8], fill=color)
@@ -161,29 +166,31 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
         chunk = pngs[i:i + batch_size]
         results = model.predict([str(p) for p in chunk], conf=conf, verbose=False)
         for png, res in zip(chunk, results):
-            boxes = res.boxes
-            pred_box, pred_conf, pred_class_id = None, 0.0, 0
-            if boxes is not None and len(boxes) > 0:
-                best = int(boxes.conf.argmax())
-                cx, cy, w, h = boxes.xywhn[best].tolist()
-                pred_conf     = float(boxes.conf[best])
-                pred_class_id = int(boxes.cls[best])
-                pred_box      = (cx, cy, w, h)
+            # Keep best box per class
+            pred_boxes: dict = {}
+            pred_confs: dict = {}
+            if res.boxes is not None and len(res.boxes) > 0:
+                for cls_id in res.boxes.cls.unique().tolist():
+                    cls_id = int(cls_id)
+                    mask   = res.boxes.cls == cls_id
+                    best   = int(res.boxes.conf[mask].argmax())
+                    idxs   = mask.nonzero(as_tuple=True)[0]
+                    idx    = idxs[best].item()
+                    cx, cy, w, h       = res.boxes.xywhn[idx].tolist()
+                    pred_boxes[cls_id] = (cx, cy, w, h)
+                    pred_confs[cls_id] = float(res.boxes.conf[idx])
 
             txt_out = pred_txt_dir / (png.stem + ".txt")
-            if pred_box is not None:
-                txt_out.write_text(
-                    f"{pred_class_id} {pred_box[0]:.6f} {pred_box[1]:.6f}"
-                    f" {pred_box[2]:.6f} {pred_box[3]:.6f} {pred_conf:.6f}\n"
-                )
-            else:
-                txt_out.write_text("")
+            lines = "".join(
+                f"{cls_id} {b[0]:.6f} {b[1]:.6f} {b[2]:.6f} {b[3]:.6f} {pred_confs[cls_id]:.6f}\n"
+                for cls_id, b in sorted(pred_boxes.items())
+            )
+            txt_out.write_text(lines)
 
             if save_viz:
-                gt_box = read_gt_box(gt_txt_dir / (png.stem + ".txt"))
-                draw_boxes(str(png), gt_box, pred_box,
-                           pred_conf if pred_box is not None else None,
-                           pred_class_id).save(str(pred_dir / "png" / png.name))
+                gt_boxes = read_gt_boxes(gt_txt_dir / (png.stem + ".txt"))
+                draw_boxes(str(png), gt_boxes, pred_boxes, pred_confs).save(
+                    str(pred_dir / "png" / png.name))
 
     meta = yaml.safe_load((patient_dir / "meta.yaml").read_text())
     H, W = meta["shape_las"][0], meta["shape_las"][1]
@@ -211,17 +218,16 @@ def render_overlays(pred_root: Path, processed_dir: Path) -> None:
             png_src = src_png_dir / (pred_txt.stem + ".png")
             if not png_src.exists():
                 continue
-            content       = pred_txt.read_text().strip()
-            pred_box      = None
-            pred_conf     = None
-            pred_class_id = 0
-            if content:
-                p             = content.split()
-                pred_class_id = int(p[0])
-                pred_box      = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
-                pred_conf     = float(p[5]) if len(p) >= 6 else None
-            gt_box = read_gt_box(gt_txt_dir / pred_txt.name)
-            draw_boxes(str(png_src), gt_box, pred_box, pred_conf, pred_class_id).save(
+            pred_boxes: dict = {}
+            pred_confs: dict = {}
+            for line in pred_txt.read_text().splitlines():
+                p = line.split()
+                if len(p) >= 5:
+                    cls_id             = int(p[0])
+                    pred_boxes[cls_id] = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+                    pred_confs[cls_id] = float(p[5]) if len(p) >= 6 else None
+            gt_boxes = read_gt_boxes(gt_txt_dir / pred_txt.name)
+            draw_boxes(str(png_src), gt_boxes, pred_boxes, pred_confs).save(
                 str(out_png_dir / png_src.name))
 
 
@@ -242,6 +248,8 @@ def main():
     parser.add_argument("--split",       default=None, choices=["train", "val", "test"],
                         help="Restrict inference to subjects in this split (default: all)")
     parser.add_argument("--out",         default="predictions", help="Output root directory")
+    parser.add_argument("--datasets",    nargs="+", default=None,
+                        help="Restrict to these dataset names (default: all)")
     parser.add_argument("--no-viz",      action="store_true", help="Skip saving overlay images")
     parser.add_argument("--viz-only",    action="store_true",
                         help="Regenerate overlay PNGs from existing predictions (no inference)")
@@ -272,6 +280,8 @@ def main():
     patients = []
     for dataset_dir in sorted(processed_dir.iterdir()):
         if not dataset_dir.is_dir():
+            continue
+        if args.datasets and dataset_dir.name not in args.datasets:
             continue
         for patient_dir in sorted(dataset_dir.iterdir()):
             if not (patient_dir / "png").is_dir():

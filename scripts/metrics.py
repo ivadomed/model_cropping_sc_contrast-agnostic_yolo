@@ -651,8 +651,12 @@ def main():
                         help="IoU threshold for fp_iou_rate / fn_iou_rate in patient.csv")
     parser.add_argument("--split",         default=None, choices=["train", "val", "test", "unknown"],
                         help="Restrict computation to subjects in this split (default: all)")
-    parser.add_argument("--metrics",       nargs="+", default=None, choices=sorted(BBOX_ONLY_METRICS),
+    parser.add_argument("--metrics",       nargs="+",
+                        default=["iou_3d_mm", "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S"],
+                        choices=sorted(BBOX_ONLY_METRICS),
                         help="Patch only these bbox metrics in existing patient.csv (skips slices.csv)")
+    parser.add_argument("--datasets",      nargs="+", default=None,
+                        help="Restrict to these dataset names (default: all)")
     parser.add_argument("--no-html",       action="store_true",
                         help="Skip generating report.html")
     args = parser.parse_args()
@@ -667,13 +671,17 @@ def main():
     patients = [
         (d.name, p.name)
         for d in sorted(pred_root.iterdir()) if d.is_dir()
+        and (not args.datasets or d.name in args.datasets)
         for p in sorted(d.iterdir()) if (p / "txt").is_dir()
     ]
 
-    # patients.csv: full index, always written before any --split filter
-    pd.DataFrame([{"dataset": ds, "stem": st} for ds, st in patients]).to_csv(
-        pred_root / "patients.csv", index=False)
-    print(f"Patients index → {pred_root / 'patients.csv'} ({len(patients)} patients)")
+    # patients.csv: full index — only (re)written when no --datasets filter is active
+    if not args.datasets:
+        pd.DataFrame([{"dataset": ds, "stem": st} for ds, st in patients]).to_csv(
+            pred_root / "patients.csv", index=False)
+        print(f"Patients index → {pred_root / 'patients.csv'} ({len(patients)} patients)")
+    else:
+        print(f"Skipping patients.csv rewrite (--datasets filter active): {len(patients)} patients")
 
     if args.split:
         patients = [

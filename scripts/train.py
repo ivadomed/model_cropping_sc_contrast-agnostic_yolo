@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Train a YOLO 2D model for spinal cord detection on axial MRI slices.
+Train a YOLO 2D model for spinal cord / spinal canal detection on axial MRI slices.
 
-Defaults: yolo26n, imgsz=320, batch=1024 (4×GPU), device=0,1,2,3, epochs=100, patience=20.
+Defaults: yolo26n, imgsz=320, batch=256, device=0, epochs=100, patience=20.
+Dataset par défaut : datasets/10mm_SI_1mm_axial_3ch_sc_only_region_balanced_all_datasets/dataset.yaml
 
 Augmentations (désactivables via --no-augment) issues du papier contrast-agnostic :
   - Affine (rotation + scaling)           → YOLO: degrees=15, scale=0.2
@@ -18,9 +19,13 @@ Sauvegarde : checkpoints/<run-id>/weights/{best,last}.pt
              best.pt = meilleur fitness = 0.1·mAP50 + 0.9·mAP50-95 sur val
 
 Usage:
-    python scripts/train.py --dataset-yaml datasets_1mm_SI/dataset.yaml --run-id yolo26_1mm_noaug --no-augment
-    python scripts/train.py --dataset-yaml datasets_1mm_SI/dataset.yaml --run-id yolo26_1mm_aug
-    python scripts/train.py ... --model yolo26s.pt --epochs 150 --no-wandb
+    python scripts/train.py --run-id yolo26n_sc_only
+    python scripts/train.py --run-id yolo26n_sc_only --no-augment
+    python scripts/train.py --run-id yolo26s_sc_only --model yolo26s.pt --epochs 150
+    python scripts/train.py --run-id yolo26n_sc_only_all_datasets \
+        --dataset-yaml datasets/10mm_SI_1mm_axial_3ch_sc_only_region_balanced_all_datasets/dataset.yaml
+    python scripts/train.py --run-id yolo26n_sc_and_canal \
+        --dataset-yaml datasets/10mm_SI_1mm_axial_3ch_sc_and_canal/dataset.yaml
 """
 
 import argparse
@@ -62,7 +67,8 @@ def main():
         description="Train YOLO for spinal cord detection on axial MRI slices",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--dataset-yaml", required=True)
+    parser.add_argument("--dataset-yaml",
+                        default="datasets/10mm_SI_1mm_axial_3ch_sc_only_region_balanced_all_datasets/dataset.yaml")
     parser.add_argument("--run-id",  required=True, help="Run name used for checkpoints/ and W&B")
     parser.add_argument("--model",   default="yolo26n.pt",
                         help="Model weights: yolo26{n,s,m,l,x}.pt (latest) | yolo12{n,s,m,l,x}.pt | "

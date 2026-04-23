@@ -75,7 +75,7 @@ def main():
                              "yolo11{n,s,m,l,x}.pt | yolov8{n,s,m,l,x}.pt | path/to/custom.pt")
     parser.add_argument("--epochs",   type=int,   default=100)
     parser.add_argument("--imgsz",    type=int,   default=320)
-    parser.add_argument("--batch",    type=int,   default=256,
+    parser.add_argument("--batch",    type=int,   default=512,
                         help="Batch size (-1 = auto-detect optimal for GPU memory)")
     parser.add_argument("--device",   default="0")
     parser.add_argument("--patience", type=int,   default=20)

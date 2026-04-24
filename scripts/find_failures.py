@@ -17,6 +17,8 @@ Usage:
     python scripts/find_failures.py --inference predictions/yolo26_1mm_axial_v2 --conf 0.1
     python scripts/find_failures.py --inference predictions/yolo26_1mm_axial_v2 \\
         --splits val train test --top-k 10
+    python scripts/find_failures.py --inference predictions/yolo26_1mm_axial_v2 \\
+        --exclude-csv bad_gt.csv
 """
 
 import argparse
@@ -218,14 +220,23 @@ def main():
     parser.add_argument("--conf",       type=float, default=0.001,
                         help="Confidence threshold")
     parser.add_argument("--top-k",      type=int, default=10)
-    parser.add_argument("--metrics",    nargs="+", default=None,
+    parser.add_argument("--metrics",     nargs="+", default=None,
                         choices=list(METRICS), metavar="METRIC",
                         help="Metrics to compute (default: all)")
+    parser.add_argument("--exclude-csv", default=None,
+                        help="CSV with columns 'dataset' and 'stem' — matching pairs are excluded")
     args = parser.parse_args()
 
     pred_root    = Path(args.inference)
     splits_map   = load_splits(Path(args.splits_dir))
     patients_idx = pd.read_csv(pred_root / "patients.csv")
+    if args.exclude_csv:
+        excl     = pd.read_csv(args.exclude_csv)
+        excl_set = set(zip(excl["dataset"], excl["stem"]))
+        mask     = patients_idx.apply(lambda r: (r["dataset"], r["stem"]) not in excl_set, axis=1)
+        n_excl   = (~mask).sum()
+        patients_idx = patients_idx[mask]
+        print(f"Excluded {n_excl} patient(s) from {args.exclude_csv}")
 
     for split in args.splits:
         df = load_patients_at_conf(pred_root, patients_idx, splits_map, args.conf, split)

@@ -23,6 +23,12 @@ Usage:
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --splits val train test --conf-sweep
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --metric iou_3d --splits test
     python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --metrics iou_3d_mm gap_mm_R gap_mm_L --splits val test
+    python scripts/plot_metrics.py --inference predictions/yolo26_1mm_axial --exclude-csv bad_gt.csv
+
+exclude-csv format (two columns, no index):
+    dataset,stem
+    nih-ms-mp2rage,sub-nih062_UNIT1
+    dcm-zurich,sub-001
 """
 
 import argparse
@@ -114,11 +120,21 @@ def load_patients_at_conf(pred_root: Path, patients_idx: pd.DataFrame, splits_ma
 
 
 def plot_violins(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi: int) -> None:
-    is_pct   = metric in PCT_METRICS
-    datasets = sorted(df["dataset"].unique())
-    n        = len(datasets)
+    is_pct    = metric in PCT_METRICS
+    is_gap_mm = metric.startswith("gap_mm_")
+    datasets  = sorted(df["dataset"].unique())
+    n         = len(datasets)
 
-    fig, ax = plt.subplots(figsize=(max(8, n * 1.4), 6))
+    if is_gap_mm:
+        all_vals = df[metric].dropna().values
+        y_min = np.floor(all_vals.min() / 10) * 10 if len(all_vals) else -10
+        y_max = np.ceil(all_vals.max()  / 10) * 10 if len(all_vals) else  10
+        y_range   = max(y_max - y_min, 10)
+        fig_height = max(3, y_range / 10 * 0.9)
+    else:
+        fig_height = 6
+
+    fig, ax = plt.subplots(figsize=(max(8, n * 1.4), fig_height))
     fig.suptitle(title, fontsize=13, fontweight="bold")
 
     positions        = list(range(1, n + 1))
@@ -153,6 +169,9 @@ def plot_violins(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi:
         ax.vlines(pos, np.percentile(d, 25), np.percentile(d, 75), color="white", linewidth=2.5, zorder=4)
         ax.scatter(pos, np.mean(d),   color="red",    zorder=5, s=40, marker="D", label="Mean"   if i == violin_idx[0] else "")
         ax.scatter(pos, np.median(d), color="orange", zorder=5, s=40, marker="o", label="Median" if i == violin_idx[0] else "")
+        if is_gap_mm:
+            ax.text(pos, y_max, f"max={d.max():.1f}mm", ha="center", va="bottom",
+                    fontsize=7, color="#333", clip_on=False)
 
     for i in single_idx:
         ax.scatter([positions[i]], data_per_dataset[i], color="#4C72B0", zorder=5, s=40)
@@ -166,10 +185,13 @@ def plot_violins(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi:
     if is_pct:
         ax.set_ylabel(METRIC_LABELS[metric] + " (%)", fontsize=10)
         ax.set_ylim(-2, 102)
+    elif is_gap_mm:
+        ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
+        ax.set_ylim(y_min, y_max)
+        ax.set_yticks(np.arange(y_min, y_max + 1, 10))
+        ax.axhline(0, color="#888", linewidth=1.0, linestyle="--", zorder=1)
     elif metric in FREE_SCALE_METRICS:
         ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
-        if metric.startswith("gap_mm_"):
-            ax.axhline(0, color="#888", linewidth=1.0, linestyle="--", zorder=1)
     else:
         ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
         ax.set_ylim(-0.05, 1.05)
@@ -245,6 +267,8 @@ def main():
                         help="Generate one violin plot per metric per conf threshold (0.0→1.0)")
     parser.add_argument("--exclude",    nargs="+", default=None,
                         help="Stems to exclude (e.g. sub-nih184_UNIT1)")
+    parser.add_argument("--exclude-csv", default=None,
+                        help="CSV with columns 'dataset' and 'stem' — matching (dataset, stem) pairs are excluded")
     parser.add_argument("--suffix",     default="",
                         help="Suffix appended to output filename (e.g. _no_nih)")
     parser.add_argument("--dpi",        type=int, default=150)
@@ -255,6 +279,13 @@ def main():
     patients_idx = pd.read_csv(pred_root / "patients.csv")
     if args.exclude:
         patients_idx = patients_idx[~patients_idx["stem"].isin(args.exclude)]
+    if args.exclude_csv:
+        excl = pd.read_csv(args.exclude_csv)
+        excl_set = set(zip(excl["dataset"], excl["stem"]))
+        mask = patients_idx.apply(lambda r: (r["dataset"], r["stem"]) not in excl_set, axis=1)
+        n_excl = (~mask).sum()
+        patients_idx = patients_idx[mask]
+        print(f"Excluded {n_excl} patient(s) from {args.exclude_csv}")
 
     def conf_label(c: float) -> str:
         return f"conf{c:.3f}".rstrip("0").rstrip(".")

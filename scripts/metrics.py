@@ -127,31 +127,33 @@ def read_pred(txt_path: Path):
     return (float(p[1]), float(p[2]), float(p[3]), float(p[4])), (float(p[5]) if len(p) > 5 else 1.0)
 
 
-def read_pred_boxes(pred_txt_dir: Path) -> dict:
-    """Returns {z: (cx, cy, w, h, conf, class_id)} for all predicted slices."""
+def read_pred_boxes(pred_txt_dir: Path, class_id: int = 0) -> dict:
+    """Returns {z: (cx, cy, w, h, conf, class_id)} for predicted slices of a given class."""
     if not pred_txt_dir.is_dir():
         return {}
     boxes = {}
     for txt in sorted(pred_txt_dir.glob("slice_*.txt")):
         z = int(txt.stem.split("_")[1])
-        content = txt.read_text().strip()
-        if content:
-            p = content.split()
-            boxes[z] = (float(p[1]), float(p[2]), float(p[3]), float(p[4]),
-                        float(p[5]) if len(p) > 5 else 1.0,
-                        int(p[0]))
+        for line in txt.read_text().splitlines():
+            p = line.split()
+            if p and int(p[0]) == class_id:
+                boxes[z] = (float(p[1]), float(p[2]), float(p[3]), float(p[4]),
+                            float(p[5]) if len(p) > 5 else 1.0,
+                            class_id)
+                break
     return boxes
 
 
-def read_gt_boxes(gt_txt_dir: Path) -> dict:
-    """Returns {z: (cx, cy, w, h, class_id)} for all GT slices with annotation."""
+def read_gt_boxes(gt_txt_dir: Path, class_id: int = 0) -> dict:
+    """Returns {z: (cx, cy, w, h, class_id)} for GT slices of a given class."""
     boxes = {}
     for txt in sorted(gt_txt_dir.glob("slice_*.txt")):
         z = int(txt.stem.split("_")[1])
-        content = txt.read_text().strip()
-        if content:
-            p = content.split()
-            boxes[z] = (float(p[1]), float(p[2]), float(p[3]), float(p[4]), int(p[0]))
+        for line in txt.read_text().splitlines():
+            p = line.split()
+            if p and int(p[0]) == class_id:
+                boxes[z] = (float(p[1]), float(p[2]), float(p[3]), float(p[4]), class_id)
+                break
     return boxes
 
 
@@ -240,12 +242,13 @@ def patient_slices(gt_txt_dir: Path, pred_txt_dir: Path) -> pd.DataFrame:
 
         pred_box, pred_conf, pred_class = None, 0.0, -1
         if z in pred_txts:
-            raw = pred_txts[z].read_text().strip()
-            if raw:
-                p          = raw.split()
-                pred_class = int(p[0])
-                pred_box   = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
-                pred_conf  = float(p[5]) if len(p) > 5 else 1.0
+            for line in pred_txts[z].read_text().splitlines():
+                p = line.split()
+                if p and int(p[0]) == 0:   # class 0 = SC
+                    pred_class = 0
+                    pred_box   = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
+                    pred_conf  = float(p[5]) if len(p) > 5 else 1.0
+                    break
 
         has_gt   = gt_box is not None
         has_pred = pred_box is not None

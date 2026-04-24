@@ -2,7 +2,7 @@
 """
 Train a YOLO 2D model for spinal cord / spinal canal detection on axial MRI slices.
 
-Defaults: yolo26n, imgsz=320, batch=256, device=0, epochs=100, patience=20.
+Defaults: yolo26n, imgsz=320, batch=-1 (auto), device=0, epochs=100, patience=20.
 Dataset par défaut : datasets/10mm_SI_1mm_axial_3ch_sc_only_region_balanced_all_datasets/dataset.yaml
 
 Augmentations (désactivables via --no-augment) issues du papier contrast-agnostic :
@@ -75,7 +75,7 @@ def main():
                              "yolo11{n,s,m,l,x}.pt | yolov8{n,s,m,l,x}.pt | path/to/custom.pt")
     parser.add_argument("--epochs",   type=int,   default=100)
     parser.add_argument("--imgsz",    type=int,   default=320)
-    parser.add_argument("--batch",    type=int,   default=512,
+    parser.add_argument("--batch",    type=int,   default=-1,
                         help="Batch size (-1 = auto-detect optimal for GPU memory)")
     parser.add_argument("--device",   default="0")
     parser.add_argument("--patience", type=int,   default=20)

@@ -4,39 +4,40 @@ Preprocess BIDS datasets: data/raw/ → processed/<variant>/<dataset>/<stem>/
 
 For each (image, mask) pair in each BIDS dataset:
   1. Reorient to LAS (nibabel axis permutation, no interpolation)
-  2. Resample SI axis (axis 2) to --si-res mm  (image: order=1, mask: order=0)
-  3. Optionally resample RL and AP axes (0 and 1) to --axial-res mm isotropically
-     (nibabel.processing.resample_to_output, image: order=1, mask: order=0)
-  4. Export axial slices → png/slice_NNN.png
-       2D mode  : grayscale uint8 (H×W), min-max normalised per slice
-       2.5D mode: pseudo-RGB uint8 (H×W×3), R=slice z-1, G=slice z, B=slice z+1
-                  border slices (z=0, z=Z-1) use a black frame for missing neighbours
-  5. Compute YOLO GT bbox per slice → txt/slice_NNN.txt
+  2. Resample all axes to target resolution via resample_to_output:
+       SI  (axis 2) → --si-res mm
+       RL  (axis 0) → --axial-res mm (if provided, else native)
+       AP  (axis 1) → --axial-res mm (if provided, else native)
+  3. Export 2D slices → png/slice_NNN.png
+       --plane axial    : iterate axis 2 (SI),  slice = img[:, :, z]  shape (RL × AP)
+       --plane sagittal : iterate axis 0 (RL),  slice = img[r, :, :].T shape (SI × AP) — Superior at top
+       2D mode  : grayscale uint8, normalised per slice
+       2.5D mode: pseudo-RGB uint8 (R=prev, G=current, B=next) along the slice axis
+                  border slices use a black frame for missing neighbours
+  4. Compute YOLO GT bbox per slice → txt/slice_NNN.txt
        without --with-canal: "0 cx cy w h" (SC only, class 0)
-       with --with-canal:    up to 2 lines per file — "0 cx cy w h" (SC) and/or "1 cx cy w h" (canal)
-  6. Compute 3D GT bbox → volume/bbox_3d.txt  ("row1 row2 col1 col2 z1 z2", voxels)
+       with --with-canal:    up to 2 lines — "0 cx cy w h" (SC) and/or "1 cx cy w h" (canal)
+  5. Compute 3D GT bbox → volume/bbox_3d.txt  ("row1 row2 col1 col2 z1 z2", voxels)
      with --with-canal: also volume/bbox_3d_canal.txt (same format, canal class)
-  7. Write meta.yaml (raw_image, raw_mask, shape_las, si_res_mm, rl_res_mm, ap_res_mm,
-                      axial_res_mm if --axial-res, channels=3 if --3ch,
+  6. Write meta.yaml (raw_image, raw_mask, shape_las [H,W,Z], si_res_mm, rl_res_mm, ap_res_mm,
+                      axial_res_mm if --axial-res, channels=3 if --3ch, plane,
                       raw_canal_mask if --with-canal and canal mask found)
 
 Mask discovery: per-dataset explicit suffix tables DATASET_MASK_SUFFIX (SC) and
 DATASET_CANAL_SUFFIX (canal, only for datasets that have it) — crashes on unknown dataset.
-Output dir named automatically: processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_canal]
+Output dir named automatically:
+  axial   : processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_sc_and_canal]
+  sagittal: processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch]_sagittal[_sc_and_canal]
 
 Usage:
-    # 10mm SI, native axial resolution, grayscale → processed/10mm_SI/
-    python scripts/preprocess.py --si-res 10.0
-
-    # 10mm SI + 1mm isotropic axial resampling, grayscale → processed/10mm_SI_1mm_axial/
-    python scripts/preprocess.py --si-res 10.0 --axial-res 1.0
-
-    # 10mm SI + 1mm isotropic axial resampling, pseudo-RGB 2.5D → processed/10mm_SI_1mm_axial_3ch/
+    # Axial 10mm SI + 1mm isotropic, pseudo-RGB (current default)
     python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --3ch
 
-    # SC + canal dual-class, 3 datasets only → processed/10mm_SI_1mm_axial_3ch_canal/
-    python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --3ch --with-canal \\
-        --datasets data-multi-subject spider-challenge-2023 whole-spine
+    # Sagittal: 5mm slice thickness (RL), 2mm in-plane (AP+SI), pseudo-RGB
+    python scripts/preprocess.py --si-res 2.0 --axial-res 2.0 --rl-res 5.0 --3ch --plane sagittal
+
+    # SC + canal dual-class axial
+    python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --3ch --with-canal
 
     # Patch existing meta.yaml with rl_res_mm/ap_res_mm without re-preprocessing
     python scripts/preprocess.py --update-meta --out processed/10mm_SI
@@ -154,8 +155,8 @@ def _bbox3d_from_mask(mask_data: np.ndarray, H: int, W: int, Z: int,
 
 
 def process_pair(args: tuple):
-    img_path_str, mask_path_str, canal_mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm, three_ch = args
-    img_path = Path(img_path_str)
+    img_path_str, mask_path_str, canal_mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm, rl_res_mm, three_ch, plane = args
+    img_path    = Path(img_path_str)
     patient_dir = Path(processed_str) / dataset_name / nifti_stem(img_path)
 
     if (patient_dir / "meta.yaml").exists():
@@ -166,18 +167,18 @@ def process_pair(args: tuple):
 
     img_las  = reorient_to_las(nib.load(str(img_path)))
     mask_las = reorient_to_las(nib.load(str(mask_path_str)))
-    rl_res_mm, ap_res_mm = float(img_las.header.get_zooms()[0]), float(img_las.header.get_zooms()[1])
+    rl_native_mm, ap_native_mm = float(img_las.header.get_zooms()[0]), float(img_las.header.get_zooms()[1])
 
-    voxel_sizes = (axial_res_mm or rl_res_mm, axial_res_mm or ap_res_mm, si_res_mm)
+    # RL axis: --rl-res takes priority, then --axial-res, then native
+    # AP axis: --axial-res takes priority, then native
+    eff_rl = rl_res_mm or axial_res_mm or rl_native_mm
+    eff_ap = axial_res_mm or ap_native_mm
+    voxel_sizes = (eff_rl, eff_ap, si_res_mm)
     img_r  = resample_to_output(img_las,  voxel_sizes=voxel_sizes, order=1)
     mask_r = resample_to_output(mask_las, voxel_sizes=voxel_sizes, order=0)
 
     img_data  = img_r.get_fdata(dtype=np.float32)
     mask_data = np.round(mask_r.get_fdata()).astype(np.uint8)
-    H, W = img_data.shape[:2]
-    Z = min(img_data.shape[2], mask_data.shape[2])  # zoom rounding can differ by 1 voxel
-    # YOLO rejects images with any dimension < 10px — pad to at least 10 if needed
-    H_out, W_out = max(H, 10), max(W, 10)
 
     canal_data = None
     if canal_mask_path_str is not None:
@@ -185,57 +186,84 @@ def process_pair(args: tuple):
                                         voxel_sizes=voxel_sizes, order=0)
         canal_data = np.round(canal_r.get_fdata()).astype(np.uint8)
 
+    # Determine slice axis and extraction function
+    # axial   : iterate axis 2 (SI), slice shape = (RL, AP) = (H, W)
+    # sagittal: iterate axis 0 (RL), raw shape = (AP, SI) → transposed to (SI, AP) so SC is vertical
+    if plane == "axial":
+        N      = min(img_data.shape[2], mask_data.shape[2])
+        H, W   = img_data.shape[0], img_data.shape[1]
+        def get_img_slice(data, i):  return data[:, :, i]
+        def get_mask_slice(data, i): return data[:, :, i]
+        def canal_valid(i):          return canal_data is not None and i < canal_data.shape[2]
+    else:  # sagittal — flip SI axis then transpose: (AP,SI)→flip→(AP,SI↑)→T→(SI↑,AP)
+        N      = min(img_data.shape[0], mask_data.shape[0])
+        H, W   = img_data.shape[2], img_data.shape[1]
+        def get_img_slice(data, i):  return data[i, :, ::-1].T
+        def get_mask_slice(data, i): return data[i, :, ::-1].T
+        def canal_valid(i):          return canal_data is not None and i < canal_data.shape[0]
+
+    # YOLO rejects images with any dimension < 10px — pad if needed
+    H_out, W_out = max(H, 10), max(W, 10)
     blank = np.zeros((H_out, W_out), dtype=np.uint8)
 
-    def get_slice(z: int) -> np.ndarray:
-        if z < 0 or z >= Z:
+    def get_slice(i: int) -> np.ndarray:
+        if i < 0 or i >= N:
             return blank
-        arr = normalize_to_uint8(img_data[:, :, z])
+        arr = normalize_to_uint8(get_img_slice(img_data, i))
         if H_out != H or W_out != W:
             padded = blank.copy()
             padded[:H, :W] = arr
             return padded
         return arr
 
-    for z in range(Z):
-        arr = get_slice(z)
+    for i in range(N):
+        arr = get_slice(i)
         if three_ch:
-            rgb = np.stack([get_slice(z - 1), arr, get_slice(z + 1)], axis=2)
-            PILImage.fromarray(rgb).save(str(patient_dir / "png" / f"slice_{z:03d}.png"))
+            rgb = np.stack([get_slice(i - 1), arr, get_slice(i + 1)], axis=2)
+            PILImage.fromarray(rgb).save(str(patient_dir / "png" / f"slice_{i:03d}.png"))
         else:
-            PILImage.fromarray(arr).save(str(patient_dir / "png" / f"slice_{z:03d}.png"))
+            PILImage.fromarray(arr).save(str(patient_dir / "png" / f"slice_{i:03d}.png"))
 
-        sc_bbox     = _rescale_bbox(seg_to_yolo_bbox(mask_data[:, :, z]), H, W, H_out, W_out)
-        canal_bbox  = None
-        if canal_data is not None and z < canal_data.shape[2]:
-            canal_bbox = _rescale_bbox(seg_to_yolo_bbox(canal_data[:, :, z]), H, W, H_out, W_out)
+        sc_slice   = get_mask_slice(mask_data, i)
+        sc_bbox    = _rescale_bbox(seg_to_yolo_bbox(sc_slice), H, W, H_out, W_out)
+        canal_bbox = None
+        if canal_valid(i):
+            canal_bbox = _rescale_bbox(seg_to_yolo_bbox(get_mask_slice(canal_data, i)), H, W, H_out, W_out)
 
         lines = ""
         if sc_bbox is not None:
             lines += f"0 {sc_bbox[0]:.6f} {sc_bbox[1]:.6f} {sc_bbox[2]:.6f} {sc_bbox[3]:.6f}\n"
         if canal_bbox is not None:
             lines += f"1 {canal_bbox[0]:.6f} {canal_bbox[1]:.6f} {canal_bbox[2]:.6f} {canal_bbox[3]:.6f}\n"
-        (patient_dir / "txt" / f"slice_{z:03d}.txt").write_text(lines)
+        (patient_dir / "txt" / f"slice_{i:03d}.txt").write_text(lines)
 
     box = bbox_3d_from_txts(patient_dir / "txt", H_out, W_out)
     if box is not None:
         write_bbox_3d(patient_dir / "volume" / "bbox_3d.txt", **box)
 
     if canal_data is not None:
-        canal_box = _bbox3d_from_mask(canal_data, H, W, min(Z, canal_data.shape[2]), H_out, W_out)
+        n_canal = canal_data.shape[2] if plane == "axial" else canal_data.shape[0]
+        canal_box = _bbox3d_from_mask(
+            canal_data if plane == "axial" else np.transpose(canal_data, (2, 1, 0)),
+            H, W, min(N, n_canal), H_out, W_out
+        )
         if canal_box is not None:
             write_bbox_3d(patient_dir / "volume" / "bbox_3d_canal.txt", **canal_box)
 
+    shape_las = list(img_data.shape[:3])
     meta = {
         "raw_image": str(img_path),
         "raw_mask":  str(mask_path_str),
-        "shape_las": [H, W, Z],
+        "shape_las": shape_las,
         "si_res_mm": si_res_mm,
-        "rl_res_mm": round(axial_res_mm or rl_res_mm, 4),
-        "ap_res_mm": round(axial_res_mm or ap_res_mm, 4),
+        "rl_res_mm": round(eff_rl, 4),
+        "ap_res_mm": round(eff_ap, 4),
+        "plane":     plane,
     }
     if axial_res_mm is not None:
         meta["axial_res_mm"] = axial_res_mm
+    if rl_res_mm is not None:
+        meta["rl_res_mm_explicit"] = rl_res_mm
     if three_ch:
         meta["channels"] = 3
     if canal_mask_path_str is not None:
@@ -276,6 +304,9 @@ def main():
     )
     parser.add_argument("--si-res",      type=float, default=None, help="Target SI (Z) resolution in mm (required unless --update-meta)")
     parser.add_argument("--axial-res",   type=float, default=None, help="Target in-plane (RL, AP) isotropic resolution in mm (optional)")
+    parser.add_argument("--rl-res",      type=float, default=None,
+                        help="Target RL resolution in mm (sagittal slice thickness). "
+                             "Overrides --axial-res for the RL axis only. Appends '_{rl_res}mm_RL' to output dir.")
     parser.add_argument("--raw",         default="data/raw",  help="BIDS root directory")
     parser.add_argument("--out",         default=None,        help="Output directory (default: processed/{si_res}mm_SI[_{axial_res}mm_axial])")
     parser.add_argument("--datasets",   nargs="+", default=None, help="Restrict to these dataset names (default: all)")
@@ -283,7 +314,10 @@ def main():
                         help="Export pseudo-RGB PNG (R=prev slice, G=current, B=next). Appends '_3ch' to output dir name.")
     parser.add_argument("--with-canal",  action="store_true", dest="with_canal",
                         help="Also extract canal bbox (class 1) alongside SC (class 0). "
-                             "Requires dataset to be in DATASET_CANAL_SUFFIX. Appends '_canal' to output dir name.")
+                             "Requires dataset to be in DATASET_CANAL_SUFFIX.")
+    parser.add_argument("--plane",       default="axial", choices=["axial", "sagittal"],
+                        help="Slice plane: axial (iterate SI axis) or sagittal (iterate RL axis). "
+                             "Appends '_sagittal' to output dir name when sagittal.")
     parser.add_argument("--update-meta", action="store_true",
                         help="Only patch existing meta.yaml with rl_res_mm/ap_res_mm (no re-preprocessing). Requires --out.")
     args = parser.parse_args()
@@ -296,18 +330,24 @@ def main():
     assert args.si_res is not None, "--si-res is required"
     si_res     = args.si_res
     axial_res  = args.axial_res
+    rl_res     = args.rl_res
     three_ch   = args.three_ch
     with_canal = args.with_canal
+    plane      = args.plane
     if args.out:
         processed_dir = str(Path(args.out))
     else:
         name = f"{si_res:g}mm_SI"
         if axial_res is not None:
             name += f"_{axial_res:g}mm_axial"
+        if rl_res is not None:
+            name += f"_{rl_res:g}mm_RL"
         if three_ch:
             name += "_3ch"
+        if plane == "sagittal":
+            name += "_sagittal"
         if with_canal:
-            name += "_canal"
+            name += "_sc_and_canal"
         processed_dir = str(Path("processed") / name)
 
     worker_args = []
@@ -320,7 +360,7 @@ def main():
         print(f"{dataset_dir.name}: {len(pairs)} pairs")
         worker_args.extend(
             (str(img), str(mask), str(canal) if canal else None,
-             dataset_dir.name, processed_dir, si_res, axial_res, three_ch)
+             dataset_dir.name, processed_dir, si_res, axial_res, rl_res, three_ch, plane)
             for img, mask, canal in pairs
         )
 

@@ -150,8 +150,13 @@ def auto_batch(model: YOLO, conf: float, start: int = 512) -> int:
 
 
 def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
-                  conf: float, batch_size: int, save_viz: bool) -> None:
-    """Run inference on all slices of one patient and save predictions."""
+                  conf: float, batch_size: int, save_viz: bool,
+                  flip_x: bool = False) -> None:
+    """Run inference on all slices of one patient and save predictions.
+
+    flip_x: horizontally flip each slice before inference, then unflip cx (cx → 1-cx).
+    Overlay PNGs always show the original (unflipped) image with corrected prediction.
+    """
     pred_txt_dir = pred_dir / "txt"
     pred_vol_dir = pred_dir / "volume"
     for d in (pred_txt_dir, pred_vol_dir):
@@ -164,9 +169,13 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
 
     for i in range(0, len(pngs), batch_size):
         chunk = pngs[i:i + batch_size]
-        results = model.predict([str(p) for p in chunk], conf=conf, verbose=False)
+        if flip_x:
+            inputs = [np.array(Image.open(p).convert("RGB"))[:, ::-1, ::-1].copy() for p in chunk]
+        else:
+            inputs = [str(p) for p in chunk]
+        results = model.predict(inputs, conf=conf, verbose=False)
         for png, res in zip(chunk, results):
-            # Keep best box per class
+            # Keep best box per class, unflip cx if needed
             pred_boxes: dict = {}
             pred_confs: dict = {}
             if res.boxes is not None and len(res.boxes) > 0:
@@ -176,7 +185,9 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
                     best   = int(res.boxes.conf[mask].argmax())
                     idxs   = mask.nonzero(as_tuple=True)[0]
                     idx    = idxs[best].item()
-                    cx, cy, w, h       = res.boxes.xywhn[idx].tolist()
+                    cx, cy, w, h = res.boxes.xywhn[idx].tolist()
+                    if flip_x:
+                        cx = 1.0 - cx
                     pred_boxes[cls_id] = (cx, cy, w, h)
                     pred_confs[cls_id] = float(res.boxes.conf[idx])
 
@@ -250,6 +261,8 @@ def main():
     parser.add_argument("--out",         default="predictions", help="Output root directory")
     parser.add_argument("--datasets",    nargs="+", default=None,
                         help="Restrict to these dataset names (default: all)")
+    parser.add_argument("--flip-x",      action="store_true",
+                        help="Flip each slice horizontally before inference, unflip cx in predictions")
     parser.add_argument("--no-viz",      action="store_true", help="Skip saving overlay images")
     parser.add_argument("--viz-only",    action="store_true",
                         help="Regenerate overlay PNGs from existing predictions (no inference)")
@@ -262,7 +275,8 @@ def main():
     else:
         assert args.checkpoint is not None, "--checkpoint is required unless --viz-only is set"
         if args.run_id is None:
-            args.run_id = Path(args.checkpoint).parent.parent.name
+            base = Path(args.checkpoint).parent.parent.name
+            args.run_id = base + "_flipx" if args.flip_x else base
 
     pred_root = Path(args.out) / args.run_id
 
@@ -298,7 +312,7 @@ def main():
 
     for dataset, patient_dir in tqdm(patients, desc="Patients", unit="pat"):
         infer_patient(model, patient_dir, pred_root / dataset / patient_dir.name,
-                      args.conf, batch_size, not args.no_viz)
+                      args.conf, batch_size, not args.no_viz, args.flip_x)
 
     print(f"Predictions saved to: {pred_root}")
     print("Run metrics.py to compute aggregated metrics.")

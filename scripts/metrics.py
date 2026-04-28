@@ -510,15 +510,27 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
         rl_res = meta.get("rl_res_mm", 1.0)
         ap_res = meta.get("ap_res_mm", 1.0)
         b = reconstruct_bbox3d(active, H, W)
-        # LAS: row_min=Right, row_max=Left, col_min=Posterior, col_max=Anterior, z_min=Inferior, z_max=Superior
-        gaps = {
-            "gap_mm_R": (b[0] - gt_bbox[0]) * rl_res,
-            "gap_mm_L": (gt_bbox[1] - b[1]) * rl_res,
-            "gap_mm_P": (b[2] - gt_bbox[2]) * ap_res,
-            "gap_mm_A": (gt_bbox[3] - b[3]) * ap_res,
-            "gap_mm_I": (b[4] - gt_bbox[4]) * si_res,
-            "gap_mm_S": (gt_bbox[5] - b[5]) * si_res,
-        }
+        if meta.get("plane", "axial") == "sagittal":
+            # Sagittal: row=SI (flipped, 0=Superior), col=AP, z=RL
+            # row_min=Superior, row_max=Inferior, col_min=Posterior, col_max=Anterior, z_min=Right, z_max=Left
+            gaps = {
+                "gap_mm_R": (b[4] - gt_bbox[4]) * rl_res,
+                "gap_mm_L": (gt_bbox[5] - b[5]) * rl_res,
+                "gap_mm_P": (b[2] - gt_bbox[2]) * ap_res,
+                "gap_mm_A": (gt_bbox[3] - b[3]) * ap_res,
+                "gap_mm_S": (b[0] - gt_bbox[0]) * si_res,
+                "gap_mm_I": (gt_bbox[1] - b[1]) * si_res,
+            }
+        else:
+            # Axial: row=RL (0=Right), col=AP (0=Posterior), z=SI (0=Inferior)
+            gaps = {
+                "gap_mm_R": (b[0] - gt_bbox[0]) * rl_res,
+                "gap_mm_L": (gt_bbox[1] - b[1]) * rl_res,
+                "gap_mm_P": (b[2] - gt_bbox[2]) * ap_res,
+                "gap_mm_A": (gt_bbox[3] - b[3]) * ap_res,
+                "gap_mm_I": (b[4] - gt_bbox[4]) * si_res,
+                "gap_mm_S": (gt_bbox[5] - b[5]) * si_res,
+            }
         return round(gaps[metric], 2)
     if metric == "iou_sc_mid_box":
         return sc_mid_box_iou(pred_boxes, conf_thresh, gt_boxes, H, W)

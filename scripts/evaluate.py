@@ -5,11 +5,14 @@ Run YOLO inference on processed/ slices → predictions/<run-id>/
 Mirrors processed/ hierarchy:
   predictions/<run-id>/<dataset>/<patient>/
     png/slice_NNN.png   ← GT (green filled) + pred (red 1px outline + conf score) overlay
-    txt/slice_NNN.txt   ← predicted bbox: "0 cx cy w h conf" (empty if no detection)
+    txt/slice_NNN.txt   ← predicted bbox: "0 cx cy w h conf" per line (empty if no detection)
     volume/bbox_3d.txt  ← 3D bbox union from predicted slices
 
-conf=0 by default: all boxes are saved regardless of confidence.
-Filter by confidence at the metrics stage (metrics.py --conf).
+conf=0.1 by default: boxes below threshold are discarded.
+Sagittal plane saves all boxes above threshold; axial saves only the best per class.
+
+Axial plane  : one box per class saved (best confidence).
+Sagittal plane: all boxes above conf threshold saved (multiple lines per class allowed).
 
 Run metrics.py afterwards to compute aggregated performance metrics from saved predictions.
 
@@ -45,7 +48,7 @@ from ultralytics import YOLO
 sys.path.insert(0, str(Path(__file__).parent))
 from utils import bbox_3d_from_txts, write_bbox_3d
 
-CONF_THRESH = 0.0  # default confidence threshold for inference (filter at metrics stage)
+CONF_THRESH = 0.1  # default confidence threshold for inference
 
 
 def load_split_subjects(splits_dir: Path, split: str) -> set:
@@ -77,19 +80,17 @@ CLASS_COLORS = {0: (255, 0, 0),  1: (255, 220, 0)}    # sc=red, canal=yellow
 CLASS_NAMES  = {0: "sc",         1: "canal"}
 
 
-def draw_boxes(png_path: str, gt_boxes: dict, pred_boxes: dict,
-               pred_confs: dict) -> Image.Image:
+def draw_boxes(png_path: str, gt_boxes: dict,
+               pred_boxes: list) -> Image.Image:
     """Draw GT (filled area) and pred (1px outline + conf score) for all classes.
 
-    gt_boxes   : {class_id: (cx,cy,w,h)}
-    pred_boxes : {class_id: (cx,cy,w,h)}
-    pred_confs : {class_id: float}
+    gt_boxes  : {class_id: (cx,cy,w,h)}
+    pred_boxes: [(class_id, cx, cy, w, h, conf), ...]  — multiple boxes per class allowed
     """
     img = Image.open(png_path).convert("RGB")
     W, H = img.size
 
-    def to_pixels(box):
-        cx, cy, w, h = box
+    def to_pixels(cx, cy, w, h):
         x0, y0 = (cx - w / 2) * W, (cy - h / 2) * H
         x1, y1 = (cx + w / 2) * W, (cy + h / 2) * H
         return [min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)]
@@ -102,24 +103,23 @@ def draw_boxes(png_path: str, gt_boxes: dict, pred_boxes: dict,
     for cls_id, gt_box in gt_boxes.items():
         color = GT_COLORS.get(cls_id, (0, 255, 0))
         overlay = Image.new("RGB", img.size, (0, 0, 0))
-        ImageDraw.Draw(overlay).rectangle(to_pixels(gt_box), fill=color)
+        ImageDraw.Draw(overlay).rectangle(to_pixels(*gt_box), fill=color)
         img = Image.blend(img, overlay, alpha=0.3)
 
     draw = ImageDraw.Draw(img)
-    for cls_id, pred_box in pred_boxes.items():
+    for cls_id, cx, cy, w, h, conf in pred_boxes:
         color = CLASS_COLORS.get(cls_id, (255, 0, 0))
-        coords = to_pixels(pred_box)
+        coords = to_pixels(cx, cy, w, h)
         draw.rectangle(coords, outline=color, width=1)
-        conf = pred_confs.get(cls_id)
-        if conf is not None:
-            draw.text((coords[0] + 2, max(coords[1] - 12, 0)),
-                      f"{conf:.4f}", fill=color, font=font)
+        draw.text((coords[0] + 2, max(coords[1] - 12, 0)),
+                  f"{conf:.4f}", fill=color, font=font)
 
     # Legend
+    pred_cls_ids = sorted({b[0] for b in pred_boxes})
     entries = []
     for cls_id in sorted(gt_boxes):
         entries.append((f"GT {CLASS_NAMES.get(cls_id, str(cls_id))}", GT_COLORS.get(cls_id, (0,255,0))))
-    for cls_id in sorted(pred_boxes):
+    for cls_id in pred_cls_ids:
         entries.append((CLASS_NAMES.get(cls_id, str(cls_id)), CLASS_COLORS.get(cls_id, (255,0,0))))
     x, y = 4, 4
     for label, color in entries:
@@ -167,6 +167,9 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
     gt_txt_dir = patient_dir / "txt"
     pngs = sorted((patient_dir / "png").glob("slice_*.png"))
 
+    meta      = yaml.safe_load((patient_dir / "meta.yaml").read_text())
+    sagittal  = meta.get("plane", "axial") == "sagittal"
+
     for i in range(0, len(pngs), batch_size):
         chunk = pngs[i:i + batch_size]
         if flip_x:
@@ -175,35 +178,40 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
             inputs = [str(p) for p in chunk]
         results = model.predict(inputs, conf=conf, verbose=False)
         for png, res in zip(chunk, results):
-            # Keep best box per class, unflip cx if needed
-            pred_boxes: dict = {}
-            pred_confs: dict = {}
+            # Sagittal: keep all boxes above conf threshold.
+            # Axial: keep best box per class.
+            pred_boxes: list = []
             if res.boxes is not None and len(res.boxes) > 0:
-                for cls_id in res.boxes.cls.unique().tolist():
-                    cls_id = int(cls_id)
-                    mask   = res.boxes.cls == cls_id
-                    best   = int(res.boxes.conf[mask].argmax())
-                    idxs   = mask.nonzero(as_tuple=True)[0]
-                    idx    = idxs[best].item()
-                    cx, cy, w, h = res.boxes.xywhn[idx].tolist()
-                    if flip_x:
-                        cx = 1.0 - cx
-                    pred_boxes[cls_id] = (cx, cy, w, h)
-                    pred_confs[cls_id] = float(res.boxes.conf[idx])
+                if sagittal:
+                    for i_box in range(len(res.boxes)):
+                        cls_id = int(res.boxes.cls[i_box].item())
+                        cx, cy, w, h = res.boxes.xywhn[i_box].tolist()
+                        if flip_x:
+                            cx = 1.0 - cx
+                        pred_boxes.append((cls_id, cx, cy, w, h, float(res.boxes.conf[i_box])))
+                else:
+                    for cls_id in res.boxes.cls.unique().tolist():
+                        cls_id = int(cls_id)
+                        mask   = res.boxes.cls == cls_id
+                        best   = int(res.boxes.conf[mask].argmax())
+                        idxs   = mask.nonzero(as_tuple=True)[0]
+                        idx    = idxs[best].item()
+                        cx, cy, w, h = res.boxes.xywhn[idx].tolist()
+                        if flip_x:
+                            cx = 1.0 - cx
+                        pred_boxes.append((cls_id, cx, cy, w, h, float(res.boxes.conf[idx])))
 
             txt_out = pred_txt_dir / (png.stem + ".txt")
-            lines = "".join(
-                f"{cls_id} {b[0]:.6f} {b[1]:.6f} {b[2]:.6f} {b[3]:.6f} {pred_confs[cls_id]:.6f}\n"
-                for cls_id, b in sorted(pred_boxes.items())
-            )
-            txt_out.write_text(lines)
+            txt_out.write_text("".join(
+                f"{cls_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f} {c:.6f}\n"
+                for cls_id, cx, cy, w, h, c in pred_boxes
+            ))
 
             if save_viz:
                 gt_boxes = read_gt_boxes(gt_txt_dir / (png.stem + ".txt"))
-                draw_boxes(str(png), gt_boxes, pred_boxes, pred_confs).save(
+                draw_boxes(str(png), gt_boxes, pred_boxes).save(
                     str(pred_dir / "png" / png.name))
 
-    meta = yaml.safe_load((patient_dir / "meta.yaml").read_text())
     H, W = meta["shape_las"][0], meta["shape_las"][1]
     box = bbox_3d_from_txts(pred_txt_dir, H, W)
     if box is not None:
@@ -229,16 +237,15 @@ def render_overlays(pred_root: Path, processed_dir: Path) -> None:
             png_src = src_png_dir / (pred_txt.stem + ".png")
             if not png_src.exists():
                 continue
-            pred_boxes: dict = {}
-            pred_confs: dict = {}
+            pred_boxes: list = []
             for line in pred_txt.read_text().splitlines():
                 p = line.split()
                 if len(p) >= 5:
-                    cls_id             = int(p[0])
-                    pred_boxes[cls_id] = (float(p[1]), float(p[2]), float(p[3]), float(p[4]))
-                    pred_confs[cls_id] = float(p[5]) if len(p) >= 6 else None
+                    cls_id = int(p[0])
+                    conf   = float(p[5]) if len(p) >= 6 else 0.0
+                    pred_boxes.append((cls_id, float(p[1]), float(p[2]), float(p[3]), float(p[4]), conf))
             gt_boxes = read_gt_boxes(gt_txt_dir / pred_txt.name)
-            draw_boxes(str(png_src), gt_boxes, pred_boxes, pred_confs).save(
+            draw_boxes(str(png_src), gt_boxes, pred_boxes).save(
                 str(out_png_dir / png_src.name))
 
 

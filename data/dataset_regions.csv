@@ -2,7 +2,6 @@ dataset,region
 basel-mp2rage,cervical
 canproco,cervical
 data-multi-subject,cervical
-data-single-subject,mixed
 dcm-brno,cervical
 dcm-zurich,cervical
 dcm-zurich-lesions,cervical

@@ -59,6 +59,58 @@ METRICS = {
     "gap_mm_A_neg":        True,
     "gap_mm_I_neg":        True,
     "gap_mm_S_neg":        True,
+    "iou_3d_mm_reg30mm":   True,
+    "gap_mm_R_reg30mm":    False,
+    "gap_mm_L_reg30mm":    False,
+    "gap_mm_P_reg30mm":    False,
+    "gap_mm_A_reg30mm":    False,
+    "gap_mm_I_reg30mm":    False,
+    "gap_mm_S_reg30mm":    False,
+    "gap_mm_R_reg30mm_neg": True,
+    "gap_mm_L_reg30mm_neg": True,
+    "gap_mm_P_reg30mm_neg": True,
+    "gap_mm_A_reg30mm_neg": True,
+    "gap_mm_I_reg30mm_neg": True,
+    "gap_mm_S_reg30mm_neg": True,
+    "iou_3d_mm_trim50":   True,
+    "gap_mm_R_trim50":    False,
+    "gap_mm_L_trim50":    False,
+    "gap_mm_P_trim50":    False,
+    "gap_mm_A_trim50":    False,
+    "gap_mm_I_trim50":    False,
+    "gap_mm_S_trim50":    False,
+    "gap_mm_R_trim50_neg": True,
+    "gap_mm_L_trim50_neg": True,
+    "gap_mm_P_trim50_neg": True,
+    "gap_mm_A_trim50_neg": True,
+    "gap_mm_I_trim50_neg": True,
+    "gap_mm_S_trim50_neg": True,
+    "iou_3d_mm_trim40":   True,
+    "gap_mm_R_trim40":    False,
+    "gap_mm_L_trim40":    False,
+    "gap_mm_P_trim40":    False,
+    "gap_mm_A_trim40":    False,
+    "gap_mm_I_trim40":    False,
+    "gap_mm_S_trim40":    False,
+    "gap_mm_R_trim40_neg": True,
+    "gap_mm_L_trim40_neg": True,
+    "gap_mm_P_trim40_neg": True,
+    "gap_mm_A_trim40_neg": True,
+    "gap_mm_I_trim40_neg": True,
+    "gap_mm_S_trim40_neg": True,
+    "iou_3d_mm_trim30":   True,
+    "gap_mm_R_trim30":    False,
+    "gap_mm_L_trim30":    False,
+    "gap_mm_P_trim30":    False,
+    "gap_mm_A_trim30":    False,
+    "gap_mm_I_trim30":    False,
+    "gap_mm_S_trim30":    False,
+    "gap_mm_R_trim30_neg": True,
+    "gap_mm_L_trim30_neg": True,
+    "gap_mm_P_trim30_neg": True,
+    "gap_mm_A_trim30_neg": True,
+    "gap_mm_I_trim30_neg": True,
+    "gap_mm_S_trim30_neg": True,
 }
 
 # IoU threshold used in metric definition (None = no IoU threshold)
@@ -88,6 +140,58 @@ METRIC_IOU_THRESH = {
     "gap_mm_A_neg":        None,
     "gap_mm_I_neg":        None,
     "gap_mm_S_neg":        None,
+    "iou_3d_mm_reg30mm":   None,
+    "gap_mm_R_reg30mm":    None,
+    "gap_mm_L_reg30mm":    None,
+    "gap_mm_P_reg30mm":    None,
+    "gap_mm_A_reg30mm":    None,
+    "gap_mm_I_reg30mm":    None,
+    "gap_mm_S_reg30mm":    None,
+    "gap_mm_R_reg30mm_neg": None,
+    "gap_mm_L_reg30mm_neg": None,
+    "gap_mm_P_reg30mm_neg": None,
+    "gap_mm_A_reg30mm_neg": None,
+    "gap_mm_I_reg30mm_neg": None,
+    "gap_mm_S_reg30mm_neg": None,
+    "iou_3d_mm_trim50":   None,
+    "gap_mm_R_trim50":    None,
+    "gap_mm_L_trim50":    None,
+    "gap_mm_P_trim50":    None,
+    "gap_mm_A_trim50":    None,
+    "gap_mm_I_trim50":    None,
+    "gap_mm_S_trim50":    None,
+    "gap_mm_R_trim50_neg": None,
+    "gap_mm_L_trim50_neg": None,
+    "gap_mm_P_trim50_neg": None,
+    "gap_mm_A_trim50_neg": None,
+    "gap_mm_I_trim50_neg": None,
+    "gap_mm_S_trim50_neg": None,
+    "iou_3d_mm_trim40":   None,
+    "gap_mm_R_trim40":    None,
+    "gap_mm_L_trim40":    None,
+    "gap_mm_P_trim40":    None,
+    "gap_mm_A_trim40":    None,
+    "gap_mm_I_trim40":    None,
+    "gap_mm_S_trim40":    None,
+    "gap_mm_R_trim40_neg": None,
+    "gap_mm_L_trim40_neg": None,
+    "gap_mm_P_trim40_neg": None,
+    "gap_mm_A_trim40_neg": None,
+    "gap_mm_I_trim40_neg": None,
+    "gap_mm_S_trim40_neg": None,
+    "iou_3d_mm_trim30":   None,
+    "gap_mm_R_trim30":    None,
+    "gap_mm_L_trim30":    None,
+    "gap_mm_P_trim30":    None,
+    "gap_mm_A_trim30":    None,
+    "gap_mm_I_trim30":    None,
+    "gap_mm_S_trim30":    None,
+    "gap_mm_R_trim30_neg": None,
+    "gap_mm_L_trim30_neg": None,
+    "gap_mm_P_trim30_neg": None,
+    "gap_mm_A_trim30_neg": None,
+    "gap_mm_I_trim30_neg": None,
+    "gap_mm_S_trim30_neg": None,
 }
 
 # Maps metric name → actual column in patient.csv (for _neg variants)
@@ -99,6 +203,30 @@ METRIC_COLUMN.update({
     "gap_mm_A_neg": "gap_mm_A",
     "gap_mm_I_neg": "gap_mm_I",
     "gap_mm_S_neg": "gap_mm_S",
+    "gap_mm_R_reg30mm_neg": "gap_mm_R_reg30mm",
+    "gap_mm_L_reg30mm_neg": "gap_mm_L_reg30mm",
+    "gap_mm_P_reg30mm_neg": "gap_mm_P_reg30mm",
+    "gap_mm_A_reg30mm_neg": "gap_mm_A_reg30mm",
+    "gap_mm_I_reg30mm_neg": "gap_mm_I_reg30mm",
+    "gap_mm_S_reg30mm_neg": "gap_mm_S_reg30mm",
+    "gap_mm_R_trim50_neg": "gap_mm_R_trim50",
+    "gap_mm_L_trim50_neg": "gap_mm_L_trim50",
+    "gap_mm_P_trim50_neg": "gap_mm_P_trim50",
+    "gap_mm_A_trim50_neg": "gap_mm_A_trim50",
+    "gap_mm_I_trim50_neg": "gap_mm_I_trim50",
+    "gap_mm_S_trim50_neg": "gap_mm_S_trim50",
+    "gap_mm_R_trim40_neg": "gap_mm_R_trim40",
+    "gap_mm_L_trim40_neg": "gap_mm_L_trim40",
+    "gap_mm_P_trim40_neg": "gap_mm_P_trim40",
+    "gap_mm_A_trim40_neg": "gap_mm_A_trim40",
+    "gap_mm_I_trim40_neg": "gap_mm_I_trim40",
+    "gap_mm_S_trim40_neg": "gap_mm_S_trim40",
+    "gap_mm_R_trim30_neg": "gap_mm_R_trim30",
+    "gap_mm_L_trim30_neg": "gap_mm_L_trim30",
+    "gap_mm_P_trim30_neg": "gap_mm_P_trim30",
+    "gap_mm_A_trim30_neg": "gap_mm_A_trim30",
+    "gap_mm_I_trim30_neg": "gap_mm_I_trim30",
+    "gap_mm_S_trim30_neg": "gap_mm_S_trim30",
 })
 
 
@@ -197,12 +325,12 @@ def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, col: str,
         patient_dir.mkdir(exist_ok=True)
 
         # symlink → pred_root/<dataset>/<stem>
-        # out_dir = pred_root/<dataset>/failures/<split>/<metric>/
-        # patient_dir/data is 5 levels deep → ../../../../<stem>
+        # out_dir = pred_root/<dataset>/failures/<conf>/<split>/<metric>/
+        # patient_dir/data is 6 levels deep → ../../../../../<stem>
         data_link = patient_dir / "data"
         if data_link.exists() or data_link.is_symlink():
             data_link.unlink()
-        data_link.symlink_to(Path("../../../../") / row["stem"])
+        data_link.symlink_to(Path("../../../../../") / row["stem"])
 
         make_overview(pred_root, dataset, row["stem"],
                       patient_dir / "overview.png", metric, row[col], conf_thresh, rank)
@@ -217,20 +345,24 @@ def main():
     parser.add_argument("--splits-dir", default="data/datasplits/from_raw")
     parser.add_argument("--splits",     nargs="+", default=["val", "train", "test"],
                         choices=["train", "val", "test", "unknown"])
-    parser.add_argument("--conf",       type=float, default=0.001,
+    parser.add_argument("--conf",       type=float, default=0.1,
                         help="Confidence threshold")
     parser.add_argument("--top-k",      type=int, default=10)
-    parser.add_argument("--metrics",     nargs="+", default=None,
+    parser.add_argument("--metrics",     nargs="+",
+                        default=["iou_3d_mm",
+                                 "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S",
+                                 "gap_mm_R_neg", "gap_mm_L_neg", "gap_mm_P_neg",
+                                 "gap_mm_A_neg", "gap_mm_I_neg", "gap_mm_S_neg"],
                         choices=list(METRICS), metavar="METRIC",
-                        help="Metrics to compute (default: all)")
-    parser.add_argument("--exclude-csv", default=None,
-                        help="CSV with columns 'dataset' and 'stem' — matching pairs are excluded")
+                        help="Metrics to compute (default: iou_3d_mm + 6 gaps + 6 gaps_neg)")
+    parser.add_argument("--exclude-csv", default=str(Path.home() / "bad_gt.csv"),
+                        help="CSV with columns 'dataset' and 'stem' — matching pairs are excluded (default: ~/bad_gt.csv if it exists)")
     args = parser.parse_args()
 
     pred_root    = Path(args.inference)
     splits_map   = load_splits(Path(args.splits_dir))
     patients_idx = pd.read_csv(pred_root / "patients.csv")
-    if args.exclude_csv:
+    if args.exclude_csv and Path(args.exclude_csv).exists():
         excl     = pd.read_csv(args.exclude_csv)
         excl_set = set(zip(excl["dataset"], excl["stem"]))
         mask     = patients_idx.apply(lambda r: (r["dataset"], r["stem"]) not in excl_set, axis=1)
@@ -255,8 +387,9 @@ def main():
                 if not top.empty:
                     jobs.append((dataset, metric, col, top))
 
+        conf_str = f"conf_{args.conf:g}"
         for dataset, metric, col, top in tqdm(jobs, desc=split, unit="dataset×metric"):
-            out_dir = pred_root / dataset / "failures" / split / metric
+            out_dir = pred_root / dataset / "failures" / conf_str / split / metric
             write_failures(out_dir, top, metric, col, pred_root, dataset, args.conf)
         print(f"  [{split}] conf={args.conf} → done")
 

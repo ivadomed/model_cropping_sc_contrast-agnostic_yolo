@@ -10,12 +10,14 @@ Creates flat per-slice symlinks (not copies) into datasets/:
   datasets/labels/{train,val,test}/<dataset>_<subject>_<acq>_slice_NNN[_rN].txt
   datasets/dataset.yaml
 
-Oversampling (train split only, requires --regions-csv):
-  --balance-regions : oversample lumbar slices so lumbar ≈ cervical slice count (default: on)
+Oversampling / balancing (train split only):
+  --balance-regions : oversample lumbar slices so lumbar ≈ cervical slice count (default: on, requires --regions-csv)
   --dataset-factors : per-dataset multipliers, e.g. sci-zurich:5 lumbar-epfl:3
+  --sc-ratio N      : per-volume SC balance — keep all SC slices, subsample empty slices to N×n_sc
+                      e.g. --sc-ratio 3 → at most 3 empty slices per SC slice per volume (train only)
   Oversampling creates additional symlinks _r2, _r3, ... pointing to the same files.
   All factors are multiplicative (region_factor × dataset_factor).
-  Val and test splits are never oversampled.
+  Val and test splits are never oversampled or subsampled.
 
 Usage:
     python scripts/build_dataset.py
@@ -29,6 +31,7 @@ Usage:
 """
 
 import argparse
+import random
 import re
 from pathlib import Path
 from typing import Optional
@@ -50,13 +53,29 @@ def find_stem_dirs(dataset_dir: Path, subject: str) -> list[Path]:
 
 
 def collect_slices(stem_dir: Path, prefix: str, region: str, dataset: str) -> list[dict]:
-    """Return one dict per slice: {png, txt, prefix, region, dataset}."""
+    """Return one dict per slice: {png, txt, prefix, region, dataset, has_sc}."""
     slices = []
     for png in sorted((stem_dir / "png").glob("slice_*.png")):
-        txt = stem_dir / "txt" / (png.stem + ".txt")
+        txt    = stem_dir / "txt" / (png.stem + ".txt")
+        has_sc = txt.exists() and bool(txt.read_text().strip())
         slices.append({"png": png, "txt": txt, "prefix": prefix,
-                        "region": region, "dataset": dataset})
+                        "region": region, "dataset": dataset, "has_sc": has_sc})
     return slices
+
+
+def subsample_empty_slices(slices: list[dict], sc_ratio: int, seed: int) -> list[dict]:
+    """Keep all SC slices; subsample empty slices to at most n_sc * sc_ratio per volume.
+
+    Applied per volume (all slices passed here belong to a single stem_dir).
+    Subsampling is deterministic via seed.
+    """
+    sc_slices    = [s for s in slices if s["has_sc"]]
+    empty_slices = [s for s in slices if not s["has_sc"]]
+    max_empty    = len(sc_slices) * sc_ratio
+    if len(empty_slices) > max_empty:
+        rng          = random.Random(seed)
+        empty_slices = rng.sample(empty_slices, max_empty)
+    return sc_slices + empty_slices
 
 
 def make_symlinks(slices: list[dict], images_out: Path, labels_out: Path,
@@ -126,6 +145,10 @@ def main():
     parser.add_argument("--dataset-factors", nargs="*", default=[],
                         metavar="DATASET:N",
                         help="Per-dataset oversampling multipliers, e.g. sci-zurich:5 lumbar-epfl:3 (default: 1 for all)")
+    parser.add_argument("--sc-ratio",        type=int, default=None,
+                        metavar="N",
+                        help="Per-volume SC balance: keep all SC slices, subsample empty slices to N×n_sc (train only). "
+                             "E.g. --sc-ratio 3 → at most 3 empty slices per SC slice.")
     args = parser.parse_args()
 
     assert not args.balance_regions or Path(args.regions_csv).exists(), \
@@ -168,9 +191,11 @@ def main():
             for subject in (subjects or []):
                 for stem_dir in find_stem_dirs(dataset_dir, subject):
                     prefix = f"{dataset}_{stem_dir.name}"
-                    all_slices[partition].extend(
-                        collect_slices(stem_dir, prefix, region, dataset)
-                    )
+                    slices = collect_slices(stem_dir, prefix, region, dataset)
+                    if args.sc_ratio is not None and partition == "train":
+                        seed   = hash(stem_dir.name) & 0xFFFFFFFF
+                        slices = subsample_empty_slices(slices, args.sc_ratio, seed)
+                    all_slices[partition].extend(slices)
 
     # Compute oversampling factors from train set
     region_factor = 1.0

@@ -36,6 +36,28 @@ from ultralytics import YOLO
 from ultralytics.utils import LOGGER, SETTINGS
 
 
+def make_focal_bce(gamma: float):
+    """Return a focal-weighted BCE function with reduction='none' (compatible with detection loss .sum())."""
+    import torch.nn.functional as F
+
+    def focal_bce(pred, target):
+        loss  = F.binary_cross_entropy_with_logits(pred, target, reduction="none")
+        p_t   = target * pred.sigmoid() + (1 - target) * (1 - pred.sigmoid())
+        return loss * (1.0 - p_t) ** gamma
+
+    return focal_bce
+
+
+def inject_focal_loss(trainer) -> None:
+    """Replace the BCE cls loss in the detection head with focal-weighted BCE."""
+    gamma = trainer.args.fl_gamma if hasattr(trainer.args, "fl_gamma") else 2.0
+    if hasattr(trainer, "compute_loss") and hasattr(trainer.compute_loss, "bce"):
+        trainer.compute_loss.bce = make_focal_bce(gamma)
+        print(f"\n[FOCAL LOSS] Injected focal BCE (gamma={gamma}) on cls loss\n")
+        return
+    print("\n[FOCAL LOSS] WARNING: compute_loss.bce not found — focal loss not injected\n")
+
+
 def inject_mri_augmentations(trainer) -> None:
     """Inject MRI-specific albumentations after the dataloader is built."""
     import albumentations as A
@@ -78,13 +100,15 @@ def main():
     parser.add_argument("--batch",    type=int,   default=-1,
                         help="Batch size (-1 = auto-detect optimal for GPU memory)")
     parser.add_argument("--device",   default="0")
-    parser.add_argument("--patience", type=int,   default=20)
+    parser.add_argument("--patience", type=int,   default=100)
     parser.add_argument("--workers",  type=int,   default=8)
     parser.add_argument("--fraction", type=float, default=1.0, help="Fraction of dataset to use (e.g. 0.01 for quick test)")
     parser.add_argument("--resume",   action="store_true",
                         help="Resume from last.pt (set --model to last.pt path)")
     parser.add_argument("--no-augment", action="store_true",
                         help="Disable all augmentations (YOLO built-in + albumentations MRI)")
+    parser.add_argument("--fl-gamma",  type=float, default=0.0,
+                        help="Focal loss gamma (0.0 = BCE, 2.0 = standard focal loss)")
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--wandb-project", default="spine_detection")
     args = parser.parse_args()
@@ -125,6 +149,7 @@ def main():
                 "aug/gaussian_blur_p":  0.0 if args.no_augment else 0.2,
                 "aug/downscale_p":      0.0 if args.no_augment else 0.25,
                 "aug/random_gamma_p":   0.0 if args.no_augment else 0.1,
+                "fl_gamma":             args.fl_gamma,
             },
         )
 
@@ -137,6 +162,8 @@ def main():
     model = YOLO(args.model)
     if not args.no_augment:
         model.add_callback("on_train_start", inject_mri_augmentations)
+    if args.fl_gamma > 0.0:
+        model.add_callback("on_train_start", inject_focal_loss)
 
     aug = dict(
         hsv_h=0.0, hsv_s=0.0, hsv_v=0.0,

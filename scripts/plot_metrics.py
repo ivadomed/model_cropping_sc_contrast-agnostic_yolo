@@ -66,17 +66,50 @@ METRIC_LABELS = {
     "gap_mm_A":            "Gap Anterior face — mm to expand pred to cover GT (+=expand, −=already covers)",
     "gap_mm_I":            "Gap Inferior face — mm to expand pred to cover GT (+=expand, −=already covers)",
     "gap_mm_S":            "Gap Superior face — mm to expand pred to cover GT (+=expand, −=already covers)",
+    "iou_3d_mm_reg30mm":   "3D IoU mm³ (reg30mm: isolated preds >30mm from all others removed)",
+    "gap_mm_R_reg30mm":    "Gap Right face reg30mm — isolated preds >30mm removed",
+    "gap_mm_L_reg30mm":    "Gap Left face reg30mm — isolated preds >30mm removed",
+    "gap_mm_P_reg30mm":    "Gap Posterior face reg30mm — isolated preds >30mm removed",
+    "gap_mm_A_reg30mm":    "Gap Anterior face reg30mm — isolated preds >30mm removed",
+    "gap_mm_I_reg30mm":    "Gap Inferior face reg30mm — isolated preds >30mm removed",
+    "gap_mm_S_reg30mm":    "Gap Superior face reg30mm — isolated preds >30mm removed",
+    "iou_3d_mm_trim50":    "3D IoU mm³ (trim50: pred boundary slices >50mm 3D dist removed)",
+    "gap_mm_R_trim50":     "Gap Right face trim50 — pred boundary slices >50mm 3D dist removed",
+    "gap_mm_L_trim50":     "Gap Left face trim50 — pred boundary slices >50mm 3D dist removed",
+    "gap_mm_P_trim50":     "Gap Posterior face trim50 — pred boundary slices >50mm 3D dist removed",
+    "gap_mm_A_trim50":     "Gap Anterior face trim50 — pred boundary slices >50mm 3D dist removed",
+    "gap_mm_I_trim50":     "Gap Inferior face trim50 — pred boundary slices >50mm 3D dist removed",
+    "gap_mm_S_trim50":     "Gap Superior face trim50 — pred boundary slices >50mm 3D dist removed",
+    "iou_3d_mm_trim40":    "3D IoU mm³ (trim40: pred boundary slices >40mm 3D dist removed)",
+    "gap_mm_R_trim40":     "Gap Right face trim40 — pred boundary slices >40mm 3D dist removed",
+    "gap_mm_L_trim40":     "Gap Left face trim40 — pred boundary slices >40mm 3D dist removed",
+    "gap_mm_P_trim40":     "Gap Posterior face trim40 — pred boundary slices >40mm 3D dist removed",
+    "gap_mm_A_trim40":     "Gap Anterior face trim40 — pred boundary slices >40mm 3D dist removed",
+    "gap_mm_I_trim40":     "Gap Inferior face trim40 — pred boundary slices >40mm 3D dist removed",
+    "gap_mm_S_trim40":     "Gap Superior face trim40 — pred boundary slices >40mm 3D dist removed",
+    "iou_3d_mm_trim30":    "3D IoU mm³ (trim30: pred boundary slices >30mm 3D dist removed)",
+    "gap_mm_R_trim30":     "Gap Right face trim30 — pred boundary slices >30mm 3D dist removed",
+    "gap_mm_L_trim30":     "Gap Left face trim30 — pred boundary slices >30mm 3D dist removed",
+    "gap_mm_P_trim30":     "Gap Posterior face trim30 — pred boundary slices >30mm 3D dist removed",
+    "gap_mm_A_trim30":     "Gap Anterior face trim30 — pred boundary slices >30mm 3D dist removed",
+    "gap_mm_I_trim30":     "Gap Inferior face trim30 — pred boundary slices >30mm 3D dist removed",
+    "gap_mm_S_trim30":     "Gap Superior face trim30 — pred boundary slices >30mm 3D dist removed",
 }
 
-SWEEP_METRICS      = ["iou_gt_mean", "iou_all_mean", "iou_3d", "iou_3d_mm", "iou_3d_mm_filt",
-                      "iou_3d_mm_ransac", "iou_3d_mm_pad10", "gt_in_pad10",
-                      "iou_3d_mm_padz20", "gt_in_padz20", "pred_vol_ratio",
-                      "iou_sc_mid_box", "fp_on_gt_rate", "fp_on_gt_inner_rate",
+SWEEP_METRICS      = ["iou_3d_mm",
                       "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S"]
 PCT_METRICS        = {"fp_rate", "fn_rate", "fp_iou_rate", "fn_iou_rate", "fp_on_gt_rate", "fp_on_gt_inner_rate"}
 PROPORTION_METRICS = {"gt_in_pad10", "gt_in_padz20"}   # binary 0/1 → bar chart of % per dataset
 FREE_SCALE_METRICS = {"pred_vol_ratio",
-                      "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S"}
+                      "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S",
+                      "gap_mm_R_reg30mm", "gap_mm_L_reg30mm", "gap_mm_P_reg30mm",
+                      "gap_mm_A_reg30mm", "gap_mm_I_reg30mm", "gap_mm_S_reg30mm",
+                      "gap_mm_R_trim50", "gap_mm_L_trim50", "gap_mm_P_trim50",
+                      "gap_mm_A_trim50", "gap_mm_I_trim50", "gap_mm_S_trim50",
+                      "gap_mm_R_trim40", "gap_mm_L_trim40", "gap_mm_P_trim40",
+                      "gap_mm_A_trim40", "gap_mm_I_trim40", "gap_mm_S_trim40",
+                      "gap_mm_R_trim30", "gap_mm_L_trim30", "gap_mm_P_trim30",
+                      "gap_mm_A_trim30", "gap_mm_I_trim30", "gap_mm_S_trim30"}
 CONF_STEPS    = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
 
 
@@ -163,18 +196,21 @@ def plot_violins(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi:
             pc.set_edgecolor("#2a4a80")
             pc.set_alpha(0.75)
 
+    rng = np.random.default_rng(0)
     for i in violin_idx:
         d   = data_per_dataset[i]
         pos = positions[i]
         ax.vlines(pos, np.percentile(d, 25), np.percentile(d, 75), color="white", linewidth=2.5, zorder=4)
-        ax.scatter(pos, np.mean(d),   color="red",    zorder=5, s=40, marker="D", label="Mean"   if i == violin_idx[0] else "")
-        ax.scatter(pos, np.median(d), color="orange", zorder=5, s=40, marker="o", label="Median" if i == violin_idx[0] else "")
+        ax.scatter(pos, np.mean(d),   color="red",    zorder=6, s=40, marker="D", label="Mean"   if i == violin_idx[0] else "")
+        ax.scatter(pos, np.median(d), color="orange", zorder=6, s=40, marker="o", label="Median" if i == violin_idx[0] else "")
+        jitter = rng.uniform(-0.08, 0.08, size=len(d))
+        ax.scatter(pos + jitter, d, color="black", alpha=0.35, zorder=5, s=12, linewidths=0)
         if is_gap_mm:
             ax.text(pos, y_max, f"max={d.max():.1f}mm", ha="center", va="bottom",
                     fontsize=7, color="#333", clip_on=False)
 
     for i in single_idx:
-        ax.scatter([positions[i]], data_per_dataset[i], color="#4C72B0", zorder=5, s=40)
+        ax.scatter([positions[i]], data_per_dataset[i], color="black", zorder=5, s=20)
 
     for i in empty_idx:
         center = 50 if is_pct else 0.5
@@ -255,7 +291,7 @@ def main():
     parser.add_argument("--metrics",    nargs="+", default=None, choices=list(METRIC_LABELS),
                         metavar="METRIC",
                         help="One or more metrics to plot (ignored with --conf-sweep)")
-    parser.add_argument("--splits",      nargs="+", default=["val", "train", "test"],
+    parser.add_argument("--splits",      nargs="+", default=["train", "val", "test"],
                         choices=["train", "val", "test", "unknown"])
     parser.add_argument("--datasets",   nargs="+", default=None,
                         help="Restrict to these datasets (default: all)")
@@ -267,8 +303,8 @@ def main():
                         help="Generate one violin plot per metric per conf threshold (0.0→1.0)")
     parser.add_argument("--exclude",    nargs="+", default=None,
                         help="Stems to exclude (e.g. sub-nih184_UNIT1)")
-    parser.add_argument("--exclude-csv", default=None,
-                        help="CSV with columns 'dataset' and 'stem' — matching (dataset, stem) pairs are excluded")
+    parser.add_argument("--exclude-csv", default=str(Path.home() / "bad_gt.csv"),
+                        help="CSV with columns 'dataset' and 'stem' — matching (dataset, stem) pairs are excluded (default: ~/bad_gt.csv if it exists)")
     parser.add_argument("--suffix",     default="",
                         help="Suffix appended to output filename (e.g. _no_nih)")
     parser.add_argument("--dpi",        type=int, default=150)
@@ -279,7 +315,7 @@ def main():
     patients_idx = pd.read_csv(pred_root / "patients.csv")
     if args.exclude:
         patients_idx = patients_idx[~patients_idx["stem"].isin(args.exclude)]
-    if args.exclude_csv:
+    if args.exclude_csv and Path(args.exclude_csv).exists():
         excl = pd.read_csv(args.exclude_csv)
         excl_set = set(zip(excl["dataset"], excl["stem"]))
         mask = patients_idx.apply(lambda r: (r["dataset"], r["stem"]) not in excl_set, axis=1)
@@ -291,7 +327,7 @@ def main():
         return f"conf{c:.3f}".rstrip("0").rstrip(".")
 
     if not args.conf_sweep:
-        metrics_to_plot = args.metrics or ([args.metric] if args.metric else ["iou_gt_mean"])
+        metrics_to_plot = args.metrics or ([args.metric] if args.metric else SWEEP_METRICS)
         for split in args.splits:
             df = load_patients_at_conf(pred_root, patients_idx, splits_map,
                                        args.conf, [split], args.datasets)

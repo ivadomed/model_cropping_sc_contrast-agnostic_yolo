@@ -25,6 +25,9 @@ Per-patient outputs saved to predictions/<run_id>/<dataset>/<patient>/metrics/:
                                       pred box: expand from max-conf sc_mid (class=0) slice until
                                                 first sc_tip (class=1) or gap in each Z direction
                                       GT box:   union of all GT sc_mid (class=0) slices
+                 gap_mm_*/iou_3d_mm with _trim50 suffix: same but pred boundary slices isolated by
+                                      >50mm in Z from their neighbor are removed before computing
+                                      (analogous to reg30mm but in the Z axis instead of x-y plane)
 
 Run-level outputs:
   patients.csv — index of all patients: dataset, stem (no metrics, no split)
@@ -61,16 +64,29 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent))
 
 CONF_STEPS        = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
-CONF_REPORT       = 0.25   # default threshold used only for report.html
+CONF_REPORT       = 0.1    # default threshold used only for report.html
 SPLITS            = ["test", "val", "train", "unknown"]
+REG_DIST_MM       = 30.0   # distance threshold for _reg30mm spatial outlier filter
+REG_SUFFIX        = "_reg30mm"
+# _trim<N> suffix: N is the 3D Euclidean distance threshold in mm encoded in the metric name
+TRIM_DISTANCES   = [30, 40, 50]   # supported values; add more here to expose them
 # Metrics that depend only on pred bbox + GT bbox + meta (no slices.csv needed → fast patch)
+_TRIM_METRICS    = [f"{pfx}_trim{d}"
+                     for d in TRIM_DISTANCES
+                     for pfx in ("iou_3d_mm",
+                                 "gap_mm_R", "gap_mm_L", "gap_mm_P",
+                                 "gap_mm_A", "gap_mm_I", "gap_mm_S")]
 BBOX_ONLY_METRICS = {"iou_3d", "iou_3d_mm", "iou_3d_mm_filt", "iou_3d_mm_ransac",
                      "iou_3d_mm_pad10", "gt_in_pad10",
                      "iou_3d_mm_padz20", "gt_in_padz20",
                      "pred_vol_ratio",
                      "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A",
                      "gap_mm_I", "gap_mm_S",
-                     "iou_sc_mid_box"}
+                     "iou_sc_mid_box",
+                     "iou_3d_mm_reg30mm",
+                     "gap_mm_R_reg30mm", "gap_mm_L_reg30mm", "gap_mm_P_reg30mm",
+                     "gap_mm_A_reg30mm", "gap_mm_I_reg30mm", "gap_mm_S_reg30mm",
+                     *_TRIM_METRICS}
 
 CSS = """
 <style>
@@ -345,6 +361,68 @@ def filter_outlier_slices(boxes: dict) -> dict:
     return keep if keep else boxes
 
 
+def reg_dist_filter_slices(boxes: dict, H: int, W: int,
+                           rl_res: float, ap_res: float, max_dist_mm: float) -> dict:
+    """Remove predictions whose center is farther than max_dist_mm from all other centers (requires >= 3 slices).
+
+    Centers in mm: cx_mm = cx * W * ap_res, cy_mm = cy * H * rl_res.
+    Falls back to the full set if filtering would remove everything.
+    """
+    if len(boxes) < 3:
+        return boxes
+    zs  = list(boxes)
+    pts = np.array([(boxes[z][0] * W * ap_res, boxes[z][1] * H * rl_res) for z in zs])
+    keep = [
+        z for i, z in enumerate(zs)
+        if np.any(np.sqrt(np.sum((pts[i] - np.delete(pts, i, axis=0)) ** 2, axis=1)) <= max_dist_mm)
+    ]
+    return {z: boxes[z] for z in keep} if keep else boxes
+
+
+def trim_z_boundary(boxes: dict, trim_mm: float, si_res: float, H: int, W: int,
+                    rl_res: float, ap_res: float) -> dict:
+    """Remove topmost/bottommost pred slice if its 3D Euclidean distance to its neighbor exceeds trim_mm.
+
+    Requires >= 3 slices to trim: with only 2 slices it is impossible to determine which one is the
+    outlier, so the full set is returned unchanged.
+
+    Distance between two detections = sqrt(dZ² + dRL² + dAP²) in mm, where:
+      dZ  = (z2 - z1) * si_res
+      dRL = (cy2 - cy1) * H * rl_res   (cy normalised by H)
+      dAP = (cx2 - cx1) * W * ap_res   (cx normalised by W)
+    """
+    if len(boxes) < 3:
+        return boxes
+
+    def dist3d(z1, z2):
+        b1, b2 = boxes[z1], boxes[z2]
+        dz  = (z2 - z1) * si_res
+        drl = (b2[1] - b1[1]) * H * rl_res
+        dap = (b2[0] - b1[0]) * W * ap_res
+        return (dz**2 + drl**2 + dap**2) ** 0.5
+
+    zs      = sorted(boxes)
+    trimmed = dict(boxes)
+    if dist3d(zs[-2], zs[-1]) > trim_mm:
+        del trimmed[zs[-1]]
+        zs = zs[:-1]
+    if len(zs) >= 3 and dist3d(zs[0], zs[1]) > trim_mm:
+        del trimmed[zs[0]]
+    return trimmed
+
+
+def get_slice_dims(meta: dict) -> tuple[int, int, int]:
+    """Return (H, W, Z) of the slice space from meta.yaml, plane-aware.
+
+    Axial   : H=RL_dim, W=AP_dim, Z=SI_dim  (slice index along SI)
+    Sagittal: H=SI_dim, W=AP_dim, Z=RL_dim  (slice index along RL, rows=SI after transpose)
+    """
+    s = meta["shape_las"]
+    if meta.get("plane", "axial") == "sagittal":
+        return s[2], s[1], s[0]
+    return s[0], s[1], s[2]
+
+
 def pad_bbox3d(bbox: list, pad_xy_mm: float, pad_z_mm: float, H: int, W: int, Z: int,
                si_res: float, rl_res: float, ap_res: float) -> list:
     """Expand bbox on all 6 faces (pad_xy_mm in-plane, pad_z_mm along Z), clamped to image bounds."""
@@ -358,7 +436,26 @@ def pad_bbox3d(bbox: list, pad_xy_mm: float, pad_z_mm: float, H: int, W: int, Z:
 
 def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
                         gt_bbox: list, gt_boxes: dict, H: int, W: int, meta: dict) -> float:
-    """Compute one bbox-only metric at one conf threshold (no slices_df needed)."""
+    """Compute one bbox-only metric at one conf threshold (no slices_df needed).
+
+    Metrics with suffix _reg30mm apply a spatial outlier filter (30mm) before computing
+    the base metric: predictions isolated > 30mm from all others are removed (requires >= 3 preds).
+    """
+    trim_m = re.search(r"_trim(\d+)$", metric)
+    if trim_m:
+        trim_mm  = float(trim_m.group(1))
+        active   = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
+        filtered = trim_z_boundary(active, trim_mm, meta["si_res_mm"], H, W,
+                                   meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0))
+        return compute_bbox_column(metric[:trim_m.start()], filtered, 0.0,
+                                   gt_bbox, gt_boxes, H, W, meta)
+    if metric.endswith(REG_SUFFIX):
+        active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
+        filtered = reg_dist_filter_slices(active, H, W,
+                                          meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0),
+                                          REG_DIST_MM)
+        return compute_bbox_column(metric[:-len(REG_SUFFIX)], filtered, 0.0,
+                                   gt_bbox, gt_boxes, H, W, meta)
     active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
     if metric == "iou_3d":
         if not active or gt_bbox is None:
@@ -382,7 +479,7 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
     if metric in ("iou_3d_mm_pad10", "gt_in_pad10", "iou_3d_mm_padz20", "gt_in_padz20"):
         if not active or gt_bbox is None:
             return float("nan")
-        Z        = meta["shape_las"][2]
+        _, _, Z  = get_slice_dims(meta)
         si_res   = meta["si_res_mm"]
         rl_res   = meta.get("rl_res_mm", 1.0)
         ap_res   = meta.get("ap_res_mm", 1.0)
@@ -398,7 +495,7 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
     if metric == "pred_vol_ratio":
         if not active:
             return float("nan")
-        Z      = meta["shape_las"][2]
+        _, _, Z = get_slice_dims(meta)
         si_res = meta["si_res_mm"]
         rl_res = meta.get("rl_res_mm", 1.0)
         ap_res = meta.get("ap_res_mm", 1.0)
@@ -644,7 +741,7 @@ def main():
     )
     parser.add_argument("--inference",    required=True,
                         help="Path to inference run directory (predictions/<run-id>/)")
-    parser.add_argument("--processed",    default="processed/10mm_SI_1mm_axial",
+    parser.add_argument("--processed",    default="processed/10mm_SI_1mm_axial_3ch_sc_and_canal",
                         help="processed/<variant> dir (GT source)")
     parser.add_argument("--splits-dir",   default="data/datasplits/from_raw",
                         help="Directory with datasplit_*.yaml (used for report.html only)")
@@ -655,7 +752,8 @@ def main():
     parser.add_argument("--split",         default=None, choices=["train", "val", "test", "unknown"],
                         help="Restrict computation to subjects in this split (default: all)")
     parser.add_argument("--metrics",       nargs="+",
-                        default=["iou_3d_mm", "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S"],
+                        default=["iou_3d_mm",
+                                 "gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S"],
                         choices=sorted(BBOX_ONLY_METRICS),
                         help="Patch only these bbox metrics in existing patient.csv (skips slices.csv)")
     parser.add_argument("--datasets",      nargs="+", default=None,
@@ -700,7 +798,7 @@ def main():
             if not (proc_dir / "meta.yaml").exists():
                 continue
             meta         = yaml.safe_load((proc_dir / "meta.yaml").read_text())
-            H, W         = meta["shape_las"][0], meta["shape_las"][1]
+            H, W, _      = get_slice_dims(meta)
             gt_bbox_path = proc_dir / "volume" / "bbox_3d.txt"
             gt_bbox      = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None
             pred_boxes   = read_pred_boxes(pred_txt_dir)
@@ -738,7 +836,7 @@ def main():
         slices_df.to_csv(metrics_dir / "slices.csv", index=False)
 
         meta    = yaml.safe_load((proc_dir / "meta.yaml").read_text())
-        H, W    = meta["shape_las"][0], meta["shape_las"][1]
+        H, W, _ = get_slice_dims(meta)
         gt_bbox_path = proc_dir / "volume" / "bbox_3d.txt"
         gt_bbox = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None
 

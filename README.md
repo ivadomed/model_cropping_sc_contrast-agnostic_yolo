@@ -36,20 +36,6 @@ From spineimage.ca:
 18. [site_007](https://spineimage.ca/VGH/site_007)
 
 
-
-# Spinal Cord Detection with YOLO
-
-2D bounding-box detection of the spinal cord on axial MRI slices using YOLOv26n.  
-The model is trained on 17 open-access MRI datasets covering cervical and lumbar SC, multiple contrasts and pathologies.
-
-## Pipeline overview
-
-```
-data/raw/  →  processed/  →  datasets/  →  checkpoints/  →  predictions/  →  metrics + plots + failures
-```
-
----
-
 ## Installation
 
 ```bash

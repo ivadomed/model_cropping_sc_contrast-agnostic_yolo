@@ -27,14 +27,19 @@ Mask discovery: per-dataset explicit suffix tables DATASET_MASK_SUFFIX (SC) and
 DATASET_CANAL_SUFFIX (canal, only for datasets that have it) — crashes on unknown dataset.
 Output dir named automatically:
   axial   : processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_sc_and_canal]
-  sagittal: processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch]_sagittal[_sc_and_canal]
+  sagittal: processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch]_sagittal[_sc_and_canal][_sc<N>mm]
+
+Sagittal --sc-pad N:
+  Only RL slices within [rl_min − N mm, rl_max + N mm] are saved, where rl_min/rl_max are the first
+  and last RL slices containing SC voxels. Empty slices (no SC) within that window are kept 1 in 2
+  (even indices only) to halve the background count. Slice filenames preserve original RL indices.
 
 Usage:
     # Axial 10mm SI + 1mm isotropic, pseudo-RGB (current default)
     python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --3ch
 
-    # Sagittal: 5mm slice thickness (RL), 2mm in-plane (AP+SI), pseudo-RGB
-    python scripts/preprocess.py --si-res 2.0 --axial-res 2.0 --rl-res 5.0 --3ch --plane sagittal
+    # Sagittal: 1mm isotropic, pseudo-RGB, restricted to SC region ±10mm
+    python scripts/preprocess.py --si-res 1.0 --axial-res 1.0 --rl-res 1.0 --3ch --plane sagittal --sc-pad 10
 
     # SC + canal dual-class axial
     python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --3ch --with-canal
@@ -155,7 +160,7 @@ def _bbox3d_from_mask(mask_data: np.ndarray, H: int, W: int, Z: int,
 
 
 def process_pair(args: tuple):
-    img_path_str, mask_path_str, canal_mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm, rl_res_mm, three_ch, plane = args
+    img_path_str, mask_path_str, canal_mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm, rl_res_mm, three_ch, plane, sc_pad_mm = args
     img_path    = Path(img_path_str)
     patient_dir = Path(processed_str) / dataset_name / nifti_stem(img_path)
 
@@ -216,7 +221,26 @@ def process_pair(args: tuple):
             return padded
         return arr
 
+    # Sagittal SC-region window: only keep slices within [rl_min−pad, rl_max+pad]
+    # and subsample empty slices 1-in-2 within that window.
+    if plane == "sagittal" and sc_pad_mm is not None:
+        sc_rl_slices = [i for i in range(N) if mask_data[i, :, :].any()]
+        if not sc_rl_slices:
+            print(f"[SKIP] No SC voxels found in {mask_path_str}")
+            return "skipped"
+        pad_slices   = round(sc_pad_mm / eff_rl)
+        win_start    = max(0,     min(sc_rl_slices) - pad_slices)
+        win_end      = min(N - 1, max(sc_rl_slices) + pad_slices)
+        sc_rl_set    = set(sc_rl_slices)
+    else:
+        win_start, win_end, sc_rl_set = 0, N - 1, None
+
     for i in range(N):
+        if sc_rl_set is not None:
+            if i < win_start or i > win_end:
+                continue
+            if i not in sc_rl_set and i % 2 != 0:
+                continue
         arr = get_slice(i)
         if three_ch:
             rgb = np.stack([get_slice(i - 1), arr, get_slice(i + 1)], axis=2)
@@ -318,6 +342,9 @@ def main():
     parser.add_argument("--plane",       default="axial", choices=["axial", "sagittal"],
                         help="Slice plane: axial (iterate SI axis) or sagittal (iterate RL axis). "
                              "Appends '_sagittal' to output dir name when sagittal.")
+    parser.add_argument("--sc-pad",      type=float, default=None, dest="sc_pad_mm",
+                        help="Sagittal only: restrict to RL slices within [SC_rl_min−N mm, SC_rl_max+N mm]. "
+                             "Empty slices in that window are kept 1-in-2. Appends '_sc<N>mm' to output dir.")
     parser.add_argument("--update-meta", action="store_true",
                         help="Only patch existing meta.yaml with rl_res_mm/ap_res_mm (no re-preprocessing). Requires --out.")
     args = parser.parse_args()
@@ -334,6 +361,8 @@ def main():
     three_ch   = args.three_ch
     with_canal = args.with_canal
     plane      = args.plane
+    sc_pad_mm  = args.sc_pad_mm
+    assert sc_pad_mm is None or plane == "sagittal", "--sc-pad is only valid with --plane sagittal"
     if args.out:
         processed_dir = str(Path(args.out))
     else:
@@ -346,6 +375,8 @@ def main():
             name += "_3ch"
         if plane == "sagittal":
             name += "_sagittal"
+        if sc_pad_mm is not None:
+            name += f"_sc{sc_pad_mm:g}mm"
         if with_canal:
             name += "_sc_and_canal"
         processed_dir = str(Path("processed") / name)
@@ -360,7 +391,7 @@ def main():
         print(f"{dataset_dir.name}: {len(pairs)} pairs")
         worker_args.extend(
             (str(img), str(mask), str(canal) if canal else None,
-             dataset_dir.name, processed_dir, si_res, axial_res, rl_res, three_ch, plane)
+             dataset_dir.name, processed_dir, si_res, axial_res, rl_res, three_ch, plane, sc_pad_mm)
             for img, mask, canal in pairs
         )
 

@@ -217,8 +217,15 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
     if box is not None:
         write_bbox_3d(pred_vol_dir / "bbox_3d.txt", **box)
 
+    # Copy GT data into pred dir so metrics.py needs no --processed argument
+    import shutil
+    shutil.copy2(patient_dir / "meta.yaml", pred_dir / "meta.yaml")
+    gt_link = pred_dir / "gt"
+    if not gt_link.exists():
+        gt_link.symlink_to(patient_dir.resolve())
 
-def render_overlays(pred_root: Path, processed_dir: Path) -> None:
+
+def render_overlays(pred_root: Path, processed_dir: Path = None) -> None:
     """Regenerate overlay PNGs from existing txt predictions without re-running inference."""
     patients = [
         (pred_dataset_dir.name, pred_patient_dir)
@@ -228,9 +235,15 @@ def render_overlays(pred_root: Path, processed_dir: Path) -> None:
     ]
     print(f"Rendering overlays for {len(patients)} patients → {pred_root}")
     for dataset, pred_patient_dir in tqdm(patients, desc="Patients", unit="pat"):
-        stem        = pred_patient_dir.name
-        gt_txt_dir  = processed_dir / dataset / stem / "txt"
-        src_png_dir = processed_dir / dataset / stem / "png"
+        stem = pred_patient_dir.name
+        if (pred_patient_dir / "gt").exists():
+            gt_src = pred_patient_dir / "gt"
+        else:
+            assert processed_dir is not None, \
+                f"No gt/ symlink in {pred_patient_dir} and --processed not provided"
+            gt_src = processed_dir / dataset / stem
+        gt_txt_dir  = gt_src / "txt"
+        src_png_dir = gt_src / "png"
         out_png_dir = pred_patient_dir / "png"
         out_png_dir.mkdir(parents=True, exist_ok=True)
         for pred_txt in sorted((pred_patient_dir / "txt").glob("slice_*.txt")):

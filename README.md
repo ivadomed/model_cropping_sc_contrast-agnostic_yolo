@@ -1,3 +1,42 @@
+# Spinal cord detection
+
+## The goal
+Finding the minimal 3d bounding box enclosing the whole spinal cord on any MRI volume.
+
+## The method
+- Detecting the spinal cord on 2.5D axial and sagital slices
+- Combining the detections to recreate a 3d bounding box
+
+## The detector
+We use YOLO26n released by ultralytics
+
+## The datasets used
+We use 18 MRI datasets covering cervical and lumbar SC, multiple contrasts and pathologies
+
+From data.neuro.polymtl.ca:
+1. [basel-mp2rage](https://data.neuro.polymtl.ca/datasets/basel-mp2rage.git), 
+2. [canproco](https://data.neuro.polymtl.ca/datasets/canproco.git), 
+3. [data-multi-subject](https://data.neuro.polymtl.ca/datasets/data-multi-subject.git), 
+4. [dcm-brno](https://data.neuro.polymtl.ca/datasets/dcm-brno.git), 
+5. [dcm-zurich](https://data.neuro.polymtl.ca/datasets/dcm-zurich.git), 
+6. [dcm-zurich-lesions](https://data.neuro.polymtl.ca/datasets/dcm-zurich-lesions.git),
+7. [dcm-zurich-lesions-20231115](https://data.neuro.polymtl.ca/datasets/dcm-zurich-lesions-20231115.git), 
+8. [lumbar-epfl](https://data.neuro.polymtl.ca/datasets/lumbar-epfl.git),
+9. [lumbar-vanderbilt](https://data.neuro.polymtl.ca/datasets/lumbar-vanderbilt.git), 
+10. [nih-ms-mp2rage](https://data.neuro.polymtl.ca/datasets/nih-ms-mp2rage.git), 
+11. [sci-colorado](https://data.neuro.polymtl.ca/datasets/sci-colorado.git),
+12. [sci-paris](https://data.neuro.polymtl.ca/datasets/sci-paris.git), 
+13. [sci-zurich](https://data.neuro.polymtl.ca/datasets/sci-zurich.git), 
+14. [sct-testing-large](https://data.neuro.polymtl.ca/datasets/sct-testing-large.git)
+15. [spider-challenge-2023](https://data.neuro.polymtl.ca/datasets/spider-challenge-2023.git)
+16. [whole-spine](https://data.neuro.polymtl.ca/datasets/whole-spine.git)
+
+From spineimage.ca:
+17. [site_006](https://spineimage.ca/MON/site_006), 
+18. [site_007](https://spineimage.ca/VGH/site_007)
+
+
+
 # Spinal Cord Detection with YOLO
 
 2D bounding-box detection of the spinal cord on axial MRI slices using YOLOv26n.  

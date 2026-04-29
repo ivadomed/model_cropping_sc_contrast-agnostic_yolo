@@ -753,8 +753,9 @@ def main():
     )
     parser.add_argument("--inference",    required=True,
                         help="Path to inference run directory (predictions/<run-id>/)")
-    parser.add_argument("--processed",    default="processed/10mm_SI_1mm_axial_3ch_sc_and_canal",
-                        help="processed/<variant> dir (GT source)")
+    parser.add_argument("--processed",    default=None,
+                        help="processed/<variant> dir (GT source). If omitted, reads from gt/ symlink "
+                             "in each patient pred dir (created by evaluate.py).")
     parser.add_argument("--splits-dir",   default="data/datasplits/from_raw",
                         help="Directory with datasplit_*.yaml (used for report.html only)")
     parser.add_argument("--conf",         type=float, default=CONF_REPORT,
@@ -774,11 +775,17 @@ def main():
                         help="Skip generating report.html")
     args = parser.parse_args()
 
-    pred_root  = Path(args.inference)
-    run_id     = pred_root.name
-    splits_map = load_splits(Path(args.splits_dir))
+    pred_root     = Path(args.inference)
+    run_id        = pred_root.name
+    splits_map    = load_splits(Path(args.splits_dir))
+    processed_dir = Path(args.processed) if args.processed else None
 
-    processed_dir = Path(args.processed)
+    def gt_dirs(pred_patient_dir: Path):
+        """Return (meta_path, gt_dir): from --processed if given, else from gt/ symlink."""
+        if processed_dir is not None:
+            proc = processed_dir / pred_patient_dir.parent.name / pred_patient_dir.name
+            return proc / "meta.yaml", proc
+        return pred_patient_dir / "meta.yaml", pred_patient_dir / "gt"
 
     # patients: driven by pred_root (what has predictions); processed/ only for GT lookup
     patients = [
@@ -805,11 +812,11 @@ def main():
     # --- bbox-only mode: compute only the requested metrics, no slices.csv needed ---
     if args.metrics:
         for dataset, stem in tqdm(patients, desc="Metrics", unit="pat"):
-            pred_txt_dir = pred_root / dataset / stem / "txt"
-            proc_dir     = processed_dir / dataset / stem
-            if not (proc_dir / "meta.yaml").exists():
+            pred_txt_dir         = pred_root / dataset / stem / "txt"
+            meta_path, proc_dir  = gt_dirs(pred_root / dataset / stem)
+            if not meta_path.exists():
                 continue
-            meta         = yaml.safe_load((proc_dir / "meta.yaml").read_text())
+            meta         = yaml.safe_load(meta_path.read_text())
             H, W, _      = get_slice_dims(meta)
             gt_bbox_path = proc_dir / "volume" / "bbox_3d.txt"
             gt_bbox      = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None
@@ -837,9 +844,9 @@ def main():
         contrast = m.group(2) or "default"
         split    = splits_map.get((dataset, subject), "unknown")
 
-        proc_dir     = processed_dir / dataset / stem
-        pred_txt_dir = pred_root / dataset / stem / "txt"
-        slices_df    = patient_slices(proc_dir / "txt", pred_txt_dir)
+        meta_path, proc_dir = gt_dirs(pred_root / dataset / stem)
+        pred_txt_dir        = pred_root / dataset / stem / "txt"
+        slices_df           = patient_slices(proc_dir / "txt", pred_txt_dir)
         if slices_df.empty:
             continue
 
@@ -847,7 +854,7 @@ def main():
         metrics_dir.mkdir(parents=True, exist_ok=True)
         slices_df.to_csv(metrics_dir / "slices.csv", index=False)
 
-        meta    = yaml.safe_load((proc_dir / "meta.yaml").read_text())
+        meta    = yaml.safe_load(meta_path.read_text())
         H, W, _ = get_slice_dims(meta)
         gt_bbox_path = proc_dir / "volume" / "bbox_3d.txt"
         gt_bbox = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None

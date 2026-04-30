@@ -189,21 +189,36 @@ def iou_3d(b1: list, b2: list) -> float:
     return inter / union if union > 0 else 0.0
 
 
-def iou_3d_mm(b1: list, b2: list, si_res: float, rl_res: float, ap_res: float) -> float:
+def iou_3d_mm(b1: list, b2: list, row_res: float, col_res: float, z_res: float) -> float:
     """3D IoU in mm³ between two boxes [row1, row2, col1, col2, z1, z2].
 
-    Each slice index z represents a slab from z*si_res to (z+1)*si_res mm.
-    In-plane pixel sizes: rl_res mm/px (rows) and ap_res mm/px (cols).
-    A single-slice box (z1=z2) correctly has Z depth = si_res mm.
+    row_res: mm per pixel along the row axis (RL for axial, SI for sagittal)
+    col_res: mm per pixel along the col axis (AP for both planes)
+    z_res:   mm per slice along the z axis  (SI for axial, RL for sagittal)
+    A single-slice box (z1=z2) correctly has Z depth = z_res mm.
     """
-    inter_r = max(0.0, (min(b1[1], b2[1]) - max(b1[0], b2[0])) * rl_res)
-    inter_c = max(0.0, (min(b1[3], b2[3]) - max(b1[2], b2[2])) * ap_res)
-    inter_z = max(0.0, (min(b1[5]+1, b2[5]+1) - max(b1[4], b2[4])) * si_res)
+    inter_r = max(0.0, (min(b1[1], b2[1]) - max(b1[0], b2[0])) * row_res)
+    inter_c = max(0.0, (min(b1[3], b2[3]) - max(b1[2], b2[2])) * col_res)
+    inter_z = max(0.0, (min(b1[5]+1, b2[5]+1) - max(b1[4], b2[4])) * z_res)
     inter   = inter_r * inter_c * inter_z
-    vol1    = (b1[1]-b1[0]) * rl_res * (b1[3]-b1[2]) * ap_res * (b1[5]-b1[4]+1) * si_res
-    vol2    = (b2[1]-b2[0]) * rl_res * (b2[3]-b2[2]) * ap_res * (b2[5]-b2[4]+1) * si_res
+    vol1    = (b1[1]-b1[0]) * row_res * (b1[3]-b1[2]) * col_res * (b1[5]-b1[4]+1) * z_res
+    vol2    = (b2[1]-b2[0]) * row_res * (b2[3]-b2[2]) * col_res * (b2[5]-b2[4]+1) * z_res
     union   = vol1 + vol2 - inter
     return inter / union if union > 0 else 0.0
+
+
+def plane_res(meta: dict) -> tuple[float, float, float]:
+    """Return (row_res, col_res, z_res) in mm for the plane stored in meta.
+
+    Axial   : rows=RL, cols=AP, z=SI
+    Sagittal: rows=SI, cols=AP, z=RL
+    """
+    rl = meta.get("rl_res_mm", 1.0)
+    ap = meta.get("ap_res_mm", 1.0)
+    si = meta["si_res_mm"]
+    if meta.get("plane", "axial") == "sagittal":
+        return si, ap, rl
+    return rl, ap, si
 
 
 def reconstruct_bbox3d(boxes: dict, H: int, W: int) -> list:
@@ -464,31 +479,28 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
     if metric == "iou_3d_mm":
         if not active or gt_bbox is None:
             return float("nan")
-        return round(iou_3d_mm(reconstruct_bbox3d(active, H, W), gt_bbox,
-                               meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0)), 4)
+        return round(iou_3d_mm(reconstruct_bbox3d(active, H, W), gt_bbox, *plane_res(meta)), 4)
     if metric == "iou_3d_mm_filt":
         if not active or gt_bbox is None:
             return float("nan")
         return round(iou_3d_mm(reconstruct_bbox3d(filter_outlier_slices(active), H, W), gt_bbox,
-                               meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0)), 4)
+                               *plane_res(meta)), 4)
     if metric == "iou_3d_mm_ransac":
         if not active or gt_bbox is None:
             return float("nan")
         return round(iou_3d_mm(reconstruct_bbox3d(ransac_filter_slices(active), H, W), gt_bbox,
-                               meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0)), 4)
+                               *plane_res(meta)), 4)
     if metric in ("iou_3d_mm_pad10", "gt_in_pad10", "iou_3d_mm_padz20", "gt_in_padz20"):
         if not active or gt_bbox is None:
             return float("nan")
         _, _, Z  = get_slice_dims(meta)
-        si_res   = meta["si_res_mm"]
-        rl_res   = meta.get("rl_res_mm", 1.0)
-        ap_res   = meta.get("ap_res_mm", 1.0)
+        row_res, col_res, z_res = plane_res(meta)
         pad_xy   = 10.0
         pad_z    = 20.0 if "padz20" in metric else 10.0
         padded   = pad_bbox3d(reconstruct_bbox3d(active, H, W), pad_xy, pad_z, H, W, Z,
-                              si_res, rl_res, ap_res)
+                              meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0))
         if "iou_3d_mm" in metric:
-            return round(iou_3d_mm(padded, gt_bbox, si_res, rl_res, ap_res), 4)
+            return round(iou_3d_mm(padded, gt_bbox, row_res, col_res, z_res), 4)
         return float(padded[0] <= gt_bbox[0] and gt_bbox[1] <= padded[1] and
                      padded[2] <= gt_bbox[2] and gt_bbox[3] <= padded[3] and
                      padded[4] <= gt_bbox[4] and gt_bbox[5] <= padded[5])
@@ -539,7 +551,7 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
 
 def build_patient_csv_rows(slices_df: pd.DataFrame, pred_boxes: dict, H: int, W: int,
                             gt_bbox: list, gt_boxes: dict, fp_iou_thresh: float,
-                            si_res_mm: float = 1.0, rl_res_mm: float = 1.0, ap_res_mm: float = 1.0) -> pd.DataFrame:
+                            meta: dict) -> pd.DataFrame:
     """One row per conf threshold: aggregated metrics + iou_3d / iou_3d_mm reconstructed at each threshold."""
     gt_zs        = slices_df.loc[slices_df["has_gt"].astype(bool), "slice_idx"]
     is_inner_gt  = (slices_df["has_gt"].astype(bool)
@@ -562,7 +574,7 @@ def build_patient_csv_rows(slices_df: pd.DataFrame, pred_boxes: dict, H: int, W:
         if active and gt_bbox is not None:
             pred_3d_box = reconstruct_bbox3d(active, H, W)
             iou3d    = round(iou_3d(pred_3d_box, gt_bbox), 4)
-            iou3d_mm = round(iou_3d_mm(pred_3d_box, gt_bbox, si_res_mm, rl_res_mm, ap_res_mm), 4)
+            iou3d_mm = round(iou_3d_mm(pred_3d_box, gt_bbox, *plane_res(meta)), 4)
         else:
             iou3d    = float("nan")
             iou3d_mm = float("nan")
@@ -862,7 +874,7 @@ def main():
         pred_boxes = read_pred_boxes(pred_txt_dir)
         gt_boxes   = read_gt_boxes(proc_dir / "txt")
         build_patient_csv_rows(slices_df, pred_boxes, H, W, gt_bbox, gt_boxes, args.fp_iou_thresh,
-                               meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0)).to_csv(
+                               meta).to_csv(
             metrics_dir / "patient.csv", index=False
         )
 

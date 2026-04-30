@@ -192,8 +192,8 @@ def iou_3d(b1: list, b2: list) -> float:
 def iou_3d_mm(b1: list, b2: list, row_res: float, col_res: float, z_res: float) -> float:
     """3D IoU in mm³ between two boxes [row1, row2, col1, col2, z1, z2].
 
-    row_res: mm per pixel along the row axis (RL for axial, SI for sagittal)
-    col_res: mm per pixel along the col axis (AP for both planes)
+    row_res: mm per pixel along the row axis (AP for axial, SI for sagittal)
+    col_res: mm per pixel along the col axis (RL for axial, AP for sagittal)
     z_res:   mm per slice along the z axis  (SI for axial, RL for sagittal)
     A single-slice box (z1=z2) correctly has Z depth = z_res mm.
     """
@@ -210,7 +210,7 @@ def iou_3d_mm(b1: list, b2: list, row_res: float, col_res: float, z_res: float) 
 def plane_res(meta: dict) -> tuple[float, float, float]:
     """Return (row_res, col_res, z_res) in mm for the plane stored in meta.
 
-    Axial   : rows=RL, cols=AP, z=SI
+    Axial   : rows=AP, cols=RL, z=SI  (row 0=Anterior, col 0=Left, z=0=Superior)
     Sagittal: rows=SI, cols=AP, z=RL
     """
     rl = meta.get("rl_res_mm", 1.0)
@@ -218,7 +218,7 @@ def plane_res(meta: dict) -> tuple[float, float, float]:
     si = meta["si_res_mm"]
     if meta.get("plane", "axial") == "sagittal":
         return si, ap, rl
-    return rl, ap, si
+    return ap, rl, si
 
 
 def reconstruct_bbox3d(boxes: dict, H: int, W: int) -> list:
@@ -377,16 +377,16 @@ def filter_outlier_slices(boxes: dict) -> dict:
 
 
 def reg_dist_filter_slices(boxes: dict, H: int, W: int,
-                           rl_res: float, ap_res: float, max_dist_mm: float) -> dict:
+                           row_res: float, col_res: float, max_dist_mm: float) -> dict:
     """Remove predictions whose center is farther than max_dist_mm from all other centers (requires >= 3 slices).
 
-    Centers in mm: cx_mm = cx * W * ap_res, cy_mm = cy * H * rl_res.
+    Centers in mm: cx_mm = cx * W * col_res, cy_mm = cy * H * row_res.
     Falls back to the full set if filtering would remove everything.
     """
     if len(boxes) < 3:
         return boxes
     zs  = list(boxes)
-    pts = np.array([(boxes[z][0] * W * ap_res, boxes[z][1] * H * rl_res) for z in zs])
+    pts = np.array([(boxes[z][0] * W * col_res, boxes[z][1] * H * row_res) for z in zs])
     keep = [
         z for i, z in enumerate(zs)
         if np.any(np.sqrt(np.sum((pts[i] - np.delete(pts, i, axis=0)) ** 2, axis=1)) <= max_dist_mm)
@@ -394,27 +394,27 @@ def reg_dist_filter_slices(boxes: dict, H: int, W: int,
     return {z: boxes[z] for z in keep} if keep else boxes
 
 
-def trim_z_boundary(boxes: dict, trim_mm: float, si_res: float, H: int, W: int,
-                    rl_res: float, ap_res: float) -> dict:
+def trim_z_boundary(boxes: dict, trim_mm: float, z_res: float, H: int, W: int,
+                    row_res: float, col_res: float) -> dict:
     """Remove topmost/bottommost pred slice if its 3D Euclidean distance to its neighbor exceeds trim_mm.
 
     Requires >= 3 slices to trim: with only 2 slices it is impossible to determine which one is the
     outlier, so the full set is returned unchanged.
 
-    Distance between two detections = sqrt(dZ² + dRL² + dAP²) in mm, where:
-      dZ  = (z2 - z1) * si_res
-      dRL = (cy2 - cy1) * H * rl_res   (cy normalised by H)
-      dAP = (cx2 - cx1) * W * ap_res   (cx normalised by W)
+    Distance between two detections = sqrt(dZ² + drow² + dcol²) in mm, where:
+      dZ   = (z2 - z1) * z_res
+      drow = (cy2 - cy1) * H * row_res   (cy normalised by H)
+      dcol = (cx2 - cx1) * W * col_res   (cx normalised by W)
     """
     if len(boxes) < 3:
         return boxes
 
     def dist3d(z1, z2):
         b1, b2 = boxes[z1], boxes[z2]
-        dz  = (z2 - z1) * si_res
-        drl = (b2[1] - b1[1]) * H * rl_res
-        dap = (b2[0] - b1[0]) * W * ap_res
-        return (dz**2 + drl**2 + dap**2) ** 0.5
+        dz   = (z2 - z1) * z_res
+        drow = (b2[1] - b1[1]) * H * row_res
+        dcol = (b2[0] - b1[0]) * W * col_res
+        return (dz**2 + drow**2 + dcol**2) ** 0.5
 
     zs      = sorted(boxes)
     trimmed = dict(boxes)
@@ -429,21 +429,21 @@ def trim_z_boundary(boxes: dict, trim_mm: float, si_res: float, H: int, W: int,
 def get_slice_dims(meta: dict) -> tuple[int, int, int]:
     """Return (H, W, Z) of the slice space from meta.yaml, plane-aware.
 
-    Axial   : H=RL_dim, W=AP_dim, Z=SI_dim  (slice index along SI)
+    Axial   : H=AP_dim, W=RL_dim, Z=SI_dim  (row 0=Anterior, col 0=Left, z=0=Superior)
     Sagittal: H=SI_dim, W=AP_dim, Z=RL_dim  (slice index along RL, rows=SI after transpose)
     """
     s = meta["shape_las"]
     if meta.get("plane", "axial") == "sagittal":
         return s[2], s[1], s[0]
-    return s[0], s[1], s[2]
+    return s[1], s[0], s[2]  # axial: H=AP, W=RL
 
 
 def pad_bbox3d(bbox: list, pad_xy_mm: float, pad_z_mm: float, H: int, W: int, Z: int,
-               si_res: float, rl_res: float, ap_res: float) -> list:
+               z_res: float, row_res: float, col_res: float) -> list:
     """Expand bbox on all 6 faces (pad_xy_mm in-plane, pad_z_mm along Z), clamped to image bounds."""
-    pad_r = pad_xy_mm / rl_res
-    pad_c = pad_xy_mm / ap_res
-    pad_z = pad_z_mm  / si_res
+    pad_r = pad_xy_mm / row_res
+    pad_c = pad_xy_mm / col_res
+    pad_z = pad_z_mm  / z_res
     return [max(0.0,      bbox[0] - pad_r), min(float(H), bbox[1] + pad_r),
             max(0.0,      bbox[2] - pad_c), min(float(W), bbox[3] + pad_c),
             max(0.0,      bbox[4] - pad_z), min(float(Z - 1), bbox[5] + pad_z)]
@@ -456,19 +456,17 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
     Metrics with suffix _reg30mm apply a spatial outlier filter (30mm) before computing
     the base metric: predictions isolated > 30mm from all others are removed (requires >= 3 preds).
     """
+    row_res, col_res, z_res = plane_res(meta)
     trim_m = re.search(r"_trim(\d+)$", metric)
     if trim_m:
         trim_mm  = float(trim_m.group(1))
         active   = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
-        filtered = trim_z_boundary(active, trim_mm, meta["si_res_mm"], H, W,
-                                   meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0))
+        filtered = trim_z_boundary(active, trim_mm, z_res, H, W, row_res, col_res)
         return compute_bbox_column(metric[:trim_m.start()], filtered, 0.0,
                                    gt_bbox, gt_boxes, H, W, meta)
     if metric.endswith(REG_SUFFIX):
         active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
-        filtered = reg_dist_filter_slices(active, H, W,
-                                          meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0),
-                                          REG_DIST_MM)
+        filtered = reg_dist_filter_slices(active, H, W, row_res, col_res, REG_DIST_MM)
         return compute_bbox_column(metric[:-len(REG_SUFFIX)], filtered, 0.0,
                                    gt_bbox, gt_boxes, H, W, meta)
     active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
@@ -479,26 +477,25 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
     if metric == "iou_3d_mm":
         if not active or gt_bbox is None:
             return float("nan")
-        return round(iou_3d_mm(reconstruct_bbox3d(active, H, W), gt_bbox, *plane_res(meta)), 4)
+        return round(iou_3d_mm(reconstruct_bbox3d(active, H, W), gt_bbox, row_res, col_res, z_res), 4)
     if metric == "iou_3d_mm_filt":
         if not active or gt_bbox is None:
             return float("nan")
         return round(iou_3d_mm(reconstruct_bbox3d(filter_outlier_slices(active), H, W), gt_bbox,
-                               *plane_res(meta)), 4)
+                               row_res, col_res, z_res), 4)
     if metric == "iou_3d_mm_ransac":
         if not active or gt_bbox is None:
             return float("nan")
         return round(iou_3d_mm(reconstruct_bbox3d(ransac_filter_slices(active), H, W), gt_bbox,
-                               *plane_res(meta)), 4)
+                               row_res, col_res, z_res), 4)
     if metric in ("iou_3d_mm_pad10", "gt_in_pad10", "iou_3d_mm_padz20", "gt_in_padz20"):
         if not active or gt_bbox is None:
             return float("nan")
-        _, _, Z  = get_slice_dims(meta)
-        row_res, col_res, z_res = plane_res(meta)
-        pad_xy   = 10.0
-        pad_z    = 20.0 if "padz20" in metric else 10.0
-        padded   = pad_bbox3d(reconstruct_bbox3d(active, H, W), pad_xy, pad_z, H, W, Z,
-                              meta["si_res_mm"], meta.get("rl_res_mm", 1.0), meta.get("ap_res_mm", 1.0))
+        _, _, Z = get_slice_dims(meta)
+        pad_xy  = 10.0
+        pad_z   = 20.0 if "padz20" in metric else 10.0
+        padded  = pad_bbox3d(reconstruct_bbox3d(active, H, W), pad_xy, pad_z, H, W, Z,
+                             z_res, row_res, col_res)
         if "iou_3d_mm" in metric:
             return round(iou_3d_mm(padded, gt_bbox, row_res, col_res, z_res), 4)
         return float(padded[0] <= gt_bbox[0] and gt_bbox[1] <= padded[1] and
@@ -507,41 +504,35 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
     if metric == "pred_vol_ratio":
         if not active:
             return float("nan")
-        _, _, Z = get_slice_dims(meta)
-        si_res = meta["si_res_mm"]
-        rl_res = meta.get("rl_res_mm", 1.0)
-        ap_res = meta.get("ap_res_mm", 1.0)
-        b      = reconstruct_bbox3d(active, H, W)
-        pred_mm3  = (b[1]-b[0])*rl_res * (b[3]-b[2])*ap_res * (b[5]-b[4]+1)*si_res
-        total_mm3 = H*rl_res * W*ap_res * Z*si_res
+        _, _, Z   = get_slice_dims(meta)
+        b         = reconstruct_bbox3d(active, H, W)
+        pred_mm3  = (b[1]-b[0])*row_res * (b[3]-b[2])*col_res * (b[5]-b[4]+1)*z_res
+        total_mm3 = H*row_res * W*col_res * Z*z_res
         return round(pred_mm3 / total_mm3, 6)
     if metric in ("gap_mm_R", "gap_mm_L", "gap_mm_P", "gap_mm_A", "gap_mm_I", "gap_mm_S"):
         if not active or gt_bbox is None:
             return float("nan")
-        si_res = meta["si_res_mm"]
-        rl_res = meta.get("rl_res_mm", 1.0)
-        ap_res = meta.get("ap_res_mm", 1.0)
         b = reconstruct_bbox3d(active, H, W)
         if meta.get("plane", "axial") == "sagittal":
-            # Sagittal: row=SI (flipped, 0=Superior), col=AP, z=RL
-            # row_min=Superior, row_max=Inferior, col_min=Posterior, col_max=Anterior, z_min=Right, z_max=Left
+            # Sagittal: row=SI (0=Superior), col=AP (0=Posterior), z=RL (0=Right)
+            # plane_res returns (si, ap, rl) → row_res=si, col_res=ap, z_res=rl
             gaps = {
-                "gap_mm_R": (b[4] - gt_bbox[4]) * rl_res,
-                "gap_mm_L": (gt_bbox[5] - b[5]) * rl_res,
-                "gap_mm_P": (b[2] - gt_bbox[2]) * ap_res,
-                "gap_mm_A": (gt_bbox[3] - b[3]) * ap_res,
-                "gap_mm_S": (b[0] - gt_bbox[0]) * si_res,
-                "gap_mm_I": (gt_bbox[1] - b[1]) * si_res,
+                "gap_mm_R": (b[4] - gt_bbox[4]) * z_res,    # z=RL, z_min=Right
+                "gap_mm_L": (gt_bbox[5] - b[5]) * z_res,
+                "gap_mm_P": (b[2] - gt_bbox[2]) * col_res,  # col=AP, col_min=Posterior
+                "gap_mm_A": (gt_bbox[3] - b[3]) * col_res,
+                "gap_mm_S": (b[0] - gt_bbox[0]) * row_res,  # row=SI, row_min=Superior
+                "gap_mm_I": (gt_bbox[1] - b[1]) * row_res,
             }
         else:
-            # Axial: row=RL (0=Right), col=AP (0=Posterior), z=SI (0=Inferior)
+            # Axial: row=AP (0=Anterior), col=RL (0=Left), z=SI (0=Superior)
             gaps = {
-                "gap_mm_R": (b[0] - gt_bbox[0]) * rl_res,
-                "gap_mm_L": (gt_bbox[1] - b[1]) * rl_res,
-                "gap_mm_P": (b[2] - gt_bbox[2]) * ap_res,
-                "gap_mm_A": (gt_bbox[3] - b[3]) * ap_res,
-                "gap_mm_I": (b[4] - gt_bbox[4]) * si_res,
-                "gap_mm_S": (gt_bbox[5] - b[5]) * si_res,
+                "gap_mm_A": (b[0] - gt_bbox[0]) * row_res,  # row_min=Anterior face
+                "gap_mm_P": (gt_bbox[1] - b[1]) * row_res,  # row_max=Posterior face
+                "gap_mm_L": (b[2] - gt_bbox[2]) * col_res,  # col_min=Left face
+                "gap_mm_R": (gt_bbox[3] - b[3]) * col_res,  # col_max=Right face
+                "gap_mm_S": (b[4] - gt_bbox[4]) * z_res,    # z_min=Superior face
+                "gap_mm_I": (gt_bbox[5] - b[5]) * z_res,    # z_max=Inferior face
             }
         return round(gaps[metric], 2)
     if metric == "iou_sc_mid_box":

@@ -61,14 +61,34 @@ STRUCTURE GÉNÉRALE
 
 PRÉPROCESSING
 - réorientation LAS avant extraction des slices
-- resampling de l'axe SI uniquement (axe 2 en LAS) via --si-res (ex: 1.0, 10.0)
-  order=3 pour les images, order=0 pour les masques binaires (scipy.ndimage.zoom)
+- resampling de tous les axes via --si-res / --axial-res / --rl-res (nibabel resample_to_output, order=1 img, order=0 mask)
 - export PNG : slices natives normalisées uint8, pas de resize ni de padding in-plane
 - resize in-plane délégué à YOLO via le paramètre imgsz (training et inférence)
-- dossier de sortie nommé automatiquement processed/{res}mm_SI (ex: processed/10mm_SI)
-- Z = min(img, mask) sur l'axe SI : le zoom scipy arrondit indépendamment → peut différer d'1 voxel
-- meta.yaml par patient : raw_image, raw_mask, shape_las [H,W,Z], si_res_mm, rl_res_mm, ap_res_mm
-  rl_res_mm/ap_res_mm = résolution native dans le plan axial (LAS axes 0 et 1), non modifiée par resampling
+- dossier de sortie nommé automatiquement depuis les résolutions et options choisies
+- Z = min(img, mask) sur l'axe d'itération : le resampling peut différer d'1 voxel entre img et mask
+
+CONVENTION D'ORIENTATION DES SLICES AXIALES (après LAS)
+  slice = data[:, :, z].T[::-1, ::-1]  →  shape (AP_dim, RL_dim)
+  - rows = AP  : row 0 = Anterior (voxel antérieur le plus extrême)
+  - cols = RL  : col 0 = Left     (voxel gauche le plus extrême)
+  - z    = SI  : z=0  = Superior  (slice_000 = tranche la plus supérieure)
+  - H = AP_dim = shape_las[1],  W = RL_dim = shape_las[0],  Z = SI_dim = shape_las[2]
+  - YOLO cx = RL position (normalized by W),  cy = AP position (normalized by H)
+  3ch axial : R=slice_Superior, G=current, B=slice_Inferior (voisins dans l'ordre de sortie)
+
+CONVENTION D'ORIENTATION DES SLICES SAGITTALES (après LAS)
+  slice = data[r, :, ::-1].T  →  shape (SI_dim, AP_dim)  — Superior en haut
+  - rows = SI : row 0 = Superior
+  - cols = AP : col 0 = Posterior
+  - z    = RL : z=0  = premier RL voxel (Right)
+  - H = SI_dim = shape_las[2],  W = AP_dim = shape_las[1],  Z = RL_dim = shape_las[0]
+
+plane_res(meta) → (row_res, col_res, z_res) :
+  axial   : (ap_res, rl_res, si_res)
+  sagittal: (si_res, ap_res, rl_res)
+
+- meta.yaml par patient : raw_image, raw_mask, shape_las [RL_dim, AP_dim, SI_dim], si_res_mm, rl_res_mm, ap_res_mm
+  rl_res_mm/ap_res_mm = résolution dans le plan axial après resampling
   pour patcher des meta.yaml existants sans re-préprocesser : preprocess.py --update-meta --out <dir>
 
 DÉCOUVERTE DES MASQUES — tables explicites par dataset dans preprocess.py

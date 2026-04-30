@@ -212,7 +212,11 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
                 draw_boxes(str(png), gt_boxes, pred_boxes).save(
                     str(pred_dir / "png" / png.name))
 
-    H, W = meta["shape_las"][0], meta["shape_las"][1]
+    s = meta["shape_las"]
+    if meta.get("plane", "axial") == "sagittal":
+        H, W = s[2], s[1]  # sagittal: H=SI_dim, W=AP_dim
+    else:
+        H, W = s[1], s[0]  # axial: H=AP_dim, W=RL_dim (row 0=Anterior, col 0=Left)
     box = bbox_3d_from_txts(pred_txt_dir, H, W)
     if box is not None:
         write_bbox_3d(pred_vol_dir / "bbox_3d.txt", **box)

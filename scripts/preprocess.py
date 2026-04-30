@@ -9,8 +9,10 @@ For each (image, mask) pair in each BIDS dataset:
        RL  (axis 0) → --axial-res mm (if provided, else native)
        AP  (axis 1) → --axial-res mm (if provided, else native)
   3. Export 2D slices → png/slice_NNN.png
-       --plane axial    : iterate axis 2 (SI),  slice = img[:, :, z]  shape (RL × AP)
-       --plane sagittal : iterate axis 0 (RL),  slice = img[r, :, :].T shape (SI × AP) — Superior at top
+       --plane axial    : iterate SI axis Superior→Inferior (slice_000 = Superior end)
+                          slice = img[:, :, z].T[::-1, ::-1]  shape (AP × RL)
+                          row 0 = Anterior, col 0 = Left
+       --plane sagittal : iterate axis 0 (RL),  slice = img[r, :, ::-1].T shape (SI × AP) — Superior at top
        2D mode  : grayscale uint8, normalised per slice
        2.5D mode: pseudo-RGB uint8 (R=prev, G=current, B=next) along the slice axis
                   border slices use a black frame for missing neighbours
@@ -138,11 +140,21 @@ def _rescale_bbox(bbox, H, W, H_out, W_out):
 
 
 def _bbox3d_from_mask(mask_data: np.ndarray, H: int, W: int, Z: int,
-                      H_out: int, W_out: int) -> Optional[dict]:
-    """Compute 3D bbox directly from a 3D mask array. Returns {row1,row2,col1,col2,z1,z2} or None."""
+                      H_out: int, W_out: int, plane: str = "axial") -> Optional[dict]:
+    """Compute 3D bbox directly from a 3D mask array. Returns {row1,row2,col1,col2,z1,z2} or None.
+
+    Axial  : mask_data shape (RL,AP,SI); iterates Superior→Inferior; applies .T[::-1,::-1] per slice.
+    Sagittal: mask_data pre-transposed to (SI,AP,RL); iterates RL axis normally.
+    z in output is the slice counter (0 = first in iteration order).
+    """
     rows1, rows2, cols1, cols2, zs = [], [], [], [], []
-    for z in range(Z):
-        bbox = seg_to_yolo_bbox(mask_data[:, :, z])
+    for counter in range(Z):
+        if plane == "axial":
+            las_z = Z - 1 - counter
+            sl = mask_data[:, :, las_z].T[::-1, ::-1]
+        else:
+            sl = mask_data[:, :, counter]
+        bbox = seg_to_yolo_bbox(sl)
         bbox = _rescale_bbox(bbox, H, W, H_out, W_out)
         if bbox is None:
             continue
@@ -151,7 +163,7 @@ def _bbox3d_from_mask(mask_data: np.ndarray, H: int, W: int, Z: int,
         rows2.append(min(H_out, int((cy + h / 2) * H_out)))
         cols1.append(max(0, int((cx - w / 2) * W_out)))
         cols2.append(min(W_out, int((cx + w / 2) * W_out)))
-        zs.append(z)
+        zs.append(counter)
     if not zs:
         return None
     return {"row1": min(rows1), "row2": max(rows2),
@@ -192,13 +204,14 @@ def process_pair(args: tuple):
         canal_data = np.round(canal_r.get_fdata()).astype(np.uint8)
 
     # Determine slice axis and extraction function
-    # axial   : iterate axis 2 (SI), slice shape = (RL, AP) = (H, W)
+    # axial   : iterate SI axis Superior→Inferior; slice = data[:,:,z].T[::-1,::-1] shape (AP, RL)
+    #           H=AP, W=RL; row 0=Anterior, col 0=Left; slice_000 = Superior
     # sagittal: iterate axis 0 (RL), raw shape = (AP, SI) → transposed to (SI, AP) so SC is vertical
     if plane == "axial":
         N      = min(img_data.shape[2], mask_data.shape[2])
-        H, W   = img_data.shape[0], img_data.shape[1]
-        def get_img_slice(data, i):  return data[:, :, i]
-        def get_mask_slice(data, i): return data[:, :, i]
+        H, W   = img_data.shape[1], img_data.shape[0]  # H=AP, W=RL
+        def get_img_slice(data, i):  return data[:, :, i].T[::-1, ::-1]
+        def get_mask_slice(data, i): return data[:, :, i].T[::-1, ::-1]
         def canal_valid(i):          return canal_data is not None and i < canal_data.shape[2]
     else:  # sagittal — flip SI axis then transpose: (AP,SI)→flip→(AP,SI↑)→T→(SI↑,AP)
         N      = min(img_data.shape[0], mask_data.shape[0])
@@ -235,31 +248,42 @@ def process_pair(args: tuple):
     else:
         win_start, win_end, sc_rl_set = 0, N - 1, None
 
-    for i in range(N):
-        if sc_rl_set is not None:
-            if i < win_start or i > win_end:
-                continue
-            if i not in sc_rl_set and i % 2 != 0:
-                continue
-        arr = get_slice(i)
-        if three_ch:
-            rgb = np.stack([get_slice(i - 1), arr, get_slice(i + 1)], axis=2)
-            PILImage.fromarray(rgb).save(str(patient_dir / "png" / f"slice_{i:03d}.png"))
-        else:
-            PILImage.fromarray(arr).save(str(patient_dir / "png" / f"slice_{i:03d}.png"))
+    # Axial: iterate Superior→Inferior (slice_idx=0 = Superior, las_idx=N-1 in LAS).
+    # Sagittal: iterate RL axis directly (slice_idx = las_idx = RL index).
+    if plane == "axial":
+        slice_iter = [(c, N - 1 - c) for c in range(N)]
+    else:
+        slice_iter = [(i, i) for i in range(N)]
 
-        sc_slice   = get_mask_slice(mask_data, i)
+    for slice_idx, las_idx in slice_iter:
+        if sc_rl_set is not None:
+            if las_idx < win_start or las_idx > win_end:
+                continue
+            if las_idx not in sc_rl_set and las_idx % 2 != 0:
+                continue
+        arr = get_slice(las_idx)
+        if three_ch:
+            if plane == "axial":
+                # R=Superior neighbour, G=current, B=Inferior neighbour
+                rgb = np.stack([get_slice(las_idx + 1), arr, get_slice(las_idx - 1)], axis=2)
+            else:
+                rgb = np.stack([get_slice(las_idx - 1), arr, get_slice(las_idx + 1)], axis=2)
+            PILImage.fromarray(rgb).save(str(patient_dir / "png" / f"slice_{slice_idx:03d}.png"))
+        else:
+            PILImage.fromarray(arr).save(str(patient_dir / "png" / f"slice_{slice_idx:03d}.png"))
+
+        sc_slice   = get_mask_slice(mask_data, las_idx)
         sc_bbox    = _rescale_bbox(seg_to_yolo_bbox(sc_slice), H, W, H_out, W_out)
         canal_bbox = None
-        if canal_valid(i):
-            canal_bbox = _rescale_bbox(seg_to_yolo_bbox(get_mask_slice(canal_data, i)), H, W, H_out, W_out)
+        if canal_valid(las_idx):
+            canal_bbox = _rescale_bbox(seg_to_yolo_bbox(get_mask_slice(canal_data, las_idx)), H, W, H_out, W_out)
 
         lines = ""
         if sc_bbox is not None:
             lines += f"0 {sc_bbox[0]:.6f} {sc_bbox[1]:.6f} {sc_bbox[2]:.6f} {sc_bbox[3]:.6f}\n"
         if canal_bbox is not None:
             lines += f"1 {canal_bbox[0]:.6f} {canal_bbox[1]:.6f} {canal_bbox[2]:.6f} {canal_bbox[3]:.6f}\n"
-        (patient_dir / "txt" / f"slice_{i:03d}.txt").write_text(lines)
+        (patient_dir / "txt" / f"slice_{slice_idx:03d}.txt").write_text(lines)
 
     box = bbox_3d_from_txts(patient_dir / "txt", H_out, W_out)
     if box is not None:
@@ -269,7 +293,7 @@ def process_pair(args: tuple):
         n_canal = canal_data.shape[2] if plane == "axial" else canal_data.shape[0]
         canal_box = _bbox3d_from_mask(
             canal_data if plane == "axial" else np.transpose(canal_data, (2, 1, 0)),
-            H, W, min(N, n_canal), H_out, W_out
+            H, W, min(N, n_canal), H_out, W_out, plane
         )
         if canal_box is not None:
             write_bbox_3d(patient_dir / "volume" / "bbox_3d_canal.txt", **canal_box)

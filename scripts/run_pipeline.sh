@@ -31,6 +31,7 @@ PLANE=sagittal       # axial | sagittal
 START_STEP=6      # 1–9
 END_STEP=9        # 1–9
 MAKE_SPLITS=false # true = regenerate splits from data/raw (step 2)
+export SEED=50    # global random seed — propagated to all Python scripts via env
 
 # ─── Parameters — AXIAL ───────────────────────────────────────────────────────
 
@@ -215,7 +216,8 @@ if step 2 "Make splits"; then
     if [[ "$MAKE_SPLITS" == "true" ]]; then
         python scripts/make_splits.py \
             --raw data/raw \
-            --out "${SPLITS_DIR}"
+            --out "${SPLITS_DIR}" \
+            --seed "${SEED}"
     else
         echo "MAKE_SPLITS=false — using committed splits in ${SPLITS_DIR}"
     fi

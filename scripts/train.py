@@ -14,6 +14,8 @@ Augmentations (désactivables via --no-augment) issues du papier contrast-agnost
   - Gamma correction                      → albumentations: RandomGamma      (p=0.1)
   - Mirroring across all axes             → YOLO: fliplr=0.5, flipud=0.5
 
+Seed : lit la variable d'environnement SEED (défaut 50) — initialisée dans run_pipeline.sh.
+       Propagée à random, numpy et ultralytics (model.train seed=).
 W&B : wandb.init() avant model.train() pour contrôler projet/run.
 Sauvegarde : checkpoints/<run-id>/weights/{best,last}.pt
              best.pt = meilleur fitness = 0.1·mAP50 + 0.9·mAP50-95 sur val
@@ -30,7 +32,10 @@ Usage:
 
 import argparse
 import os
+import random
 from pathlib import Path
+
+import numpy as np
 
 from ultralytics import YOLO
 from ultralytics.utils import LOGGER, SETTINGS
@@ -113,6 +118,10 @@ def main():
     parser.add_argument("--wandb-project", default="spine_detection")
     args = parser.parse_args()
 
+    seed = int(os.environ.get("SEED", 50))
+    random.seed(seed)
+    np.random.seed(seed)
+
     if args.no_wandb:
         SETTINGS["wandb"] = False
         os.environ["WANDB_MODE"] = "disabled"
@@ -189,6 +198,7 @@ def main():
         patience=args.patience,
         workers=args.workers,
         fraction=args.fraction,
+        seed=seed,
         save=True,
         val=True,
         rect=False,

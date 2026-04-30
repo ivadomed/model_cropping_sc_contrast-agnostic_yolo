@@ -114,7 +114,7 @@ Reads actual subject folders from `data/raw/` and splits 50/20/30 per dataset wi
 python scripts/make_splits.py
 ```
 
-Output: `data/datasplits/from_raw/datasplit_<dataset>_seed50.yaml` (one file per dataset).
+Output: `data/datasplits/from_raw/datasplit_<dataset>_seed<SEED>.yaml` (one file per dataset).
 
 ---
 

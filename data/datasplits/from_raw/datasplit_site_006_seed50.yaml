@@ -1,23 +1,10 @@
-test:
-- sub-mon097
-- sub-mon358
-- sub-mon246
-- sub-mon310
-- sub-mon113
-- sub-mon138
-- sub-mon241
-- sub-mon043
-- sub-mon155
-- sub-mon342
-- sub-mon207
-- sub-mon312
-- sub-mon117
-- sub-mon407
-- sub-mon288
-- sub-mon173
-- sub-mon128
-- sub-mon364
-- sub-mon451
+meta:
+  name: site_006
+  host: spineimage
+  url_https: https://spineimage.ca/MON/site_006
+  url_ssh: gitea@spineimage.ca:MON/site_006.git
+  commit: 1396112095272988de483c05416369b75340d339
+  seed: 50
 train:
 - sub-mon208
 - sub-mon319
@@ -65,3 +52,23 @@ val:
 - sub-mon393
 - sub-mon054
 - sub-mon170
+test:
+- sub-mon097
+- sub-mon358
+- sub-mon246
+- sub-mon310
+- sub-mon113
+- sub-mon138
+- sub-mon241
+- sub-mon043
+- sub-mon155
+- sub-mon342
+- sub-mon207
+- sub-mon312
+- sub-mon117
+- sub-mon407
+- sub-mon288
+- sub-mon173
+- sub-mon128
+- sub-mon364
+- sub-mon451

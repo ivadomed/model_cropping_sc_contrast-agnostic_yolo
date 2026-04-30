@@ -1,8 +1,10 @@
-test:
-- sub-060
-- sub-053
-- sub-050
-- sub-057
+meta:
+  name: sci-paris
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/sci-paris
+  url_ssh: git@data.neuro.polymtl.ca:datasets/sci-paris
+  commit: 2bc35a1a449ca106291aea629a160c841c4c7f8c
+  seed: 50
 train:
 - sub-059
 - sub-054
@@ -15,3 +17,8 @@ val:
 - sub-064
 - sub-072
 - sub-049
+test:
+- sub-060
+- sub-053
+- sub-050
+- sub-057

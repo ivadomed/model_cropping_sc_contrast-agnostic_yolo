@@ -1,62 +1,69 @@
-test:
-- sub-amuALT
-- sub-amuTT
-- sub-amuVG
-- sub-unfErssm007
-- sub-unfErssm009
-- sub-unfErssm014
-- sub-unfPain002
-- sub-unfPain003
-- sub-unfSCT002
+meta:
+  name: whole-spine
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/whole-spine
+  url_ssh: git@data.neuro.polymtl.ca:datasets/whole-spine
+  commit: 0491c0b32f45b4f395ee63ec051b8f70204da61c
+  seed: 50
 train:
-- sub-amuAL
-- sub-amuAM
-- sub-amuCR
-- sub-amuFL
-- sub-amuFR
-- sub-amuGB
-- sub-amuHB
-- sub-amuLJ
-- sub-amuMD
-- sub-amuMT
-- sub-amuPA
-- sub-amuTM
-- sub-amuTR
-- sub-amuVC
-- sub-amuVP
-- sub-unfErssm001
-- sub-unfErssm002
-- sub-unfErssm003
-- sub-unfErssm004
-- sub-unfErssm006
-- sub-unfErssm008
-- sub-unfErssm010
-- sub-unfErssm011
-- sub-unfErssm012
-- sub-unfErssm013
-- sub-unfErssm015
-- sub-unfErssm016
-- sub-unfErssm018
-- sub-unfErssm019
-- sub-unfErssm021
-- sub-unfErssm023
-- sub-unfErssm024
-- sub-unfErssm025
-- sub-unfErssm026
-- sub-unfErssm027
-- sub-unfErssm029
-- sub-unfErssm030
-- sub-unfErssm031
-- sub-unfPain001
-- sub-unfPain004
-- sub-unfSCT001
-val:
-- sub-amuAP
-- sub-amuMLL
-- sub-unfErssm005
-- sub-unfErssm017
-- sub-unfErssm020
+- sub-amuVG
+- sub-amuTT
+- sub-unfSCT002
+- sub-unfErssm014
+- sub-unfPain003
+- sub-amuALT
+- sub-unfErssm007
+- sub-unfPain002
+- sub-unfErssm009
+- sub-unfPain006
 - sub-unfErssm022
+- sub-amuMLL
 - sub-unfErssm028
 - sub-unfPain005
-- sub-unfPain006
+- sub-unfErssm017
+- sub-unfErssm020
+- sub-amuAP
+- sub-unfErssm005
+- sub-amuHB
+- sub-unfErssm006
+- sub-amuGB
+- sub-amuAL
+- sub-amuPA
+- sub-unfErssm018
+- sub-unfErssm013
+- sub-amuMD
+- sub-amuVP
+- sub-unfErssm019
+- sub-amuAM
+- sub-unfPain001
+val:
+- sub-unfErssm010
+- sub-unfErssm023
+- sub-unfErssm008
+- sub-unfErssm031
+- sub-amuCR
+- sub-amuMT
+- sub-unfErssm026
+- sub-unfErssm027
+- sub-unfSCT001
+- sub-amuFR
+- sub-unfErssm003
+- sub-amuLJ
+test:
+- sub-unfErssm029
+- sub-unfErssm016
+- sub-unfErssm024
+- sub-amuTM
+- sub-unfErssm001
+- sub-unfErssm015
+- sub-amuFL
+- sub-unfErssm002
+- sub-unfErssm030
+- sub-unfErssm011
+- sub-unfErssm025
+- sub-amuTR
+- sub-unfErssm021
+- sub-unfErssm004
+- sub-amuVC
+- sub-unfPain004
+- sub-unfErssm012

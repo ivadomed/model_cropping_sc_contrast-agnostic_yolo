@@ -1,30 +1,10 @@
-test:
-- sub-245971
-- sub-141011
-- sub-247770
-- sub-245775
-- sub-247981
-- sub-142487
-- sub-242472
-- sub-247674
-- sub-247694
-- sub-247581
-- sub-242142
-- sub-243488
-- sub-242258
-- sub-247876
-- sub-247195
-- sub-242583
-- sub-243360
-- sub-246835
-- sub-241981
-- sub-243445
-- sub-245995
-- sub-242722
-- sub-248234
-- sub-243618
-- sub-242767
-- sub-246626
+meta:
+  name: lumbar-vanderbilt
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/lumbar-vanderbilt
+  url_ssh: git@data.neuro.polymtl.ca:datasets/lumbar-vanderbilt
+  commit: 9effcbf298488fa8c90f28044ffb8cb28a779f2f
+  seed: 50
 train:
 - sub-140653
 - sub-243754
@@ -87,3 +67,30 @@ val:
 - sub-247090
 - sub-140803
 - sub-245980
+test:
+- sub-245971
+- sub-141011
+- sub-247770
+- sub-245775
+- sub-247981
+- sub-142487
+- sub-242472
+- sub-247674
+- sub-247694
+- sub-247581
+- sub-242142
+- sub-243488
+- sub-242258
+- sub-247876
+- sub-247195
+- sub-242583
+- sub-243360
+- sub-246835
+- sub-241981
+- sub-243445
+- sub-245995
+- sub-242722
+- sub-248234
+- sub-243618
+- sub-242767
+- sub-246626

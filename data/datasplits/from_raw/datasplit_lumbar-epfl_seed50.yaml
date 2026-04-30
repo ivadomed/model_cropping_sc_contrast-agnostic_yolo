@@ -1,11 +1,10 @@
-test:
-- sub-02
-- sub-11
-- sub-21
-- sub-08
-- sub-12
-- sub-09
-- sub-16
+meta:
+  name: lumbar-epfl
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/lumbar-epfl
+  url_ssh: git@data.neuro.polymtl.ca:datasets/lumbar-epfl
+  commit: 8639e25848723b62018bc553a174f294cec5978a
+  seed: 50
 train:
 - sub-10
 - sub-19
@@ -22,3 +21,11 @@ val:
 - sub-04
 - sub-06
 - sub-20
+test:
+- sub-02
+- sub-11
+- sub-21
+- sub-08
+- sub-12
+- sub-09
+- sub-16

@@ -49,7 +49,8 @@ conda activate contrast_agnostic
 pip install -r requirements.txt
 ```
 ### Install or check that you have git annex installed
-```sudo apt install git-annex
+```bash
+sudo apt install git-annex
 ```
 
 ---

@@ -28,9 +28,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."   # run from project root
 # ─── Pipeline control ─────────────────────────────────────────────────────────
 
 PLANE=sagittal       # axial | sagittal
-START_STEP=6      # 1–9
+START_STEP=1      # 1–9
 END_STEP=9        # 1–9
-MAKE_SPLITS=false # true = regenerate splits from data/raw (step 2)
+MAKE_SPLITS=true # true = regenerate splits from data/raw (step 2)
 export SEED=50    # global random seed — propagated to all Python scripts via env
 
 # ─── Parameters — AXIAL ───────────────────────────────────────────────────────
@@ -51,12 +51,12 @@ SAG_SC_RATIO=3           # SC/non-SC slice balance ratio in the YOLO dataset
 # Example: lumbar datasets oversampled ×5 because they are underrepresented.
 
 DATASET_FACTORS=(
-    lumbar-epfl:7
-    lumbar-vanderbilt:7
-    spider-challenge-2023:10
-    sct-testing-large:2
-    sci-zurich:2
-    canproco:2
+    lumbar-epfl:1
+    lumbar-vanderbilt:1
+    spider-challenge-2023:1
+    sct-testing-large:1
+    sci-zurich:1
+    canproco:1
 )
 
 # ─── Parameters — TRAINING (shared) ──────────────────────────────────────────
@@ -75,9 +75,9 @@ WORKERS=4
 # NOTE: overrides only affect steps 4+ (build, train, eval, metrics, failures).
 #       Step 3 (preprocess) always writes to the auto-generated PROCESSED_DIR.
 
-OVERRIDE_PROCESSED_DIR="/home/quentinr/model_cropping_sc_contrast-agnostic_yolo/processed/1mm_SI_1mm_axial_1mm_RL_3ch_sagittal_sc10mm"   # e.g. processed/10mm_SI_1mm_axial_3ch
+OVERRIDE_PROCESSED_DIR=""   # e.g. processed/10mm_SI_1mm_axial_3ch
 OVERRIDE_DATASET_DIR=""     # e.g. datasets/10mm_SI_1mm_axial_3ch
-OVERRIDE_RUN_ID="yolo26n_sagittal_sc10mm_focal23"          # e.g. yolo26n_axial_v2
+OVERRIDE_RUN_ID=""          # e.g. yolo26n_axial_v2
 
 # ─── Derived values (do not edit) ─────────────────────────────────────────────
 
@@ -157,8 +157,8 @@ EXPECTED_DATASETS=(
     dcm-zurich-lesions-20231115
     spider-challenge-2023
     whole-spine
-    site_006_praxis      # manual download from spineimage.ca
-    site_007_praxis      # manual download from spineimage.ca
+    site_006
+    site_007
 )
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

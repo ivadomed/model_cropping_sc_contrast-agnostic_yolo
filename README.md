@@ -65,7 +65,7 @@ bash scripts/run_pipeline.sh
 ```
 Many global parameters allow to fine-tunne the pipeline to compare different approaches.
 
-Otherwise you can find in the bash script references to the following steps to allow you to start the pipeline from any checkpoint.
+Otherwise you can start the pipeline from any step (detailed below), everything is specified in the script.  
 
 #### Step 1 — Download datasets
 

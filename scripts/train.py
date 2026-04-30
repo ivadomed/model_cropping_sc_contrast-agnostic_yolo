@@ -122,6 +122,16 @@ def main():
     random.seed(seed)
     np.random.seed(seed)
 
+    # Load pipeline + dataset build context for W&B logging
+    dataset_dir = Path(args.dataset_yaml).parent
+    pipeline_config, build_stats = {}, {}
+    for fname, target in [("pipeline_config.yaml", pipeline_config),
+                           ("build_stats.yaml",     build_stats)]:
+        p = dataset_dir / fname
+        if p.exists():
+            import yaml as _yaml
+            target.update(_yaml.safe_load(p.read_text()) or {})
+
     if args.no_wandb:
         SETTINGS["wandb"] = False
         os.environ["WANDB_MODE"] = "disabled"
@@ -138,27 +148,31 @@ def main():
             name=args.run_id,
             tags=["yolo", "spine", "mri"],
             config={
-                "model":       args.model,
-                "dataset":     args.dataset_yaml,
-                "imgsz":       args.imgsz,
-                "batch":       args.batch,
-                "epochs":      args.epochs,
-                "patience":    args.patience,
-                "augment":     not args.no_augment,
-                "si_res_mm":   args.dataset_yaml.split("_")[1] if "_" in args.dataset_yaml else "?",
-                # YOLO augmentations — stored individually for easy comparison across runs
-                "aug/hsv_v":         0.0  if args.no_augment else 0.15,
-                "aug/degrees":       0.0  if args.no_augment else 15.0,
-                "aug/scale":         0.0  if args.no_augment else 0.2,
-                "aug/translate":     0.0  if args.no_augment else 0.1,
-                "aug/fliplr":        0.0  if args.no_augment else 0.5,
-                "aug/flipud":        0.0  if args.no_augment else 0.5,
+                # training
+                "model":    args.model,
+                "dataset":  args.dataset_yaml,
+                "imgsz":    args.imgsz,
+                "batch":    args.batch,
+                "epochs":   args.epochs,
+                "patience": args.patience,
+                "seed":     seed,
+                "augment":  not args.no_augment,
+                # YOLO augmentations
+                "aug/hsv_v":         0.0 if args.no_augment else 0.15,
+                "aug/degrees":       0.0 if args.no_augment else 15.0,
+                "aug/scale":         0.0 if args.no_augment else 0.2,
+                "aug/translate":     0.0 if args.no_augment else 0.1,
+                "aug/fliplr":        0.0 if args.no_augment else 0.5,
+                "aug/flipud":        0.0 if args.no_augment else 0.5,
                 # albumentations MRI augmentations
-                "aug/gauss_noise_p":    0.0 if args.no_augment else 0.1,
-                "aug/gaussian_blur_p":  0.0 if args.no_augment else 0.2,
-                "aug/downscale_p":      0.0 if args.no_augment else 0.25,
-                "aug/random_gamma_p":   0.0 if args.no_augment else 0.1,
-                "fl_gamma":             args.fl_gamma,
+                "aug/gauss_noise_p":   0.0 if args.no_augment else 0.1,
+                "aug/gaussian_blur_p": 0.0 if args.no_augment else 0.2,
+                "aug/downscale_p":     0.0 if args.no_augment else 0.25,
+                "aug/random_gamma_p":  0.0 if args.no_augment else 0.1,
+                "fl_gamma": args.fl_gamma,
+                # pipeline context (from pipeline_config.yaml + build_stats.yaml)
+                **{f"pipeline/{k}": v for k, v in pipeline_config.items()},
+                **{f"data/{k}":     v for k, v in build_stats.items()},
             },
         )
 

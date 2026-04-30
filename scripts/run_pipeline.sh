@@ -81,7 +81,7 @@ OVERRIDE_RUN_ID="yolo26n_sagittal_sc10mm_focal23"          # e.g. yolo26n_axial_
 
 # ─── Derived values (do not edit) ─────────────────────────────────────────────
 
-SPLITS_DIR="data/datasplits/from_raw"
+SPLITS_DIR="data/datasplits_seed${SEED}"
 
 if [[ "$PLANE" == "axial" ]]; then
 
@@ -209,7 +209,7 @@ if step 1 "Download datasets"; then
 fi
 
 # ─── Step 2 : Make splits ─────────────────────────────────────────────────────
-# Disabled by default — committed splits in data/datasplits/ are the reference.
+# Disabled by default — committed splits in data/datasplits_seed<N>/ are the reference.
 # Enable only to regenerate from scratch (changes results, commit afterwards).
 
 if step 2 "Make splits"; then

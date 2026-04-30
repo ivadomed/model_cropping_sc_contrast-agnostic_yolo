@@ -761,7 +761,7 @@ def main():
     parser.add_argument("--processed",    default=None,
                         help="processed/<variant> dir (GT source). If omitted, reads from gt/ symlink "
                              "in each patient pred dir (created by evaluate.py).")
-    parser.add_argument("--splits-dir",   default="data/datasplits/from_raw",
+    parser.add_argument("--splits-dir",   default="data/datasplits_seed50",
                         help="Directory with datasplit_*.yaml (used for report.html only)")
     parser.add_argument("--conf",         type=float, default=CONF_REPORT,
                         help="Confidence threshold used for report.html summary")

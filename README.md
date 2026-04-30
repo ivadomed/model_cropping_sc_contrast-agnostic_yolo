@@ -65,7 +65,32 @@ bash scripts/run_pipeline.sh
 ```
 Many global parameters allow to fine-tunne the pipeline to compare different approaches.
 
-Otherwise you can start the pipeline from any step (detailed below), everything is specified in the script.  
+Otherwise you can start the pipeline from any step (detailed below), everything is specified in the script.
+
+The following variables are editable at the top of `scripts/run_pipeline.sh`:
+
+| Variable | Description |
+|---|---|
+| `PLANE` | `axial` or `sagittal` |
+| `START_STEP` / `END_STEP` | Run only a subset of steps (1–9) |
+| `MAKE_SPLITS` | `true` to regenerate train/val/test splits from scratch |
+| `SEED` | Global random seed propagated to all scripts (default `50`) |
+| `AXIAL_SI_RES` / `AXIAL_INPLANE_RES` | Resampling resolutions for axial plane (mm) |
+| `SAG_SI_RES` / `SAG_INPLANE_RES` | Resampling resolutions for sagittal plane (mm) |
+| `SAG_SC_PAD` | Sagittal: slices kept = SC extent ± this value (mm) |
+| `SAG_SC_RATIO` | Sagittal: SC/non-SC slice balance ratio in the YOLO dataset |
+| `DATASET_FACTORS` | Per-dataset oversampling multipliers applied at step 4 (train split only) |
+| `WITH_CANAL` | `true` to also extract the spinal canal as a second detection class |
+| `MODEL` | YOLO model variant (e.g. `yolo26n.pt`, `yolo26s.pt`) |
+| `EPOCHS` | Number of training epochs |
+| `IMGSZ` | Input image size for training |
+| `FL_GAMMA` | Focal loss gamma (`0` = standard BCE) |
+| `WORKERS` | Number of dataloader workers |
+| `OVERRIDE_PROCESSED_DIR` / `OVERRIDE_DATASET_DIR` / `OVERRIDE_RUN_ID` | Point steps 4–9 to an existing directory (useful to resume or re-evaluate without re-preprocessing) |
+
+Output directories are prefixed with `pipeline_` (processed, datasets) and `pipeline_run_` (checkpoints, predictions) to avoid collisions with manually created runs.
+
+---
 
 #### Step 1 — Download datasets
 

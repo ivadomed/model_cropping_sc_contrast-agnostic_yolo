@@ -46,7 +46,7 @@ datasets:
     host: neuro
     url_https: https://data.neuro.polymtl.ca/datasets/dcm-zurich
     url_ssh:   git@data.neuro.polymtl.ca:datasets/dcm-zurich
-    commit: 00ffc89779317d3302dd0a164aba59d3848a7125
+    commit: 816d7fd611a3b1fb84e331e0f61a2a65594ffef1
 
   - name: lumbar-epfl
     host: neuro

@@ -53,8 +53,9 @@ pip install -r requirements.txt
 
 ---
 #### Add you public ssh key to the datasets repositories
-Add your public ssh key to `[data.neuro.polymtl.ca](https://data.neuro.polymtl.ca/user/settings/keys)` and to 
-`[spineimage.ca](https://spineimage.ca/user/settings/keys)`
+Add your public ssh key to: 
+[data.neuro.polymtl.ca](https://data.neuro.polymtl.ca/user/settings/keys),
+[spineimage.ca](https://spineimage.ca/user/settings/keys)
 
 ### Automatic steps
 

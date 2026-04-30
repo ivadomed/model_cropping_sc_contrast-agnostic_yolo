@@ -1,27 +1,10 @@
-test:
-- sub-zh75
-- sub-zh56
-- sub-zh27
-- sub-zh74
-- sub-zh05
-- sub-zh85
-- sub-zh19
-- sub-zh25
-- sub-zh86
-- sub-zh17
-- sub-zh63
-- sub-zh24
-- sub-zh92
-- sub-zh39
-- sub-zh59
-- sub-zh89
-- sub-zh15
-- sub-zh61
-- sub-zh81
-- sub-zh45
-- sub-zh65
-- sub-zh51
-- sub-zh84
+meta:
+  name: sci-zurich
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/sci-zurich
+  url_ssh: git@data.neuro.polymtl.ca:datasets/sci-zurich
+  commit: c6b899adacdefd969f0afe6bdee9a419c0cace7a
+  seed: 50
 train:
 - sub-zh62
 - sub-zh95
@@ -79,3 +62,27 @@ val:
 - sub-zh06
 - sub-zh90
 - sub-zh37
+test:
+- sub-zh75
+- sub-zh56
+- sub-zh27
+- sub-zh74
+- sub-zh05
+- sub-zh85
+- sub-zh19
+- sub-zh25
+- sub-zh86
+- sub-zh17
+- sub-zh63
+- sub-zh24
+- sub-zh92
+- sub-zh39
+- sub-zh59
+- sub-zh89
+- sub-zh15
+- sub-zh61
+- sub-zh81
+- sub-zh45
+- sub-zh65
+- sub-zh51
+- sub-zh84

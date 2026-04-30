@@ -178,7 +178,8 @@ def main():
 
         region = regions.get(dataset, "unknown")
         splits = yaml.safe_load(split_yaml.read_text())
-        n_subjects = sum(len(v or []) for v in splits.values())
+        splits = {k: v for k, v in splits.items() if isinstance(v, list)}
+        n_subjects = sum(len(v) for v in splits.values())
         print(f"{dataset} [{region}]: {n_subjects} subjects")
 
         for partition, subjects in splits.items():

@@ -1,8 +1,10 @@
-test:
-- sub-13
-- sub-08
-- sub-07
-- sub-10
+meta:
+  name: dcm-zurich-lesions
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/dcm-zurich-lesions
+  url_ssh: git@data.neuro.polymtl.ca:datasets/dcm-zurich-lesions
+  commit: 650772aac79e9d05b6b5a8f48cf4ddb2ff269110
+  seed: 50
 train:
 - sub-12
 - sub-09
@@ -15,3 +17,8 @@ val:
 - sub-14
 - sub-16
 - sub-06
+test:
+- sub-13
+- sub-08
+- sub-07
+- sub-10

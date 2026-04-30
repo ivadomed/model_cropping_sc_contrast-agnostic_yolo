@@ -1,28 +1,10 @@
-test:
-- sub-6257
-- sub-6256
-- sub-5941
-- sub-5653
-- sub-6198
-- sub-5493
-- sub-6442
-- sub-6462
-- sub-6464
-- sub-6444
-- sub-5584
-- sub-6026
-- sub-5629
-- sub-6483
-- sub-5739
-- sub-6004
-- sub-6449
-- sub-5556
-- sub-6013
-- sub-6329
-- sub-5787
-- sub-6092
-- sub-5854
-- sub-6394
+meta:
+  name: sci-colorado
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/sci-colorado
+  url_ssh: git@data.neuro.polymtl.ca:datasets/sci-colorado
+  commit: c9da263820f4903bb06dbb8f31b1e65fcbb7a79e
+  seed: 50
 train:
 - sub-6114
 - sub-5828
@@ -81,3 +63,28 @@ val:
 - sub-5505
 - sub-6418
 - sub-5725
+test:
+- sub-6257
+- sub-6256
+- sub-5941
+- sub-5653
+- sub-6198
+- sub-5493
+- sub-6442
+- sub-6462
+- sub-6464
+- sub-6444
+- sub-5584
+- sub-6026
+- sub-5629
+- sub-6483
+- sub-5739
+- sub-6004
+- sub-6449
+- sub-5556
+- sub-6013
+- sub-6329
+- sub-5787
+- sub-6092
+- sub-5854
+- sub-6394

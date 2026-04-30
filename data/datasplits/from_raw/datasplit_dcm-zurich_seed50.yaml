@@ -1,50 +1,10 @@
-test:
-- sub-170
-- sub-029
-- sub-094
-- sub-130
-- sub-146
-- sub-066
-- sub-086
-- sub-164
-- sub-139
-- sub-153
-- sub-132
-- sub-157
-- sub-015
-- sub-104
-- sub-063
-- sub-135
-- sub-118
-- sub-038
-- sub-047
-- sub-032
-- sub-001
-- sub-126
-- sub-100
-- sub-018
-- sub-025
-- sub-125
-- sub-166
-- sub-019
-- sub-055
-- sub-064
-- sub-163
-- sub-158
-- sub-028
-- sub-103
-- sub-043
-- sub-165
-- sub-065
-- sub-096
-- sub-156
-- sub-024
-- sub-099
-- sub-137
-- sub-070
-- sub-108
-- sub-076
-- sub-143
+meta:
+  name: dcm-zurich
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/dcm-zurich
+  url_ssh: git@data.neuro.polymtl.ca:datasets/dcm-zurich
+  commit: 816d7fd611a3b1fb84e331e0f61a2a65594ffef1
+  seed: 50
 train:
 - sub-136
 - sub-016
@@ -153,3 +113,50 @@ val:
 - sub-059
 - sub-017
 - sub-128
+test:
+- sub-170
+- sub-029
+- sub-094
+- sub-130
+- sub-146
+- sub-066
+- sub-086
+- sub-164
+- sub-139
+- sub-153
+- sub-132
+- sub-157
+- sub-015
+- sub-104
+- sub-063
+- sub-135
+- sub-118
+- sub-038
+- sub-047
+- sub-032
+- sub-001
+- sub-126
+- sub-100
+- sub-018
+- sub-025
+- sub-125
+- sub-166
+- sub-019
+- sub-055
+- sub-064
+- sub-163
+- sub-158
+- sub-028
+- sub-103
+- sub-043
+- sub-165
+- sub-065
+- sub-096
+- sub-156
+- sub-024
+- sub-099
+- sub-137
+- sub-070
+- sub-108
+- sub-076
+- sub-143

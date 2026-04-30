@@ -1,50 +1,10 @@
-test:
-- sub-2348B4595B
-- sub-2750B4646B
-- sub-3146B
-- sub-3237B
-- sub-2600B4616B
-- sub-2717B
-- sub-3793B4681B
-- sub-3214B
-- sub-3427B4966B
-- sub-3167B
-- sub-3640B
-- sub-2315B4686B
-- sub-2825B4881B
-- sub-2481B6079B
-- sub-3194B
-- sub-3024B
-- sub-2384B
-- sub-2414B
-- sub-2355B
-- sub-1836B6029B
-- sub-3120B6558B
-- sub-2774B4763B
-- sub-2320B6468B
-- sub-2336B
-- sub-3111B
-- sub-4088B6310B
-- sub-2321B6243B
-- sub-2420B
-- sub-2590B4647B
-- sub-3782B6193B
-- sub-3641B
-- sub-2347B6454B
-- sub-2804B4632B
-- sub-2407B5757B
-- sub-3998B6406B
-- sub-3758B6378B
-- sub-2599B4623B
-- sub-2752B
-- sub-3636B
-- sub-2334B4627B
-- sub-2773B4661B
-- sub-3207B4664B
-- sub-2613B
-- sub-2886B5253B
-- sub-2667B6188B
-- sub-3231B
+meta:
+  name: dcm-brno
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/dcm-brno
+  url_ssh: git@data.neuro.polymtl.ca:datasets/dcm-brno
+  commit: 34af0b48cc46cad7f279952d0c790e19cae4d1c9
+  seed: 50
 train:
 - sub-3206B
 - sub-2316B5038B
@@ -154,3 +114,50 @@ val:
 - sub-2319B4634B
 - sub-3132B4599B
 - sub-4891B6572B
+test:
+- sub-2348B4595B
+- sub-2750B4646B
+- sub-3146B
+- sub-3237B
+- sub-2600B4616B
+- sub-2717B
+- sub-3793B4681B
+- sub-3214B
+- sub-3427B4966B
+- sub-3167B
+- sub-3640B
+- sub-2315B4686B
+- sub-2825B4881B
+- sub-2481B6079B
+- sub-3194B
+- sub-3024B
+- sub-2384B
+- sub-2414B
+- sub-2355B
+- sub-1836B6029B
+- sub-3120B6558B
+- sub-2774B4763B
+- sub-2320B6468B
+- sub-2336B
+- sub-3111B
+- sub-4088B6310B
+- sub-2321B6243B
+- sub-2420B
+- sub-2590B4647B
+- sub-3782B6193B
+- sub-3641B
+- sub-2347B6454B
+- sub-2804B4632B
+- sub-2407B5757B
+- sub-3998B6406B
+- sub-3758B6378B
+- sub-2599B4623B
+- sub-2752B
+- sub-3636B
+- sub-2334B4627B
+- sub-2773B4661B
+- sub-3207B4664B
+- sub-2613B
+- sub-2886B5253B
+- sub-2667B6188B
+- sub-3231B

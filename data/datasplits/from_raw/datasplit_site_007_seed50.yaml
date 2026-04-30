@@ -1,51 +1,10 @@
-test:
-- sub-van090
-- sub-van270
-- sub-van414
-- sub-van453
-- sub-van442
-- sub-van247
-- sub-van471
-- sub-van402
-- sub-van431
-- sub-van468
-- sub-van405
-- sub-van472
-- sub-van049
-- sub-van305
-- sub-van165
-- sub-van417
-- sub-van347
-- sub-van115
-- sub-van295
-- sub-van174
-- sub-van009
-- sub-van377
-- sub-van290
-- sub-van058
-- sub-van081
-- sub-van374
-- sub-van490
-- sub-van060
-- sub-van153
-- sub-van166
-- sub-van481
-- sub-van479
-- sub-van087
-- sub-van300
-- sub-van134
-- sub-van484
-- sub-van473
-- sub-van171
-- sub-van278
-- sub-van464
-- sub-van077
-- sub-van289
-- sub-van419
-- sub-van198
-- sub-van325
-- sub-van225
-- sub-van437
+meta:
+  name: site_007
+  host: spineimage
+  url_https: https://spineimage.ca/VGH/site_007
+  url_ssh: gitea@spineimage.ca:VGH/site_007.git
+  commit: d97606861b6ed64af339943dab0c4559216812a1
+  seed: 50
 train:
 - sub-van470
 - sub-van337
@@ -157,3 +116,51 @@ val:
 - sub-van053
 - sub-van398
 - sub-van501
+test:
+- sub-van090
+- sub-van270
+- sub-van414
+- sub-van453
+- sub-van442
+- sub-van247
+- sub-van471
+- sub-van402
+- sub-van431
+- sub-van468
+- sub-van405
+- sub-van472
+- sub-van049
+- sub-van305
+- sub-van165
+- sub-van417
+- sub-van347
+- sub-van115
+- sub-van295
+- sub-van174
+- sub-van009
+- sub-van377
+- sub-van290
+- sub-van058
+- sub-van081
+- sub-van374
+- sub-van490
+- sub-van060
+- sub-van153
+- sub-van166
+- sub-van481
+- sub-van479
+- sub-van087
+- sub-van300
+- sub-van134
+- sub-van484
+- sub-van473
+- sub-van171
+- sub-van278
+- sub-van464
+- sub-van077
+- sub-van289
+- sub-van419
+- sub-van198
+- sub-van325
+- sub-van225
+- sub-van437

@@ -236,6 +236,8 @@ def load_splits(splits_dir: Path) -> dict:
     for f in sorted(Path(splits_dir).glob("datasplit_*.yaml")):
         dataset = re.sub(r"_seed\d+$", "", f.stem[len("datasplit_"):])
         for split_name, subjects in yaml.safe_load(f.read_text()).items():
+            if not isinstance(subjects, list):  # skip meta block
+                continue
             for subj in (subjects or []):
                 mapping[(dataset, subj)] = split_name
     return mapping

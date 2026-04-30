@@ -236,6 +236,41 @@ if step 4 "Build YOLO dataset"; then
     python scripts/build_dataset.py "${BUILD_DATASET_ARGS[@]}"
 fi
 
+# Write pipeline_config.yaml into the dataset dir for W&B traceability
+mkdir -p "${DATASET_DIR}"
+python - <<EOF
+import yaml
+factors = {}
+for entry in "${DATASET_FACTORS[*]}".split():
+    k, v = entry.split(":")
+    factors[k] = float(v)
+config = {
+    "plane":          "${PLANE}",
+    "seed":           ${SEED},
+    "model":          "${MODEL}",
+    "epochs":         ${EPOCHS},
+    "imgsz":          ${IMGSZ},
+    "fl_gamma":       ${FL_GAMMA},
+    "workers":        ${WORKERS},
+    "with_canal":     "${WITH_CANAL}" == "true",
+    "dataset_factors": factors,
+    "processed_dir":  "${PROCESSED_DIR}",
+    "dataset_dir":    "${DATASET_DIR}",
+    "run_id":         "${RUN_ID}",
+}
+if "${PLANE}" == "axial":
+    config["si_res_mm"]     = ${AXIAL_SI_RES}
+    config["inplane_res_mm"] = ${AXIAL_INPLANE_RES}
+else:
+    config["si_res_mm"]     = ${SAG_SI_RES}
+    config["inplane_res_mm"] = ${SAG_INPLANE_RES}
+    config["sc_pad_mm"]     = ${SAG_SC_PAD}
+    config["sc_ratio"]      = ${SAG_SC_RATIO}
+with open("${DATASET_DIR}/pipeline_config.yaml", "w") as f:
+    yaml.dump(config, f, sort_keys=False, default_flow_style=False)
+print("Pipeline config written to ${DATASET_DIR}/pipeline_config.yaml")
+EOF
+
 # ─── Step 5 : Train ───────────────────────────────────────────────────────────
 
 if step 5 "Train — ${MODEL} × ${EPOCHS} epochs (fl-gamma=${FL_GAMMA})"; then

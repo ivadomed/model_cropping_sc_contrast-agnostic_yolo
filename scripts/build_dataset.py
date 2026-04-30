@@ -2,16 +2,17 @@
 """
 Build the YOLO dataset from processed slices and per-dataset split YAMLs.
 
-Iterates all datasplit_<dataset>_seed50.yaml in --splits-dir.
+Iterates all datasplit_<dataset>_seed<N>.yaml in --splits-dir.
 For each file, resolves the dataset name and maps each listed subject to all
 its acquisition folders in processed/<dataset>/<subject>_*/.
 Creates flat per-slice symlinks (not copies) into datasets/:
   datasets/images/{train,val,test}/<dataset>_<subject>_<acq>_slice_NNN[_rN].png
   datasets/labels/{train,val,test}/<dataset>_<subject>_<acq>_slice_NNN[_rN].txt
   datasets/dataset.yaml
+  datasets/build_stats.yaml  ← slice counts per dataset (raw + after oversampling)
 
 Oversampling / balancing (train split only):
-  --balance-regions : oversample lumbar slices so lumbar ≈ cervical slice count (default: on, requires --regions-csv)
+  --balance-regions : oversample lumbar slices so lumbar ≈ cervical slice count (default: off)
   --dataset-factors : per-dataset multipliers, e.g. sci-zurich:5 lumbar-epfl:3
   --sc-ratio N      : per-volume SC balance — keep all SC slices, subsample empty slices to N×n_sc
                       e.g. --sc-ratio 3 → at most 3 empty slices per SC slice per volume (train only)
@@ -23,11 +24,10 @@ Usage:
     python scripts/build_dataset.py
     python scripts/build_dataset.py --processed processed/10mm_SI_1mm_axial_3ch_sc_and_canal \\
         --out datasets/10mm_SI_1mm_axial_3ch_sc_and_canal \\
-        --regions-csv data/dataset_regions.csv \\
-        --dataset-factors sci-zurich:5
+        --dataset-factors sci-zurich:5 lumbar-epfl:3
     # spinal cord only (drop spinal canal labels):
     python scripts/build_dataset.py --keep-classes 0 \\
-        --out datasets/10mm_SI_1mm_axial_3ch_sc_only_region_balanced_all_datasets
+        --out datasets/10mm_SI_1mm_axial_3ch_sc_only_all_datasets
 """
 
 import argparse
@@ -80,10 +80,7 @@ def subsample_empty_slices(slices: list[dict], sc_ratio: int, seed: int) -> list
 
 def make_symlinks(slices: list[dict], images_out: Path, labels_out: Path,
                   n_copies_fn, keep_classes: Optional[set] = None) -> int:
-    """Create symlinks for each slice, n_copies_fn(slice) times. Returns total links.
-
-    If keep_classes is set, label files are written with filtered content instead of symlinked.
-    """
+    """Create symlinks for each slice, n_copies_fn(slice) times. Returns total links."""
     n = 0
     for s in slices:
         n_copies = n_copies_fn(s)
@@ -134,10 +131,9 @@ def main():
     parser.add_argument("--out",             default="datasets/10mm_SI_1mm_axial_3ch_sc_and_canal")
     parser.add_argument("--nc",              type=int, default=1)
     parser.add_argument("--class-names",     nargs="+", default=["spine"])
-    parser.add_argument("--regions-csv",     default="data/dataset_regions.csv",
-                        help="data/dataset_regions.csv (required for --balance-*)")
-    parser.add_argument("--balance-regions", action="store_true", default=True,
-                        help="Oversample lumbar slices in train to match cervical count (default: on, disable with --no-balance-regions)")
+    parser.add_argument("--regions-csv",     default="data/dataset_regions.csv")
+    parser.add_argument("--balance-regions", action="store_true", default=False,
+                        help="Oversample lumbar slices in train to match cervical count (default: off)")
     parser.add_argument("--no-balance-regions", dest="balance_regions", action="store_false")
     parser.add_argument("--keep-classes",    nargs="+", type=int, default=None,
                         metavar="ID",
@@ -147,8 +143,7 @@ def main():
                         help="Per-dataset oversampling multipliers, e.g. sci-zurich:5 lumbar-epfl:3 (default: 1 for all)")
     parser.add_argument("--sc-ratio",        type=int, default=None,
                         metavar="N",
-                        help="Per-volume SC balance: keep all SC slices, subsample empty slices to N×n_sc (train only). "
-                             "E.g. --sc-ratio 3 → at most 3 empty slices per SC slice.")
+                        help="Per-volume SC balance: keep all SC slices, subsample empty slices to N×n_sc (train only).")
     args = parser.parse_args()
 
     assert not args.balance_regions or Path(args.regions_csv).exists(), \
@@ -159,7 +154,7 @@ def main():
         print(f"Dataset factors: {dataset_factors}")
 
     regions = {}
-    if args.regions_csv:
+    if Path(args.regions_csv).exists():
         df = pd.read_csv(args.regions_csv)
         regions = dict(zip(df["dataset"], df["region"]))
 
@@ -172,7 +167,6 @@ def main():
 
     split_files = sorted(Path(args.splits_dir).glob("datasplit_*.yaml"))
 
-    # Collect all slices per partition
     all_slices: dict[str, list[dict]] = {"train": [], "val": [], "test": []}
 
     for split_yaml in split_files:
@@ -197,10 +191,22 @@ def main():
                         slices = subsample_empty_slices(slices, args.sc_ratio, seed)
                     all_slices[partition].extend(slices)
 
-    # Compute oversampling factors from train set
     region_factor = 1.0
     if args.balance_regions:
         region_factor = compute_region_factor(all_slices["train"])
+
+    # Per-dataset raw slice counts
+    raw_counts: dict[str, dict[str, int]] = {"train": {}, "val": {}, "test": {}}
+    for partition, slices in all_slices.items():
+        for s in slices:
+            raw_counts[partition][s["dataset"]] = raw_counts[partition].get(s["dataset"], 0) + 1
+
+    # Per-dataset final slice counts for train (after oversampling)
+    final_train: dict[str, int] = {}
+    for s in all_slices["train"]:
+        factor = region_factor if s["region"] == "lumbar" else 1.0
+        factor *= dataset_factors.get(s["dataset"], 1.0)
+        final_train[s["dataset"]] = final_train.get(s["dataset"], 0) + max(1, round(factor))
 
     # Link all partitions
     counts = {}
@@ -230,9 +236,21 @@ def main():
         f"names:\n{names_str}\n"
     )
 
+    build_stats = {
+        "balance_regions": args.balance_regions,
+        "region_factor":   round(region_factor, 3),
+        "dataset_factors": dataset_factors,
+        "slices_raw":      raw_counts,
+        "slices_train_final": dict(sorted(final_train.items())),
+        "total":           counts,
+    }
+    with open(out_dir / "build_stats.yaml", "w") as f:
+        yaml.dump(build_stats, f, sort_keys=False, default_flow_style=False)
+
     for partition, n in counts.items():
         print(f"  {partition:5s}: {n} slices (with oversampling)")
-    print(f"Dataset YAML: {out_dir / 'dataset.yaml'}")
+    print(f"Dataset YAML:      {out_dir / 'dataset.yaml'}")
+    print(f"Build stats YAML:  {out_dir / 'build_stats.yaml'}")
 
 
 if __name__ == "__main__":

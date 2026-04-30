@@ -3,7 +3,7 @@
 # Usage: bash scripts/download_all_datasets.sh
 #
 # Prerequisites:
-#   - SSH access to data.neuro.polymtl.ca and spineimage.ca
+#   - SSH key access to data.neuro.polymtl.ca and spineimage.ca
 #   - git-annex installed
 #   - conda environment "contrast_agnostic" activated
 
@@ -11,29 +11,40 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."   # run from project root
 
 DATA_DIR="data/raw"
+LOG="$DATA_DIR/git_branch_commit.log"
 
 mkdir -p "$DATA_DIR"
 
-# Extract all dataset names from the registry
-ALL_DATASETS=$(python - <<'EOF'
+# Parse datasets.yaml once → lines of "name|url_ssh|commit"
+DATASETS=$(python - <<'EOF'
 import yaml
 with open("data/datasets.yaml") as f:
-    reg = yaml.safe_load(f)
-for d in reg["datasets"]:
-    print(d["name"])
+    for d in yaml.safe_load(f)["datasets"]:
+        print(f"{d['name']}|{d['url_ssh']}|{d.get('commit') or ''}")
 EOF
 )
 
 # ---- Clone each dataset ----
-for dataset in $ALL_DATASETS; do
+for entry in $DATASETS; do
+    name="${entry%%|*}"; rest="${entry#*|}"
+    url="${rest%%|*}";   commit="${rest#*|}"
+
     echo "=========================================="
-    echo "Cloning: $dataset"
+    echo "Cloning: $name"
     echo "=========================================="
-    if [ -d "$DATA_DIR/$dataset" ]; then
+
+    if [ -d "$DATA_DIR/$name" ]; then
         echo "  -> Already exists, skipping clone."
-    else
-        python scripts/01_clone_dataset.py --ofolder "$DATA_DIR" --dataset "$dataset"
+        continue
     fi
+
+    git clone "$url" "$DATA_DIR/$name"
+    git -C "$DATA_DIR/$name" annex dead here
+    [ -n "$commit" ] && git -C "$DATA_DIR/$name" checkout "$commit"
+
+    branch=$(git -C "$DATA_DIR/$name" rev-parse --abbrev-ref HEAD)
+    actual=$(git -C "$DATA_DIR/$name" rev-parse HEAD)
+    echo "$name: git-$branch-$actual" >> "$LOG"
 done
 
 # ---- Download NIfTI files via git-annex (parallel) ----
@@ -43,10 +54,11 @@ echo "Fetching NIfTI files with git annex get (parallel)..."
 echo "=========================================="
 
 pids=()
-for dataset in $ALL_DATASETS; do
-    if [ -d "$DATA_DIR/$dataset" ]; then
-        echo "  -> git annex get: $dataset"
-        (cd "$DATA_DIR/$dataset" && git annex get .) &
+for entry in $DATASETS; do
+    name="${entry%%|*}"
+    if [ -d "$DATA_DIR/$name" ]; then
+        echo "  -> git annex get: $name"
+        (cd "$DATA_DIR/$name" && git annex get .) &
         pids+=($!)
     fi
 done
@@ -56,10 +68,7 @@ for pid in "${pids[@]}"; do
     wait "$pid" || { echo "ERROR: git annex get failed (pid $pid)"; failed=1; }
 done
 
-if [ "$failed" -eq 1 ]; then
-    echo "ERROR: one or more git annex get calls failed."
-    exit 1
-fi
+[ "$failed" -eq 1 ] && { echo "ERROR: one or more git annex get calls failed."; exit 1; }
 
 echo ""
 echo "=========================================="

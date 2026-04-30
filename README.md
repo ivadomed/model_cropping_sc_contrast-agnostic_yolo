@@ -39,9 +39,7 @@ From spineimage.ca:
 
 ## Training the model
 
-### Manual steps
-
-####  Install the repository
+###  Install the repository
 
 ```bash
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo
@@ -50,22 +48,25 @@ conda create -n contrast_agnostic python=3.11
 conda activate contrast_agnostic
 pip install -r requirements.txt
 ```
+### Install or check that you have git annex installed
+```sudo apt install git-annex
+```
 
 ---
-#### Add you public ssh key to the datasets repositories
+### Add you public ssh key to the datasets repositories
 Add your public ssh key to [data.neuro.polymtl.ca](https://data.neuro.polymtl.ca/user/settings/keys) and to [spineimage.ca](https://spineimage.ca/user/settings/keys)
 
-### Automatic steps
+### Automatic pipeline
 
-The whole pipeline from downloading datasets to training and evaluating the model can be run by simply running 
+The whole pipeline from downloading datasets to training, evaluating and exporting the model can be run by: 
 ```
 bash scripts/run_pipeline.sh
 ```
-Many global parameters allow to fine-tunne de pipeline to compare different approaches.
+Many global parameters allow to fine-tunne the pipeline to compare different approaches.
 
 Otherwise you can find in the bash script references to the following steps to allow you to start the pipeline from any checkpoint.
 
-### Step 1 — Download datasets
+#### Step 1 — Download datasets
 
 Requires SSH access to `data.neuro.polymtl.ca`, `https://spineimage.ca/` and `https://github.com/spine-generic` (open source) and to have git-annex installed.
 
@@ -79,7 +80,7 @@ Datasets are downloaded to `data/raw/`. The 18 datasets are:
 
 ---
 
-## Step 2 — Generate train/val/test splits
+#### Step 2 — Generate train/val/test splits
 
 Reads actual subject folders from `data/raw/` and splits 50/20/30 per dataset with a fixed seed.
 
@@ -91,7 +92,7 @@ Output: `data/datasplits/from_raw/datasplit_<dataset>_seed50.yaml` (one file per
 
 ---
 
-## Step 3 — Preprocess
+#### Step 3 — Preprocess
 
 Reorients volumes to LAS, resamples SI axis to 10 mm and axial plane to 1 mm isotropic, exports axial PNG slices and YOLO bounding-box labels.
 
@@ -109,7 +110,7 @@ python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --3ch
 
 ---
 
-## Step 4 — Build YOLO dataset
+#### Step 4 — Build YOLO dataset
 
 Creates flat symlinks into `datasets/` directories ready for YOLO training.
 
@@ -121,7 +122,7 @@ python scripts/build_dataset.py \
 
 ---
 
-## Step 5 — Train
+#### Step 5 — Train
 
 ```bash
 python scripts/train.py \
@@ -134,7 +135,7 @@ Training is logged to Weights & Biases (project `spine_detection`).
 
 ---
 
-## Step 6 — Run inference
+#### Step 6 — Run inference
 
 Runs the model on all processed volumes and saves predicted bounding boxes and overlay images.
 
@@ -148,7 +149,7 @@ Output: `predictions/yolo26_1mm_axial/<dataset>/<patient>/png|txt|volume/`.
 
 ---
 
-## Step 7 — Compute metrics
+#### Step 7 — Compute metrics
 
 Computes per-slice and per-patient metrics at all confidence thresholds (0 → 1).
 
@@ -165,7 +166,7 @@ Key outputs:
 
 ---
 
-## Step 8 — Plot metrics
+#### Step 8 — Plot metrics
 
 Violin plots of `iou_gt_mean` and `iou_all_mean` per dataset, for each confidence threshold.
 
@@ -184,7 +185,7 @@ Generates one plot per metric per threshold in `predictions/yolo26_1mm_axial/plo
 
 ---
 
-## Step 9 — Inspect failures
+#### Step 9 — Inspect failures
 
 Ranks the worst-performing volumes per dataset and generates overview images.
 
@@ -200,7 +201,7 @@ Output: `predictions/yolo26_1mm_axial/<dataset>/failures/<split>/<metric>/`
 
 ---
 
-## Repository structure
+#### Repository structure
 
 ```
 data/

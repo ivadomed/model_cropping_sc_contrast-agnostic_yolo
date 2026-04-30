@@ -1,0 +1,123 @@
+# Dataset registry for spine detection project.
+#
+# Fields per dataset:
+#   name      : directory name in data/raw/
+#   host      : neuro | github | spineimage
+#   url_https : HTTPS URL for browsing in a web browser
+#   url_ssh   : SSH clone URL (null = manual download)
+#   commit    : specific commit to pin (null = use HEAD/latest)
+#
+# spineimage datasets are cloned via SSH (Gitea) — requires SSH key access to spineimage.ca.
+
+datasets:
+
+  # ── data.neuro.polymtl.ca ────────────────────────────────────────────────────
+  - name: basel-mp2rage
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/basel-mp2rage
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/basel-mp2rage
+    commit: 16ad793dcebd2d69e22e1c1f99e79d5bfde40e09
+
+  - name: canproco
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/canproco
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/canproco
+    commit: 2a797862657949148e98f341748c28a56ae78802
+
+  - name: dcm-brno
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/dcm-brno
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/dcm-brno
+    commit: 34af0b48cc46cad7f279952d0c790e19cae4d1c9
+
+  - name: dcm-zurich-lesions-20231115
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/dcm-zurich-lesions-20231115
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/dcm-zurich-lesions-20231115
+    commit: 3f55c854226b39ec6e6aa0eb578a15ba5a7d5ab7
+
+  - name: dcm-zurich-lesions
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/dcm-zurich-lesions
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/dcm-zurich-lesions
+    commit: 650772aac79e9d05b6b5a8f48cf4ddb2ff269110
+
+  - name: dcm-zurich
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/dcm-zurich
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/dcm-zurich
+    commit: 00ffc89779317d3302dd0a164aba59d3848a7125
+
+  - name: lumbar-epfl
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/lumbar-epfl
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/lumbar-epfl
+    commit: 8639e25848723b62018bc553a174f294cec5978a
+
+  - name: lumbar-vanderbilt
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/lumbar-vanderbilt
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/lumbar-vanderbilt
+    commit: 9effcbf298488fa8c90f28044ffb8cb28a779f2f
+
+  - name: nih-ms-mp2rage
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/nih-ms-mp2rage
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/nih-ms-mp2rage
+    commit: e013fc6cdb2bf34f31edb2901ae0b27acb6867dc
+
+  - name: sci-colorado
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/sci-colorado
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/sci-colorado
+    commit: c9da263820f4903bb06dbb8f31b1e65fcbb7a79e
+
+  - name: sci-paris
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/sci-paris
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/sci-paris
+    commit: 2bc35a1a449ca106291aea629a160c841c4c7f8c
+
+  - name: sci-zurich
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/sci-zurich
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/sci-zurich
+    commit: c6b899adacdefd969f0afe6bdee9a419c0cace7a
+
+  - name: sct-testing-large
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/sct-testing-large
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/sct-testing-large
+    commit: 1c33156f548859d3b5fbabed89bec4d6d82a1e05
+
+  - name: spider-challenge-2023
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/spider-challenge-2023
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/spider-challenge-2023
+    commit: d9be04cfb27da100fe03d968e220cccebbbc9a3f
+
+  - name: whole-spine
+    host: neuro
+    url_https: https://data.neuro.polymtl.ca/datasets/whole-spine
+    url_ssh:   git@data.neuro.polymtl.ca:datasets/whole-spine
+    commit: 0491c0b32f45b4f395ee63ec051b8f70204da61c
+
+  # ── GitHub (spine-generic) ───────────────────────────────────────────────────
+  - name: data-multi-subject
+    host: spine-generic
+    url_https: https://github.com/spine-generic/data-multi-subject
+    url_ssh:   git@github.com:spine-generic/data-multi-subject.git
+    commit: 2122dc4be6ce88acb12bf33d0ab2b2e8a8571e48
+
+  # ── spineimage.ca (Gitea SSH) ────────────────────────────────────────────────
+  - name: site_006_praxis
+    host: spineimage
+    url_https: https://spineimage.ca/MON/site_006
+    url_ssh:   gitea@spineimage.ca:MON/site_006.git
+    commit: 1396112095272988de483c05416369b75340d339
+
+  - name: site_007_praxis
+    host: spineimage
+    url_https: https://spineimage.ca/VGH/site_007
+    url_ssh:   gitea@spineimage.ca:VGH/site_007.git
+    commit: d97606861b6ed64af339943dab0c4559216812a1

@@ -199,8 +199,21 @@ TRAIN — décisions
 - wandb.init() avant model.train() pour que ultralytics utilise le run existant
 - project= passé en chemin absolu pour éviter runs/detect/ prefix ultralytics
 
+DATA/DATASETS REGISTRY — data/datasets.yaml
+  - Registre de tous les datasets : name, url_ssh, url_https, host (neuro|github|spineimage), commit (pinned pour reproductibilité)
+  - Commits pinned = état exact utilisé pour les entraînements actuels
+  - datasets spineimage : clonés via SSH Gitea (spineimage.ca) — nécessite une clé SSH sur le dépôt
+  - 01_clone_dataset.py et download_all_datasets.sh lisent exclusivement ce fichier
+
 SCRIPTS — un script, une responsabilité
   scripts/
+  ├── 01_clone_dataset.py ← clone un dataset depuis datasets.yaml (--ofolder --dataset)
+  │                         lit data/datasets.yaml pour url/host/commit
+  │                         tous les datasets : git clone + git annex dead here (client-only)
+  │                         si commit pinné : git checkout <commit> après clone
+  │                         ajoute commit dans data/raw/git_branch_commit.log
+  ├── download_all_datasets.sh ← clone tous les datasets non-spineimage + git annex get parallèle
+  │                              lit la liste de datasets depuis data/datasets.yaml via Python
   ├── explore_stats.py  ← data/raw/ → dataset_stats.csv
   │                       reorientation virtuelle LAS, rapporte shape/résolution/FOV mm
   ├── preprocess.py     ← data/raw/ → processed_{res}mm_SI[_{axial}mm_axial][_3ch]/

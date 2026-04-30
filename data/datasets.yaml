@@ -107,7 +107,7 @@ datasets:
     host: spine-generic
     url_https: https://github.com/spine-generic/data-multi-subject
     url_ssh:   git@github.com:spine-generic/data-multi-subject.git
-    commit: 2122dc4be6ce88acb12bf33d0ab2b2e8a8571e48
+    commit: 2122dc4be6176606b69cc588a276959049de22af
 
   # ── spineimage.ca (Gitea SSH) ────────────────────────────────────────────────
   - name: site_006_praxis

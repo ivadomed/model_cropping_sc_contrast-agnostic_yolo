@@ -23,9 +23,9 @@ Output format:
 
 Usage:
     python scripts/make_splits.py
-    python scripts/make_splits.py --raw data/raw --out data/datasplits/from_raw
+    python scripts/make_splits.py --raw data/raw
     python scripts/make_splits.py --train 0.7 --val 0.15 --test 0.15
-    python scripts/make_splits.py --seed 42 --out data/datasplits/from_raw_seed42
+    python scripts/make_splits.py --seed 42
 """
 
 import argparse
@@ -61,9 +61,9 @@ def main():
         description="Generate datasplit YAMLs from actual sub-* folders in data/raw/",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--raw",           default="data/raw",                 help="BIDS raw root directory")
-    parser.add_argument("--out",           default="data/datasplits/from_raw", help="Output directory for YAML files")
-    parser.add_argument("--datasets-yaml", default="data/datasets.yaml",       help="Registry with dataset metadata")
+    parser.add_argument("--raw",           default="data/raw",       help="BIDS raw root directory")
+    parser.add_argument("--out",           default=None,             help="Output directory (default: data/datasplits_seed<seed>)")
+    parser.add_argument("--datasets-yaml", default="data/datasets.yaml", help="Registry with dataset metadata")
     parser.add_argument("--train", type=float, default=0.5,  help="Fraction for train split")
     parser.add_argument("--val",   type=float, default=0.2,  help="Fraction for val split")
     parser.add_argument("--test",  type=float, default=0.3,  help="Fraction for test split (remainder)")
@@ -75,7 +75,7 @@ def main():
         "--train + --val + --test must sum to 1.0"
 
     raw_dir  = Path(args.raw)
-    out_dir  = Path(args.out)
+    out_dir  = Path(args.out) if args.out else Path(f"data/datasplits_seed{args.seed}")
     out_dir.mkdir(parents=True, exist_ok=True)
     registry = load_datasets_registry(Path(args.datasets_yaml))
 

@@ -344,7 +344,7 @@ def main():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--inference",  required=True, help="Path to predictions/<run-id>/")
-    parser.add_argument("--splits-dir", default="data/datasplits/from_raw")
+    parser.add_argument("--splits-dir", default="data/datasplits_seed50")
     parser.add_argument("--splits",     nargs="+", default=["val", "train", "test"],
                         choices=["train", "val", "test", "unknown"])
     parser.add_argument("--conf",       type=float, default=0.1,

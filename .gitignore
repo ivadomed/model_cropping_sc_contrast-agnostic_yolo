@@ -6,7 +6,8 @@ sandbox/
 datasets/
 checkpoints/
 runs/
-data/raw/
+data/raw/*
+!data/raw/.gitkeep
 dataset_stats.csv
 metrics_*.csv
 metrics.csv

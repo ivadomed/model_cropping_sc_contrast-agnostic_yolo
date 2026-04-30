@@ -7,7 +7,7 @@
 #   - git-annex installed
 #   - conda environment "contrast_agnostic" activated
 
-set -euo pipefail
+set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."   # run from project root
 
 DATA_DIR="data/raw"
@@ -54,23 +54,29 @@ echo "Fetching NIfTI files with git annex get (parallel)..."
 echo "=========================================="
 
 pids=()
+dataset_names=()
 for entry in $DATASETS; do
     name="${entry%%|*}"
     if [ -d "$DATA_DIR/$name" ]; then
         echo "  -> git annex get: $name"
         (cd "$DATA_DIR/$name" && git annex get .) &
         pids+=($!)
+        dataset_names+=("$name")
     fi
 done
 
-failed=0
-for pid in "${pids[@]}"; do
-    wait "$pid" || { echo "ERROR: git annex get failed (pid $pid)"; failed=1; }
+failed_datasets=()
+for i in "${!pids[@]}"; do
+    wait "${pids[$i]}" || failed_datasets+=("${dataset_names[$i]}")
 done
-
-[ "$failed" -eq 1 ] && { echo "ERROR: one or more git annex get calls failed."; exit 1; }
 
 echo ""
 echo "=========================================="
-echo "Done!"
+if (( ${#failed_datasets[@]} > 0 )); then
+    echo "WARNING: git annex get incomplete for:"
+    printf "  - %s\n" "${failed_datasets[@]}"
+    echo "  Affected subjects will be skipped by preprocess.py."
+else
+    echo "Done!"
+fi
 echo "=========================================="

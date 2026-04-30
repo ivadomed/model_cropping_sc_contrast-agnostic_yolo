@@ -1,16 +1,18 @@
 # Spinal cord detection
 
-## The goal
+## Project description
+
+### The goal
 Finding the minimal 3d bounding box enclosing the whole spinal cord on any MRI volume.
 
-## The method
+### The method
 - Detecting the spinal cord on 2.5D axial and sagital slices
 - Combining the detections to recreate a 3d bounding box
 
-## The detector
+### The detector
 We use YOLO26n released by ultralytics
 
-## The datasets used
+### The datasets used
 We use 18 MRI datasets covering cervical and lumbar SC, multiple contrasts and pathologies
 
 From data.neuro.polymtl.ca:
@@ -35,8 +37,11 @@ From spineimage.ca:
 17. [site_006](https://spineimage.ca/MON/site_006), 
 18. [site_007](https://spineimage.ca/VGH/site_007)
 
+## Training the model
 
-## Installation
+### Manual steps
+
+####  Install the repository
 
 ```bash
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo
@@ -47,17 +52,31 @@ pip install -r requirements.txt
 ```
 
 ---
+#### Add you public ssh key to the datasets repositories
+Add your public ssh key to `[data.neuro.polymtl.ca](https://data.neuro.polymtl.ca/user/settings/keys)` and to 
+`[spineimage.ca](https://spineimage.ca/user/settings/keys)`
 
-## Step 1 — Download datasets
+### Automatic steps
 
-Requires SSH access to `data.neuro.polymtl.ca` and git-annex.
+The whole pipeline from downloading datasets to training and evaluating the model can be run by simply running 
+```
+bash scripts/run_pipeline.sh
+```
+Many global parameters allow to fine-tunne de pipeline to compare different approaches.
+
+Otherwise you can find in the bash script references to the following steps to allow you to start the pipeline from any checkpoint.
+
+### Step 1 — Download datasets
+
+Requires SSH access to `data.neuro.polymtl.ca`, `https://spineimage.ca/` and `https://github.com/spine-generic` (open source) and to have git-annex installed.
+
 
 ```bash
 bash scripts/download_all_datasets.sh
 ```
 
-Datasets are downloaded to `data/raw/`. The 17 datasets are:
-`basel-mp2rage`, `canproco`, `data-multi-subject`, `data-single-subject`, `dcm-brno`, `dcm-zurich`, `dcm-zurich-lesions`, `dcm-zurich-lesions-20231115`, `lumbar-epfl`, `lumbar-vanderbilt`, `nih-ms-mp2rage`, `sci-colorado`, `sci-paris`, `sci-zurich`, `sct-testing-large`, `spider-challenge-2023`, `whole-spine`.
+Datasets are downloaded to `data/raw/`. The 18 datasets are:
+`basel-mp2rage`, `canproco`, `data-multi-subject`, `dcm-brno`, `dcm-zurich`, `dcm-zurich-lesions`, `dcm-zurich-lesions-20231115`, `lumbar-epfl`, `lumbar-vanderbilt`, `nih-ms-mp2rage`, `sci-colorado`, `sci-paris`, `sci-zurich`, `sct-testing-large`, `spider-challenge-2023`, `whole-spine`, `site_006_praxis`, `site_007_praxis`.
 
 ---
 

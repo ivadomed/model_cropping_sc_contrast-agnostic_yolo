@@ -40,7 +40,7 @@ for entry in $DATASETS; do
 
     git clone "$url" "$DATA_DIR/$name"
     git -C "$DATA_DIR/$name" annex dead here
-    [ -n "$commit" ] && git -C "$DATA_DIR/$name" checkout "$commit"
+    [ -n "$commit" ] && git -C "$DATA_DIR/$name" checkout -q "$commit"
 
     branch=$(git -C "$DATA_DIR/$name" rev-parse --abbrev-ref HEAD)
     actual=$(git -C "$DATA_DIR/$name" rev-parse HEAD)

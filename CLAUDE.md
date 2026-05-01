@@ -146,17 +146,40 @@ DATA/PROCESSED — hiérarchie exacte
 
 PREDICTIONS — deux hiérarchies selon le script d'origine
 
-  evaluate.py → structure miroir de processed/ (utilisée par metrics.py et find_failures.py)
+  evaluate.py → structure dans predictions/<run_id>/predictions/ (utilisée par metrics.py et find_failures.py)
   predictions/
   └── <run_id>/
-      └── <dataset>/
-          └── <patient>/
-              ├── png/            ← overlay GT (vert) + pred (rouge) par slice
-              │   └── slice_NNN.png
-              ├── txt/            ← prédiction par slice (vide si pas de détection)
-              │   └── slice_NNN.txt  format : "0 cx cy w h conf" (6 champs, conf ajouté)
-              └── volume/
-                  └── bbox_3d.txt ← bbox 3D reconstruite depuis txt/
+      ├── predictions/
+      │   └── <dataset>/
+      │       └── <patient>/
+      │           ├── png/            ← overlay GT (vert) + pred (rouge) par slice
+      │           │   └── slice_NNN.png
+      │           ├── txt/            ← prédiction par slice (vide si pas de détection)
+      │           │   └── slice_NNN.txt  format : "0 cx cy w h conf" (6 champs, conf ajouté)
+      │           ├── volume/
+      │           │   └── bbox_3d.txt ← bbox 3D reconstruite depuis txt/
+      │           ├── gt/             ← symlink → processed/<dataset>/<patient>/
+      │           ├── meta.yaml
+      │           └── metrics/
+      │               ├── slices.csv
+      │               └── patient.csv
+      ├── metrics/
+      │   ├── per_split/
+      │   │   └── <split>/
+      │   │       └── <metric>/
+      │   │           └── conf0.1/
+      │   │               ├── <metric>_conf0.1.png   ← violin plot (plot_metrics.py)
+      │   │               └── failures/
+      │   │                   └── <dataset>/         ← find_failures.py
+      │   │                       ├── ranking.csv
+      │   │                       └── 001_<stem>/
+      │   │                           ├── data → symlink
+      │   │                           └── overview.png
+      │   └── globals/
+      │       └── <metric>/
+      │           └── conf0.1/
+      │               └── <metric>_globals_conf0.1.png  ← tous splits, couleurs différentes + max dashed lines
+      └── patients.csv
 
   infer.py → structure avec sous-dossier slices/ (utilisée par reconstruct.py)
   predictions/
@@ -212,6 +235,7 @@ TRAIN — décisions
 - imgsz=320 (retour au défaut de l'ancien modèle qui convergeait — feature maps plus petites,
   moins d'ancres négatives, bbox SC proportionnellement plus large → convergence plus stable)
 - augmentations MRI via albumentations : GaussNoise, GaussianBlur, Downscale, RandomGamma
+  + custom : SCCenteredCrop (p=0.3), BiasField (p=0.2), RandomInvert (p=0.25), Contrast (p=0.15)
   injectées via callback on_train_start (inject_mri_augmentations)
 - hsv_v=0.15, degrees=15, scale=0.2, translate=0.1, fliplr=0.5, flipud=0.5
 - mosaic=0 (images médicales, pas de mosaïque)
@@ -251,23 +275,20 @@ SCRIPTS — un script, une responsabilité
   ├── infer.py          ← processed/ + checkpoint → predictions/<run_id>/ (structure slices/)
   │                       filtré par split yaml + partition, txt sans conf (5 champs)
   ├── reconstruct.py    ← predictions/<run_id>/ + data/raw/ → reconstructions/<run_id>/
-  ├── evaluate.py       ← processed/ + checkpoint → predictions/<run_id>/
-  │                       seuil unique CONF_THRESH=0.25 (défaut, injectable via --conf)
+  ├── evaluate.py       ← processed/ + checkpoint → predictions/<run_id>/predictions/
+  │                       seuil unique CONF_THRESH=0.1 (défaut, injectable via --conf)
   │                       par patient : txt (bbox + conf), png (GT vert + pred rouge), volume/bbox_3d.txt
   │                       format txt préd : "0 cx cy w h conf" (champ conf en plus du format YOLO standard)
   ├── metrics.py        ← --inference predictions/<run_id>/ --processed processed/
-  │                       → predictions/<run_id>/<dataset>/<patient>/metrics/slices.csv  (une ligne par slice)
-  │                       → predictions/<run_id>/patients.csv  (une ligne par volume 3D : fp_rate, fn_rate, iou_mean, score_fail)
-  │                       → predictions/<run_id>/metrics.csv  (agrégé cross-dataset/contrast/split)
-  │                       → predictions/<run_id>/report.html  (tableau IoU par dataset et par dataset×contraste)
+  │                       → predictions/<run_id>/predictions/<dataset>/<patient>/metrics/slices.csv
+  │                       → predictions/<run_id>/patients.csv
   │                       colonnes slices.csv : slice_idx, has_gt, has_pred, pred_conf,
   │                         iou (vs GT même slice, 0 si absent), iou_nearest_gt (vs GT voisin si pas de GT, 0 si pas de pred),
   │                         z_dist_to_ref_gt, ref_gt_slice, is_fp, is_fn
   │                       seuil CONF_THRESH=0.5 (injectable via --conf) pour precision/recall/f1
   │                       SOURCE DE VÉRITÉ : slices.csv et patients.csv sont la base de tous les scripts aval
   ├── find_failures.py  ← --inference predictions/<run_id>/  (requiert patients.csv de metrics.py)
-  │                       → predictions/<run_id>/<dataset>/failures/failures.csv  (top-K volumes par score_fail)
-  │                       → predictions/<run_id>/<dataset>/failures/NNN_<stem> → ../<stem>  (symlinks)
+  │                       → predictions/<run_id>/metrics/per_split/<split>/<metric>/<conf>/failures/<dataset>/
   │                       score_fail = (fp_rate + fn_rate) / 2 ; --top-k (défaut 20) ; --split optionnel
   ├── border_metrics.py ← --inference predictions/<run_id>/  (requiert slices.csv de metrics.py)
   │                       analyse les deux extrémités de la moelle indépendamment :
@@ -282,7 +303,7 @@ SCRIPTS — un script, une responsabilité
   │                       FP = prédiction présente avec IoU < seuil ; FN = GT présent sans aucune prédiction
   │                       splits traités : test + unknown ; paramètres : --n (défaut 5), --conf (0.5), --iou-thresh (0.5)
   │                       --datasets filtre sur un sous-ensemble ; par défaut auto-détection via slices.csv existants
-  │                       PAS de --processed : lit slices.csv depuis predictions/<run_id>/<dataset>/<patient>/metrics/
+  │                       PAS de --processed : lit slices.csv depuis predictions/<run_id>/predictions/<dataset>/<patient>/metrics/
   ├── predict_volume.py ← image.nii.gz + checkpoint → bbox_pred.nii.gz (overlay FSLeyes)
   │                       réoriente LAS, infère à --si-res (défaut 10.0mm), reprojette sur résolution native
   │                       zoom_factor = orig_si_mm / si_res → round(z_orig * zoom_factor) = z_inf

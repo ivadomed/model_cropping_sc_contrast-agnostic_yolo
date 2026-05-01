@@ -226,15 +226,7 @@ def main():
         for s in slices:
             raw_counts[partition][s["dataset"]] = raw_counts[partition].get(s["dataset"], 0) + 1
 
-    # Per-dataset final slice counts for train (after oversampling)
     border_factor = 2 if args.border_oversample is not None else 1
-    final_train: dict[str, int] = {}
-    for s in all_slices["train"]:
-        factor = region_factor if s["region"] == "lumbar" else 1.0
-        factor *= dataset_factors.get(s["dataset"], 1.0)
-        if s.get("is_border", False):
-            factor *= border_factor
-        final_train[s["dataset"]] = final_train.get(s["dataset"], 0) + max(1, round(factor))
 
     # Link all partitions
     counts = {}
@@ -266,37 +258,30 @@ def main():
         f"names:\n{names_str}\n"
     )
 
-    # Effective per-dataset factor (region × dataset × border, averaged — for W&B readability)
-    # Also accumulate SC/BG slice counts (raw and final after oversampling)
-    effective_factors = {}
-    border_counts: dict[str, int] = {}
-    sc_bg_raw   = {"sc": 0, "bg": 0}
-    sc_bg_final = {"sc": 0, "bg": 0}
+    # Final slice counts and SC/BG balance — single pass over train slices
+    slices_final: dict[str, int] = {}
+    sc_bg_raw    = {"sc": 0, "bg": 0}
+    sc_bg_final  = {"sc": 0, "bg": 0}
     for s in all_slices["train"]:
-        ds  = s["dataset"]
-        f   = region_factor if s["region"] == "lumbar" else 1.0
-        f  *= dataset_factors.get(ds, 1.0)
+        ds = s["dataset"]
+        f  = region_factor if s["region"] == "lumbar" else 1.0
+        f *= dataset_factors.get(ds, 1.0)
         if s.get("is_border", False):
             f *= border_factor
-            border_counts[ds] = border_counts.get(ds, 0) + 1
-        effective_factors.setdefault(ds, []).append(f)
+        copies = max(1, round(f))
+        slices_final[ds] = slices_final.get(ds, 0) + copies
         key = "sc" if s["has_sc"] else "bg"
         sc_bg_raw[key]   += 1
-        sc_bg_final[key] += max(1, round(f))
-    effective_factors = {ds: round(sum(fs) / len(fs), 3)
-                         for ds, fs in effective_factors.items()}
+        sc_bg_final[key] += copies
 
+    all_datasets = sorted(slices_final)
     build_stats = {
-        "balance_regions":      args.balance_regions,
-        "region_factor":        round(region_factor, 3),
         "border_oversample_mm": args.border_oversample,
-        "dataset_factors":      dataset_factors,
-        "effective_factor":     dict(sorted(effective_factors.items())),
-        "border_slice_count":   dict(sorted(border_counts.items())),
+        "dataset_factors":      {ds: dataset_factors.get(ds, 1.0) for ds in all_datasets},
         "sc_bg_slices_raw":     sc_bg_raw,
         "sc_bg_slices_final":   sc_bg_final,
         "slices_raw":           raw_counts,
-        "slices_train_final":   dict(sorted(final_train.items())),
+        "slices_train_final":   dict(sorted(slices_final.items())),
         "total":                counts,
     }
     with open(out_dir / "build_stats.yaml", "w") as f:

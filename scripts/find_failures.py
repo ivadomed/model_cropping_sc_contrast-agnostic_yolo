@@ -6,10 +6,11 @@ Requires patients.csv (index) and per-patient metrics/patient.csv from metrics.p
 Split assignment resolved at runtime from --splits-dir YAMLs.
 
 Output structure:
-  predictions/<run_id>/<dataset>/failures/<split>/<metric>/
+  predictions/<run_id>/metrics/per_split/<split>/<metric>/<conf>/failures/<dataset>/
+  predictions/<run_id>/metrics/globals/<metric>/<conf>/failures/<dataset>/
     ranking.csv              ← top-K worst volumes with metric value
     001_<stem>/
-      data                   ← symlink → ../../../../<stem>  (pngs, txts, volume/)
+      data                   ← symlink → predictions/<run_id>/predictions/<dataset>/<stem>
       overview.png           ← composite of all overlay slices
 
 Usage:
@@ -23,6 +24,7 @@ Usage:
 
 import argparse
 import math
+import os
 import re
 import shutil
 from pathlib import Path
@@ -244,16 +246,21 @@ def load_splits(splits_dir: Path) -> dict:
 
 
 def load_patients_at_conf(pred_root: Path, patients_idx: pd.DataFrame, splits_map: dict,
-                           conf_thresh: float, split: str) -> pd.DataFrame:
-    """Build per-patient DataFrame by reading patient.csv at the given conf threshold."""
+                           conf_thresh: float, splits_filter) -> pd.DataFrame:
+    """Build per-patient DataFrame by reading patient.csv at the given conf threshold.
+
+    splits_filter: str (single split) or list of split names.
+    """
+    if isinstance(splits_filter, str):
+        splits_filter = [splits_filter]
     rows = []
     for _, row in patients_idx.iterrows():
         dataset, stem = row["dataset"], row["stem"]
         m       = re.match(r"(sub-[^_]+)", stem)
         subject = m.group(1) if m else stem
-        if splits_map.get((dataset, subject), "unknown") != split:
+        if splits_map.get((dataset, subject), "unknown") not in splits_filter:
             continue
-        patient_csv = pred_root / dataset / stem / "metrics" / "patient.csv"
+        patient_csv = pred_root / "predictions" / dataset / stem / "metrics" / "patient.csv"
         if not patient_csv.exists():
             continue
         df      = pd.read_csv(patient_csv)
@@ -272,7 +279,7 @@ def ordinal(n: int) -> str:
 def make_overview(pred_root: Path, dataset: str, stem: str, out_path: Path,
                   metric_name: str, metric_val: float, conf_thresh: float, rank: int) -> None:
     """Tile all overlay slice PNGs into a near-square composite image."""
-    pngs = sorted((pred_root / dataset / stem / "png").glob("slice_*.png"))
+    pngs = sorted((pred_root / "predictions" / dataset / stem / "png").glob("slice_*.png"))
     if not pngs:
         return
 
@@ -326,13 +333,12 @@ def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, col: str,
         patient_dir = out_dir / f"{rank:03d}_{row['stem']}"
         patient_dir.mkdir(exist_ok=True)
 
-        # symlink → pred_root/<dataset>/<stem>
-        # out_dir = pred_root/<dataset>/failures/<conf>/<split>/<metric>/
-        # patient_dir/data is 6 levels deep → ../../../../../<stem>
+        # symlink → pred_root/predictions/<dataset>/<stem>  (relative, depth-independent)
         data_link = patient_dir / "data"
         if data_link.exists() or data_link.is_symlink():
             data_link.unlink()
-        data_link.symlink_to(Path("../../../../../") / row["stem"])
+        target = pred_root / "predictions" / dataset / row["stem"]
+        data_link.symlink_to(Path(os.path.relpath(target, patient_dir)))
 
         make_overview(pred_root, dataset, row["stem"],
                       patient_dir / "overview.png", metric, row[col], conf_thresh, rank)
@@ -372,13 +378,15 @@ def main():
         patients_idx = patients_idx[mask]
         print(f"Excluded {n_excl} patient(s) from {args.exclude_csv}")
 
+    conf_str         = f"conf{args.conf:g}"
+    metrics_to_run   = {m: v for m, v in METRICS.items()
+                        if args.metrics is None or m in args.metrics}
+
     for split in args.splits:
         df = load_patients_at_conf(pred_root, patients_idx, splits_map, args.conf, split)
         if df.empty:
             print(f"  [{split}] no data at conf={args.conf}")
             continue
-        metrics_to_run = {m: v for m, v in METRICS.items()
-                          if args.metrics is None or m in args.metrics}
         jobs = []
         for metric, ascending in metrics_to_run.items():
             col = METRIC_COLUMN.get(metric, metric)
@@ -389,11 +397,28 @@ def main():
                 if not top.empty:
                     jobs.append((dataset, metric, col, top))
 
-        conf_str = f"conf_{args.conf:g}"
         for dataset, metric, col, top in tqdm(jobs, desc=split, unit="dataset×metric"):
-            out_dir = pred_root / dataset / "failures" / conf_str / split / metric
+            out_dir = pred_root / "metrics" / "per_split" / split / metric / conf_str / "failures" / dataset
             write_failures(out_dir, top, metric, col, pred_root, dataset, args.conf)
         print(f"  [{split}] conf={args.conf} → done")
+
+    # Global failures — all splits combined, top-K worst per dataset across all splits
+    df_all = load_patients_at_conf(pred_root, patients_idx, splits_map, args.conf, args.splits)
+    if not df_all.empty:
+        jobs = []
+        for metric, ascending in metrics_to_run.items():
+            col = METRIC_COLUMN.get(metric, metric)
+            if col not in df_all.columns:
+                continue
+            for dataset, group in df_all.groupby("dataset"):
+                top = group.dropna(subset=[col]).sort_values(col, ascending=ascending).head(args.top_k)
+                if not top.empty:
+                    jobs.append((dataset, metric, col, top))
+
+        for dataset, metric, col, top in tqdm(jobs, desc="globals", unit="dataset×metric"):
+            out_dir = pred_root / "metrics" / "globals" / metric / conf_str / "failures" / dataset
+            write_failures(out_dir, top, metric, col, pred_root, dataset, args.conf)
+        print(f"  [globals] conf={args.conf} → done")
 
 
 if __name__ == "__main__":

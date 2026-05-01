@@ -31,7 +31,6 @@ Per-patient outputs saved to predictions/<run_id>/<dataset>/<patient>/metrics/:
 
 Run-level outputs:
   patients.csv — index of all patients: dataset, stem (no metrics, no split)
-  report.html  — IoU summary per dataset/contrast/split (at --conf threshold)
 
 Usage:
     # Full recompute (all splits):
@@ -64,7 +63,6 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent))
 
 CONF_STEPS        = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
-CONF_REPORT       = 0.1    # default threshold used only for report.html
 SPLITS            = ["test", "val", "train", "unknown"]
 REG_DIST_MM       = 30.0   # distance threshold for _reg30mm spatial outlier filter
 REG_SUFFIX        = "_reg30mm"
@@ -88,26 +86,6 @@ BBOX_ONLY_METRICS = {"iou_3d", "iou_3d_mm", "iou_3d_mm_filt", "iou_3d_mm_ransac"
                      "gap_mm_A_reg30mm", "gap_mm_I_reg30mm", "gap_mm_S_reg30mm",
                      *_TRIM_METRICS}
 
-CSS = """
-<style>
-  body { font-family: Arial, sans-serif; font-size: 13px; margin: 30px; background: #f9f9f9; }
-  h1   { color: #222; }
-  h2   { color: #444; margin-top: 40px; border-bottom: 2px solid #ccc; padding-bottom: 4px; }
-  h3   { color: #555; margin-top: 30px; }
-  table { border-collapse: collapse; margin-bottom: 20px; background: white;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-  th   { background: #3a3a3a; color: white; padding: 7px 12px; text-align: center; }
-  th.left { text-align: left; }
-  td   { padding: 5px 12px; border-bottom: 1px solid #e0e0e0; text-align: center; }
-  td.left { text-align: left; }
-  tr:hover td { background: #f0f4ff; }
-  .good  { color: #1a7a1a; font-weight: bold; }
-  .ok    { color: #7a6a00; }
-  .bad   { color: #aa1a1a; }
-  .na    { color: #aaa; font-style: italic; }
-  .meta  { font-size: 11px; color: #888; }
-</style>
-"""
 
 
 def load_splits(splits_dir: Path) -> dict:
@@ -663,94 +641,6 @@ def build_report(df: pd.DataFrame, conf_thresh: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def iou_class(v):
-    if pd.isna(v): return "na"
-    if v >= 0.8:   return "good"
-    if v >= 0.6:   return "ok"
-    return "bad"
-
-
-def fmt_cell(iou, n_acq, n_slices):
-    if pd.isna(iou) or n_slices == 0:
-        return '<span class="na">—</span>'
-    cls = iou_class(iou)
-    return (f'<span class="{cls}">{iou:.3f}</span>'
-            f'<br><span class="meta">{n_acq}acq / {n_slices}sl</span>')
-
-
-def count_acq_per_split(inference_dir: Path, splits_map: dict) -> dict:
-    by_dataset  = {}
-    by_contrast = {}
-    for slices_csv in inference_dir.rglob("metrics/slices.csv"):
-        patient_dir = slices_csv.parent.parent
-        dataset     = patient_dir.parent.name
-        stem        = patient_dir.name
-        m           = re.match(r"(sub-[^_]+)_?(.*)", stem)
-        subject     = m.group(1) if m else stem
-        contrast    = m.group(2) if m and m.group(2) else "default"
-        split       = splits_map.get((dataset, subject), "unknown")
-        by_dataset[(split, dataset)]            = by_dataset.get((split, dataset), 0) + 1
-        by_contrast[(split, dataset, contrast)] = by_contrast.get((split, dataset, contrast), 0) + 1
-    return by_dataset, by_contrast
-
-
-def make_table_by_dataset(report: pd.DataFrame, acq_counts: dict, splits: list) -> str:
-    sub      = report[(report["contrast"] == "ALL") & (report["dataset"] != "ALL") & (report["split"].isin(splits))]
-    datasets = sorted(sub["dataset"].unique())
-    headers  = '<th class="left">Dataset</th>' + "".join(
-        f'<th>{s}<br><span style="font-size:10px;font-weight:normal">(acq / slices)</span></th>'
-        for s in splits)
-    html = f"<table><thead><tr>{headers}</tr></thead><tbody>\n"
-    for dataset in datasets:
-        row = f'<td class="left">{dataset}</td>'
-        for split in splits:
-            r = sub[(sub["dataset"] == dataset) & (sub["split"] == split)]
-            if r.empty:
-                row += '<td><span class="na">—</span></td>'
-            else:
-                row += f"<td>{fmt_cell(r.iloc[0]['iou_mean'], acq_counts.get((split, dataset), 0), int(r.iloc[0]['n_slices']))}</td>"
-        html += f"<tr>{row}</tr>\n"
-    html += "</tbody></table>"
-    return html
-
-
-def make_table_by_contrast(report: pd.DataFrame, acq_by_contrast: dict, dataset: str, splits: list) -> str:
-    sub       = report[(report["dataset"] == dataset) & (report["contrast"] != "ALL") & (report["split"].isin(splits))]
-    contrasts = sorted(sub["contrast"].unique())
-    if not contrasts:
-        return "<p><em>Aucune donnée par contraste.</em></p>"
-    headers = '<th class="left">Contrast</th>' + "".join(
-        f'<th>{s}<br><span style="font-size:10px;font-weight:normal">(acq / slices)</span></th>'
-        for s in splits)
-    html = f"<table><thead><tr>{headers}</tr></thead><tbody>\n"
-    for contrast in contrasts:
-        row = f'<td class="left">{contrast}</td>'
-        for split in splits:
-            r = sub[(sub["contrast"] == contrast) & (sub["split"] == split)]
-            if r.empty:
-                row += '<td><span class="na">—</span></td>'
-            else:
-                n_acq = acq_by_contrast.get((split, dataset, contrast), 0)
-                row += f"<td>{fmt_cell(r.iloc[0]['iou_mean'], n_acq, int(r.iloc[0]['n_slices']))}</td>"
-        html += f"<tr>{row}</tr>\n"
-    html += "</tbody></table>"
-    return html
-
-
-def build_html(report: pd.DataFrame, acq_by_dataset: dict, acq_by_contrast: dict,
-               run_id: str, conf: float, splits: list) -> str:
-    body  = f"<h1>Metrics report — {run_id}</h1>\n"
-    body += f"<p><em>Report threshold: conf ≥ {conf}</em></p>\n"
-    body += "<h2>IoU mean par dataset</h2>\n"
-    body += make_table_by_dataset(report, acq_by_dataset, splits)
-    body += "<h2>IoU mean par dataset × contraste</h2>\n"
-    datasets = sorted(report[(report["dataset"] != "ALL") & (report["contrast"] != "ALL")]["dataset"].unique())
-    for dataset in datasets:
-        body += f"<h3>{dataset}</h3>\n"
-        body += make_table_by_contrast(report, acq_by_contrast, dataset, splits)
-    return f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>Metrics {run_id}</title>{CSS}</head><body>{body}</body></html>"
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Compute per-slice and per-patient metrics at all confidence thresholds",
@@ -762,9 +652,7 @@ def main():
                         help="processed/<variant> dir (GT source). If omitted, reads from gt/ symlink "
                              "in each patient pred dir (created by evaluate.py).")
     parser.add_argument("--splits-dir",   default="data/datasplits_seed50",
-                        help="Directory with datasplit_*.yaml (used for report.html only)")
-    parser.add_argument("--conf",         type=float, default=CONF_REPORT,
-                        help="Confidence threshold used for report.html summary")
+                        help="Directory with datasplit_*.yaml (used for split assignment in patients)")
     parser.add_argument("--fp-iou-thresh", type=float, default=0.1,
                         help="IoU threshold for fp_iou_rate / fn_iou_rate in patient.csv")
     parser.add_argument("--split",         default=None, choices=["train", "val", "test", "unknown"],
@@ -776,13 +664,10 @@ def main():
                         help="Patch only these bbox metrics in existing patient.csv (skips slices.csv)")
     parser.add_argument("--datasets",      nargs="+", default=None,
                         help="Restrict to these dataset names (default: all)")
-    parser.add_argument("--no-html",       action="store_true",
-                        help="Skip generating report.html")
     args = parser.parse_args()
 
-    pred_root     = Path(args.inference)
-    run_id        = pred_root.name
-    splits_map    = load_splits(Path(args.splits_dir))
+    pred_root  = Path(args.inference)
+    splits_map = load_splits(Path(args.splits_dir))
     processed_dir = Path(args.processed) if args.processed else None
 
     def gt_dirs(pred_patient_dir: Path):
@@ -792,10 +677,10 @@ def main():
             return proc / "meta.yaml", proc
         return pred_patient_dir / "meta.yaml", pred_patient_dir / "gt"
 
-    # patients: driven by pred_root (what has predictions); processed/ only for GT lookup
+    # patients: driven by pred_root/predictions/ (what has predictions); processed/ only for GT lookup
     patients = [
         (d.name, p.name)
-        for d in sorted(pred_root.iterdir()) if d.is_dir()
+        for d in sorted((pred_root / "predictions").iterdir()) if d.is_dir()
         and (not args.datasets or d.name in args.datasets)
         for p in sorted(d.iterdir()) if (p / "txt").is_dir()
     ]
@@ -817,8 +702,8 @@ def main():
     # --- bbox-only mode: compute only the requested metrics, no slices.csv needed ---
     if args.metrics:
         for dataset, stem in tqdm(patients, desc="Metrics", unit="pat"):
-            pred_txt_dir         = pred_root / dataset / stem / "txt"
-            meta_path, proc_dir  = gt_dirs(pred_root / dataset / stem)
+            pred_txt_dir         = pred_root / "predictions" / dataset / stem / "txt"
+            meta_path, proc_dir  = gt_dirs(pred_root / "predictions" / dataset / stem)
             if not meta_path.exists():
                 continue
             meta         = yaml.safe_load(meta_path.read_text())
@@ -827,7 +712,7 @@ def main():
             gt_bbox      = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None
             pred_boxes   = read_pred_boxes(pred_txt_dir)
             gt_boxes     = read_gt_boxes(proc_dir / "txt")
-            metrics_dir  = pred_root / dataset / stem / "metrics"
+            metrics_dir  = pred_root / "predictions" / dataset / stem / "metrics"
             patient_csv  = metrics_dir / "patient.csv"
             df = pd.read_csv(patient_csv) if patient_csv.exists() \
                  else pd.DataFrame({"conf_thresh": [round(float(c), 3) for c in CONF_STEPS]})
@@ -843,33 +728,39 @@ def main():
 
     # --- full mode ---
     all_records = []
+    skipped = 0
     for dataset, stem in tqdm(patients, desc="Patients", unit="pat"):
         m        = re.match(r"(sub-[^_]+)_?(.*)", stem)
         subject  = m.group(1)
         contrast = m.group(2) or "default"
         split    = splits_map.get((dataset, subject), "unknown")
 
-        meta_path, proc_dir = gt_dirs(pred_root / dataset / stem)
-        pred_txt_dir        = pred_root / dataset / stem / "txt"
-        slices_df           = patient_slices(proc_dir / "txt", pred_txt_dir)
-        if slices_df.empty:
-            continue
+        metrics_dir  = pred_root / "predictions" / dataset / stem / "metrics"
+        slices_csv   = metrics_dir / "slices.csv"
+        patient_csv  = metrics_dir / "patient.csv"
 
-        metrics_dir = pred_root / dataset / stem / "metrics"
-        metrics_dir.mkdir(parents=True, exist_ok=True)
-        slices_df.to_csv(metrics_dir / "slices.csv", index=False)
+        if slices_csv.exists() and patient_csv.exists():
+            slices_df = pd.read_csv(slices_csv)
+            skipped  += 1
+        else:
+            meta_path, proc_dir = gt_dirs(pred_root / "predictions" / dataset / stem)
+            pred_txt_dir        = pred_root / "predictions" / dataset / stem / "txt"
+            slices_df           = patient_slices(proc_dir / "txt", pred_txt_dir)
+            if slices_df.empty:
+                continue
 
-        meta    = yaml.safe_load(meta_path.read_text())
-        H, W, _ = get_slice_dims(meta)
-        gt_bbox_path = proc_dir / "volume" / "bbox_3d.txt"
-        gt_bbox = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None
+            metrics_dir.mkdir(parents=True, exist_ok=True)
+            slices_df.to_csv(slices_csv, index=False)
 
-        pred_boxes = read_pred_boxes(pred_txt_dir)
-        gt_boxes   = read_gt_boxes(proc_dir / "txt")
-        build_patient_csv_rows(slices_df, pred_boxes, H, W, gt_bbox, gt_boxes, args.fp_iou_thresh,
-                               meta).to_csv(
-            metrics_dir / "patient.csv", index=False
-        )
+            meta    = yaml.safe_load(meta_path.read_text())
+            H, W, _ = get_slice_dims(meta)
+            gt_bbox_path = proc_dir / "volume" / "bbox_3d.txt"
+            gt_bbox = list(map(int, gt_bbox_path.read_text().split())) if gt_bbox_path.exists() else None
+
+            pred_boxes = read_pred_boxes(pred_txt_dir)
+            gt_boxes   = read_gt_boxes(proc_dir / "txt")
+            build_patient_csv_rows(slices_df, pred_boxes, H, W, gt_bbox, gt_boxes, args.fp_iou_thresh,
+                                   meta).to_csv(patient_csv, index=False)
 
         slices_df["dataset"]  = dataset
         slices_df["subject"]  = subject
@@ -883,17 +774,11 @@ def main():
         return
 
     full_df = pd.concat(all_records, ignore_index=True)
-    print(f"Processed {full_df.groupby(['dataset','subject']).ngroups} patients — {len(full_df)} slices")
+    computed = full_df.groupby(['dataset','subject']).ngroups - skipped
+    print(f"Patients: {computed} computed, {skipped} skipped (already done) — {len(full_df)} slices total")
 
-    report = build_report(full_df, args.conf)
+    report = build_report(full_df, conf_thresh=0.1)
     print(report[report["dataset"] == "ALL"].to_string(index=False))
-
-    if not args.no_html:
-        acq_by_dataset, acq_by_contrast = count_acq_per_split(pred_root, splits_map)
-        html = build_html(report, acq_by_dataset, acq_by_contrast, run_id, args.conf, SPLITS)
-        out_html = pred_root / "report.html"
-        out_html.write_text(html)
-        print(f"HTML   → {out_html}")
 
 
 if __name__ == "__main__":

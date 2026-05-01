@@ -2,11 +2,12 @@
 """
 Run YOLO inference on processed/ slices → predictions/<run-id>/
 
-Mirrors processed/ hierarchy:
-  predictions/<run-id>/<dataset>/<patient>/
-    png/slice_NNN.png   ← GT (green filled) + pred (red 1px outline + conf score) overlay
-    txt/slice_NNN.txt   ← predicted bbox: "0 cx cy w h conf" per line (empty if no detection)
-    volume/bbox_3d.txt  ← 3D bbox union from predicted slices
+Output structure:
+  predictions/<run-id>/
+    predictions/<dataset>/<patient>/
+      png/slice_NNN.png   ← GT (green filled) + pred (red 1px outline + conf score) overlay
+      txt/slice_NNN.txt   ← predicted bbox: "0 cx cy w h conf" per line (empty if no detection)
+      volume/bbox_3d.txt  ← 3D bbox union from predicted slices
 
 conf=0.1 by default: boxes below threshold are discarded.
 Sagittal plane saves all boxes above threshold; axial saves only the best per class.
@@ -15,6 +16,9 @@ Axial plane  : one box per class saved (best confidence).
 Sagittal plane: all boxes above conf threshold saved (multiple lines per class allowed).
 
 Run metrics.py afterwards to compute aggregated performance metrics from saved predictions.
+Patients that fail (e.g. missing files, GPU OOM) are caught individually, logged to
+predictions/<run-id>/failed_patients.log (TSV: dataset/patient/error), and the script
+exits with code 1 if any failed — other patients are still processed.
 
 Usage:
     python scripts/evaluate.py \
@@ -233,7 +237,7 @@ def render_overlays(pred_root: Path, processed_dir: Path = None) -> None:
     """Regenerate overlay PNGs from existing txt predictions without re-running inference."""
     patients = [
         (pred_dataset_dir.name, pred_patient_dir)
-        for pred_dataset_dir in sorted(pred_root.iterdir()) if pred_dataset_dir.is_dir()
+        for pred_dataset_dir in sorted((pred_root / "predictions").iterdir()) if pred_dataset_dir.is_dir()
         for pred_patient_dir in sorted(pred_dataset_dir.iterdir())
         if (pred_patient_dir / "txt").is_dir()
     ]
@@ -334,11 +338,31 @@ def main():
     print(f"Running inference on {len(patients)} patients → {pred_root}"
           + (f" [{args.split}]" if args.split else ""))
 
+    failed: list[tuple[str, str, str]] = []  # (dataset, patient, error)
+    skipped = 0
     for dataset, patient_dir in tqdm(patients, desc="Patients", unit="pat"):
-        infer_patient(model, patient_dir, pred_root / dataset / patient_dir.name,
-                      args.conf, batch_size, not args.no_viz, args.flip_x)
+        pred_dir = pred_root / "predictions" / dataset / patient_dir.name
+        if (pred_dir / "meta.yaml").exists():
+            skipped += 1
+            continue
+        try:
+            infer_patient(model, patient_dir, pred_dir,
+                          args.conf, batch_size, not args.no_viz, args.flip_x)
+        except Exception as e:
+            failed.append((dataset, patient_dir.name, str(e)))
 
-    print(f"Predictions saved to: {pred_root}")
+    print(f"Predictions saved to: {pred_root}"
+          + (f"  ({skipped} already done, skipped)" if skipped else ""))
+
+    if failed:
+        log_path = pred_root / "failed_patients.log"
+        with open(log_path, "w") as f:
+            f.write("dataset\tpatient\terror\n")
+            for ds, pat, err in failed:
+                f.write(f"{ds}\t{pat}\t{err}\n")
+        print(f"WARNING: {len(failed)}/{len(patients)} patients failed — see {log_path}")
+        sys.exit(1)
+
     print("Run metrics.py to compute aggregated metrics.")
 
 

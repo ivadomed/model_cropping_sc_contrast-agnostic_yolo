@@ -10,9 +10,15 @@ Augmentations (désactivables via --no-augment) issues du papier contrast-agnost
   - Gaussian noise                        → albumentations: GaussNoise       (p=0.1)
   - Gaussian smoothing                    → albumentations: GaussianBlur     (p=0.2)
   - Brightness augmentation               → YOLO: hsv_v=0.15
-  - Low-resolution simulation [0.5, 1.0] → albumentations: Downscale        (p=0.25)
+  - Low-resolution simulation [0.25, 1.0] → albumentations: Downscale       (p=0.25)
   - Gamma correction                      → albumentations: RandomGamma      (p=0.1)
   - Mirroring across all axes             → YOLO: fliplr=0.5, flipud=0.5
+
+Augmentations MRI supplémentaires (albumentations) :
+  - Affine zoom+translation : scale [0.25, 4.0], translate ±30%                            (p=0.2)
+  - BiasField       : inhomogénéité multiplicative polynomiale (simulation B1 IRM)          (p=0.2)
+  - RandomInvert    : inversion pixel-à-pixel 255-img (simulation T1↔T2)                   (p=0.25)
+  - Contrast        : RandomBrightnessContrast contrast uniquement                          (p=0.15)
 
 Seed : lit la variable d'environnement SEED (défaut 50) — initialisée dans run_pipeline.sh.
        Propagée à random, numpy et ultralytics (model.train seed=).
@@ -35,6 +41,8 @@ import os
 import random
 from pathlib import Path
 
+import albumentations as A
+import cv2
 import numpy as np
 
 from ultralytics import YOLO
@@ -63,16 +71,56 @@ def inject_focal_loss(trainer) -> None:
     print("\n[FOCAL LOSS] WARNING: compute_loss.bce not found — focal loss not injected\n")
 
 
+class BiasField(A.ImageOnlyTransform):
+    """Polynomial multiplicative bias field simulating MRI B1 inhomogeneity."""
+
+    def __init__(self, coef_range=(-0.4, 0.4), order=3, p=0.2):
+        super().__init__(p=p)
+        self.coef_range = coef_range
+        self.order = order
+
+    def apply(self, img, **params):
+        h, w = img.shape[:2]
+        x, y = np.meshgrid(np.linspace(-1, 1, w), np.linspace(-1, 1, h))
+        field = np.ones((h, w), dtype=np.float32)
+        for i in range(self.order):
+            for j in range(self.order - i):
+                field += np.random.uniform(*self.coef_range) * (x**i) * (y**j)
+        field = np.clip(field, 0.1, 3.0)
+        if img.ndim == 3:
+            field = field[:, :, None]
+        return np.clip(img.astype(np.float32) * field, 0, 255).astype(np.uint8)
+
+    def get_transform_init_args_dict(self):
+        return {"coef_range": self.coef_range, "order": self.order}
+
+
+class RandomInvert(A.ImageOnlyTransform):
+    """Pixel inversion (255 - img) simulating T1↔T2 contrast swap."""
+
+    def apply(self, img, **params):
+        return 255 - img
+
+    def get_transform_init_args_dict(self):
+        return {}
+
+
+
 def inject_mri_augmentations(trainer) -> None:
     """Inject MRI-specific albumentations after the dataloader is built."""
-    import albumentations as A
     from ultralytics.data.augment import Albumentations
 
     extra = [
+        A.Affine(scale=(0.25, 4.0), translate_percent=(-0.3, 0.3), p=0.2),
         A.GaussNoise(std_range=(0.01, 0.03), p=0.1),
         A.GaussianBlur(blur_limit=(3, 7), p=0.2),
-        A.Downscale(scale_range=(0.5, 1.0), p=0.25),
+        A.Downscale(scale_range=(0.25, 1.0),
+                    interpolation_pair={"downscale": cv2.INTER_AREA, "upscale": cv2.INTER_LINEAR},
+                    p=0.25),
         A.RandomGamma(gamma_limit=(80, 120), p=0.1),
+        BiasField(coef_range=(-0.4, 0.4), order=3, p=0.2),
+        RandomInvert(p=0.25),
+        A.RandomBrightnessContrast(brightness_limit=0, contrast_limit=(-0.3, 0.3), p=0.15),
     ]
 
     dataset = trainer.train_loader.dataset
@@ -116,6 +164,8 @@ def main():
                         help="Focal loss gamma (0.0 = BCE, 2.0 = standard focal loss)")
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--wandb-project", default="spine_detection")
+    parser.add_argument("--wandb-entity",  default=None,
+                        help="W&B entity (user or team). None = W&B default for the logged-in account.")
     args = parser.parse_args()
 
     seed = int(os.environ.get("SEED", 50))
@@ -145,10 +195,10 @@ def main():
         import wandb
         wb_run = wandb.init(
             project=args.wandb_project,
+            entity=args.wandb_entity,
             name=args.run_id,
             tags=["yolo", "spine", "mri"],
             config={
-                # training
                 "model":    args.model,
                 "dataset":  args.dataset_yaml,
                 "imgsz":    args.imgsz,
@@ -157,33 +207,41 @@ def main():
                 "patience": args.patience,
                 "seed":     seed,
                 "augment":  not args.no_augment,
-                # YOLO augmentations
-                "aug/hsv_v":         0.0 if args.no_augment else 0.15,
-                "aug/degrees":       0.0 if args.no_augment else 15.0,
-                "aug/scale":         0.0 if args.no_augment else 0.2,
-                "aug/translate":     0.0 if args.no_augment else 0.1,
-                "aug/fliplr":        0.0 if args.no_augment else 0.5,
-                "aug/flipud":        0.0 if args.no_augment else 0.5,
-                # albumentations MRI augmentations
-                "aug/gauss_noise_p":   0.0 if args.no_augment else 0.1,
-                "aug/gaussian_blur_p": 0.0 if args.no_augment else 0.2,
-                "aug/downscale_p":     0.0 if args.no_augment else 0.25,
-                "aug/random_gamma_p":  0.0 if args.no_augment else 0.1,
                 "fl_gamma": args.fl_gamma,
-                # pipeline context (from pipeline_config.yaml + build_stats.yaml)
-                **{f"pipeline/{k}": v for k, v in pipeline_config.items()},
-                **{f"data/{k}":     v for k, v in build_stats.items()
-                   if not isinstance(v, dict)},
-                # per-dataset factors and slice counts as individual W&B keys
-                **{f"data/factor/{ds}":       f
-                   for ds, f in build_stats.get("effective_factor", {}).items()},
-                **{f"data/train_slices/{ds}": n
-                   for ds, n in build_stats.get("slices_train_final", {}).items()},
-                # SC vs background slice balance (raw = before oversampling, final = after)
-                **{f"data/sc_bg_raw/{k}":   v
-                   for k, v in build_stats.get("sc_bg_slices_raw", {}).items()},
-                **{f"data/sc_bg_final/{k}": v
-                   for k, v in build_stats.get("sc_bg_slices_final", {}).items()},
+                "aug": {
+                    # ── YOLO built-in ──────────────────────────────
+                    "yolo_brightness":          0.0 if args.no_augment else 0.15,
+                    "yolo_rotation_deg":        0.0 if args.no_augment else 15.0,
+                    "yolo_scale":               0.0 if args.no_augment else 0.2,
+                    "yolo_translate":           0.0 if args.no_augment else 0.1,
+                    "yolo_flip_lr":             0.0 if args.no_augment else 0.5,
+                    "yolo_flip_ud":             0.0 if args.no_augment else 0.5,
+                    # ── Albumentations ─────────────────────────────
+                    "affine_p":                 0.0 if args.no_augment else 0.2,
+                    "affine_scale_range":       [0.25, 4.0],
+                    "affine_translate_range":   [-0.3, 0.3],
+                    "gauss_noise_p":            0.0 if args.no_augment else 0.1,
+                    "gauss_noise_std_range":    [0.01, 0.03],
+                    "gaussian_blur_p":          0.0 if args.no_augment else 0.2,
+                    "gaussian_blur_limit":      [3, 7],
+                    "downscale_p":              0.0 if args.no_augment else 0.25,
+                    "downscale_scale_range":    [0.25, 1.0],
+                    "random_gamma_p":           0.0 if args.no_augment else 0.1,
+                    "random_gamma_limit":       [80, 120],
+                    "bias_field_p":             0.0 if args.no_augment else 0.2,
+                    "bias_field_coef_range":    [-0.4, 0.4],
+                    "pixel_invert_p":           0.0 if args.no_augment else 0.25,
+                    "contrast_p":               0.0 if args.no_augment else 0.15,
+                    "contrast_limit":           [-0.3, 0.3],
+                },
+                "pipeline": pipeline_config,
+                "data": {
+                    **{k: v for k, v in build_stats.items() if not isinstance(v, dict)},
+                    "factor":       build_stats.get("dataset_factors", {}),
+                    "train_slices": build_stats.get("slices_train_final", {}),
+                    "sc_bg_raw":    build_stats.get("sc_bg_slices_raw", {}),
+                    "sc_bg_final":  build_stats.get("sc_bg_slices_final", {}),
+                },
             },
         )
 

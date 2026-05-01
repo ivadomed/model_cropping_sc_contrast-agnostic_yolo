@@ -111,6 +111,7 @@ FREE_SCALE_METRICS = {"pred_vol_ratio",
                       "gap_mm_R_trim30", "gap_mm_L_trim30", "gap_mm_P_trim30",
                       "gap_mm_A_trim30", "gap_mm_I_trim30", "gap_mm_S_trim30"}
 CONF_STEPS    = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
+SPLIT_COLORS  = {"train": "#4C72B0", "val": "#DD8452", "test": "#55A868", "unknown": "#8172B2"}
 
 
 def load_splits(splits_dir: Path) -> dict:
@@ -139,7 +140,7 @@ def load_patients_at_conf(pred_root: Path, patients_idx: pd.DataFrame, splits_ma
         if datasets_filter and dataset not in datasets_filter:
             continue
 
-        patient_csv = pred_root / dataset / stem / "metrics" / "patient.csv"
+        patient_csv = pred_root / "predictions" / dataset / stem / "metrics" / "patient.csv"
         if not patient_csv.exists():
             continue
 
@@ -278,6 +279,84 @@ def plot_bars(df: pd.DataFrame, metric: str, title: str, out_path: Path, dpi: in
     print(f"  → {out_path}")
 
 
+def plot_global_violins(split_dfs: dict, metric: str, title: str, out_path: Path, dpi: int) -> None:
+    """One violin per split (all datasets aggregated), colored by split, with max dashed lines."""
+    is_pct    = metric in PCT_METRICS
+    is_gap_mm = metric.startswith("gap_mm_")
+
+    splits    = [s for s in ("train", "val", "test", "unknown") if s in split_dfs and not split_dfs[s].empty]
+    if not splits:
+        return
+
+    all_vals = np.concatenate([split_dfs[s][metric].dropna().values for s in splits])
+    if is_gap_mm and len(all_vals) > 0:
+        y_min      = np.floor(all_vals.min() / 10) * 10
+        y_max      = np.ceil(all_vals.max()  / 10) * 10
+        fig_height = max(3, max(y_max - y_min, 10) / 10 * 0.9)
+    else:
+        fig_height = 6
+        y_min = y_max = None
+
+    n   = len(splits)
+    fig, ax = plt.subplots(figsize=(max(4, n * 2.5), fig_height))
+    fig.suptitle(title, fontsize=13, fontweight="bold")
+
+    rng = np.random.default_rng(0)
+    for i, split in enumerate(splits):
+        pos   = i + 1
+        color = SPLIT_COLORS.get(split, "#999")
+        vals  = split_dfs[split][metric].dropna().values
+        if is_pct:
+            vals = vals * 100
+
+        if len(vals) >= 2:
+            parts = ax.violinplot([vals], positions=[pos], showmeans=False, showmedians=False, showextrema=False)
+            for pc in parts["bodies"]:
+                pc.set_facecolor(color)
+                pc.set_edgecolor(color)
+                pc.set_alpha(0.75)
+            ax.vlines(pos, np.percentile(vals, 25), np.percentile(vals, 75), color="white", linewidth=2.5, zorder=4)
+            ax.scatter(pos, np.mean(vals),   color="red",    zorder=6, s=40, marker="D")
+            ax.scatter(pos, np.median(vals), color="orange", zorder=6, s=40, marker="o")
+            jitter = rng.uniform(-0.08, 0.08, size=len(vals))
+            ax.scatter(pos + jitter, vals, color="black", alpha=0.35, zorder=5, s=12, linewidths=0)
+        elif len(vals) == 1:
+            ax.scatter([pos], vals, color=color, zorder=5, s=20)
+
+        if len(vals) > 0:
+            max_val  = float(vals.max())
+            unit_str = "%" if is_pct else ("mm" if is_gap_mm else "")
+            ax.axhline(max_val, color=color, linestyle="--", linewidth=1.5, alpha=0.9, zorder=3,
+                       label=f"{split} max = {max_val:.1f}{unit_str}")
+
+    ax.set_xticks(list(range(1, n + 1)))
+    ax.set_xticklabels(
+        [f"{s}\n(n={len(split_dfs[s][metric].dropna())})" for s in splits], fontsize=10)
+
+    if is_pct:
+        ax.set_ylabel(METRIC_LABELS[metric] + " (%)", fontsize=10)
+        ax.set_ylim(-2, 102)
+    elif is_gap_mm:
+        ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
+        ax.set_ylim(y_min, y_max)
+        ax.set_yticks(np.arange(y_min, y_max + 1, 10))
+        ax.axhline(0, color="#888", linewidth=1.0, linestyle="--", zorder=1)
+    elif metric in FREE_SCALE_METRICS:
+        ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
+    else:
+        ax.set_ylabel(METRIC_LABELS[metric], fontsize=10)
+        ax.set_ylim(-0.05, 1.05)
+
+    ax.yaxis.grid(True, linestyle="--", alpha=0.5)
+    ax.set_axisbelow(True)
+    ax.legend(loc="upper right" if is_pct else "lower right", fontsize=9)
+    plt.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  → {out_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Per-patient metric violin plots per dataset",
@@ -295,7 +374,7 @@ def main():
                         choices=["train", "val", "test", "unknown"])
     parser.add_argument("--datasets",   nargs="+", default=None,
                         help="Restrict to these datasets (default: all)")
-    parser.add_argument("--splits-dir", default="data/datasplits/from_raw",
+    parser.add_argument("--splits-dir", default="data/datasplits_seed50",
                         help="Directory with datasplit_*.yaml for split assignment")
     parser.add_argument("--conf",       type=float, default=0.1,
                         help="Confidence threshold (ignored with --conf-sweep)")
@@ -333,27 +412,51 @@ def main():
                                        args.conf, [split], args.datasets)
             for metric in metrics_to_plot:
                 title    = f"{METRIC_LABELS[metric]} — {pred_root.name} [{split}] conf≥{args.conf}"
-                out_path = pred_root / "plots" / split / metric / f"{conf_label(args.conf)}{args.suffix}.png"
+                out_path = (pred_root / "metrics" / "per_split" / split / metric
+                            / conf_label(args.conf) / f"{metric}_{conf_label(args.conf)}{args.suffix}.png")
                 print(f"{len(df)} patients — {df['dataset'].nunique()} datasets [{split}] "
                       f"({metric}) conf≥{args.conf}")
                 if metric in PROPORTION_METRICS:
                     plot_bars(df, metric, title, out_path, args.dpi)
                 else:
                     plot_violins(df, metric, title, out_path, args.dpi)
+        # Global plots — all splits on one figure
+        df_all = load_patients_at_conf(pred_root, patients_idx, splits_map,
+                                       args.conf, args.splits, args.datasets)
+        for metric in metrics_to_plot:
+            if metric in PROPORTION_METRICS:
+                continue
+            split_dfs = {s: df_all[df_all["split"] == s] for s in args.splits}
+            title     = f"{METRIC_LABELS[metric]} — {pred_root.name} [all splits] conf≥{args.conf}"
+            out_path  = (pred_root / "metrics" / "globals" / metric
+                         / conf_label(args.conf) / f"{metric}_globals_{conf_label(args.conf)}{args.suffix}.png")
+            plot_global_violins(split_dfs, metric, title, out_path, args.dpi)
         return
 
     print(f"Sweeping {len(CONF_STEPS)} thresholds × {len(SWEEP_METRICS)} metrics {args.splits}...")
-    for split in args.splits:
-        for conf in CONF_STEPS:
+    for conf in CONF_STEPS:
+        for split in args.splits:
             df = load_patients_at_conf(pred_root, patients_idx, splits_map,
                                        conf, [split], args.datasets)
             for metric in SWEEP_METRICS:
                 title    = f"{METRIC_LABELS[metric]} — {pred_root.name} [{split}] conf≥{conf}"
-                out_path = pred_root / "plots" / split / metric / f"{conf_label(conf)}{args.suffix}.png"
+                out_path = (pred_root / "metrics" / "per_split" / split / metric
+                            / conf_label(conf) / f"{metric}_{conf_label(conf)}{args.suffix}.png")
                 if metric in PROPORTION_METRICS:
                     plot_bars(df, metric, title, out_path, args.dpi)
                 else:
                     plot_violins(df, metric, title, out_path, args.dpi)
+        # Global for this conf step
+        df_all = load_patients_at_conf(pred_root, patients_idx, splits_map,
+                                       conf, args.splits, args.datasets)
+        for metric in SWEEP_METRICS:
+            if metric in PROPORTION_METRICS:
+                continue
+            split_dfs = {s: df_all[df_all["split"] == s] for s in args.splits}
+            title     = f"{METRIC_LABELS[metric]} — {pred_root.name} [all splits] conf≥{conf}"
+            out_path  = (pred_root / "metrics" / "globals" / metric
+                         / conf_label(conf) / f"{metric}_globals_{conf_label(conf)}{args.suffix}.png")
+            plot_global_violins(split_dfs, metric, title, out_path, args.dpi)
 
 
 if __name__ == "__main__":

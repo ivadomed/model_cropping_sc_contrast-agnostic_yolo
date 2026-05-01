@@ -24,6 +24,8 @@ For each (image, mask) pair in each BIDS dataset:
   6. Write meta.yaml (raw_image, raw_mask, shape_las [H,W,Z], si_res_mm, rl_res_mm, ap_res_mm,
                       axial_res_mm if --axial-res, channels=3 if --3ch, plane,
                       raw_canal_mask if --with-canal and canal mask found)
+  7. Write processed/<variant>/skipped.log (TSV: dataset, subject, reason) for any subject
+     skipped due to missing_nifti (git annex not downloaded) or no_sc_voxels (empty mask).
 
 Mask discovery: per-dataset explicit suffix tables DATASET_MASK_SUFFIX (SC) and
 DATASET_CANAL_SUFFIX (canal, only for datasets that have it) — crashes on unknown dataset.
@@ -103,32 +105,44 @@ DATASET_CANAL_SUFFIX = {
 }
 
 
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def _is_nifti_downloaded(path: Path) -> bool:
+    """Return False if path is a git-annex pointer (not actual gzip data)."""
+    with open(path, "rb") as f:
+        return f.read(2) == _GZIP_MAGIC
+
+
 def find_pairs(dataset_root: Path, with_canal: bool = False):
-    """Return (image_path, sc_mask_path, canal_mask_path_or_None) triples for a BIDS dataset.
+    """Return (valid_pairs, missing_pairs) for a BIDS dataset.
+
+    valid_pairs   : list of (image_path, sc_mask_path, canal_mask_path_or_None)
+    missing_pairs : list of image Path objects absent or not yet downloaded via git-annex
     Crashes if the dataset name is not in DATASET_MASK_SUFFIX.
-    Skips pairs where the image file does not exist.
     canal_mask_path is None when with_canal=False or no canal mask exists for the pair.
     """
     mask_suffix = DATASET_MASK_SUFFIX[dataset_root.name]
     canal_suffix = DATASET_CANAL_SUFFIX.get(dataset_root.name) if with_canal else None
     labels_root = dataset_root / "derivatives" / "labels"
 
-    pairs = []
+    pairs, missing = [], []
     for sub_dir in sorted(labels_root.iterdir()):
         if not sub_dir.is_dir() or not sub_dir.name.startswith("sub-"):
             continue
         for anat_seg in list(sub_dir.glob("ses-*/anat")) + list(sub_dir.glob("anat")):
             for mask in sorted(anat_seg.glob(f"*{mask_suffix}")):
                 img_path = dataset_root / sub_dir.name / anat_seg.relative_to(sub_dir) / (mask.name[: -len(mask_suffix)] + ".nii.gz")
-                if not img_path.exists():
+                if not img_path.exists() or not _is_nifti_downloaded(img_path) or not _is_nifti_downloaded(mask):
+                    missing.append(img_path)
                     continue
                 canal_mask = None
                 if canal_suffix:
                     canal_path = anat_seg / (mask.name[: -len(mask_suffix)] + canal_suffix)
-                    if canal_path.exists():
+                    if canal_path.exists() and _is_nifti_downloaded(canal_path):
                         canal_mask = canal_path
                 pairs.append((img_path, mask, canal_mask))
-    return pairs
+    return pairs, missing
 
 
 def _rescale_bbox(bbox, H, W, H_out, W_out):
@@ -177,7 +191,7 @@ def process_pair(args: tuple):
     patient_dir = Path(processed_str) / dataset_name / nifti_stem(img_path)
 
     if (patient_dir / "meta.yaml").exists():
-        return "skipped"
+        return "already_processed"
 
     for d in ("png", "txt", "volume"):
         (patient_dir / d).mkdir(parents=True, exist_ok=True)
@@ -240,7 +254,7 @@ def process_pair(args: tuple):
         sc_rl_slices = [i for i in range(N) if mask_data[i, :, :].any()]
         if not sc_rl_slices:
             print(f"[SKIP] No SC voxels found in {mask_path_str}")
-            return "skipped"
+            return "no_sc_voxels"
         pad_slices   = round(sc_pad_mm / eff_rl)
         win_start    = max(0,     min(sc_rl_slices) - pad_slices)
         win_end      = min(N - 1, max(sc_rl_slices) + pad_slices)
@@ -406,13 +420,18 @@ def main():
         processed_dir = str(Path("processed") / name)
 
     worker_args = []
+    skip_log_entries = []   # {"dataset", "subject", "reason"} — written to skipped.log at the end
     for dataset_dir in sorted(Path(args.raw).iterdir()):
         if not dataset_dir.is_dir():
             continue
         if args.datasets and dataset_dir.name not in args.datasets:
             continue
-        pairs = find_pairs(dataset_dir, with_canal=with_canal)
-        print(f"{dataset_dir.name}: {len(pairs)} pairs")
+        pairs, missing = find_pairs(dataset_dir, with_canal=with_canal)
+        print(f"{dataset_dir.name}: {len(pairs)} pairs  ({len(missing)} missing NIfTI)")
+        for img_path in missing:
+            skip_log_entries.append({"dataset": dataset_dir.name,
+                                     "subject": nifti_stem(img_path),
+                                     "reason":  "missing_nifti"})
         worker_args.extend(
             (str(img), str(mask), str(canal) if canal else None,
              dataset_dir.name, processed_dir, si_res, axial_res, rl_res, three_ch, plane, sc_pad_mm)
@@ -423,11 +442,28 @@ def main():
         print("No pairs found. Check --raw path.")
         return
 
-    counts = {"processed": 0, "skipped": 0}
+    counts = {"processed": 0, "already_processed": 0, "no_sc_voxels": 0}
     for args_tuple in tqdm(worker_args, desc="Volumes", unit="vol"):
-        counts[process_pair(args_tuple)] += 1
+        result = process_pair(args_tuple)
+        counts[result] += 1
+        if result == "no_sc_voxels":
+            img_path_str, _, _, dataset_name, *_ = args_tuple
+            skip_log_entries.append({"dataset": dataset_name,
+                                     "subject": nifti_stem(Path(img_path_str)),
+                                     "reason":  "no_sc_voxels"})
 
-    print(f"\nDone — processed: {counts['processed']}  skipped: {counts['skipped']}")
+    print(f"\nDone — processed: {counts['processed']}  "
+          f"already_processed: {counts['already_processed']}  "
+          f"no_sc_voxels: {counts['no_sc_voxels']}")
+
+    if skip_log_entries:
+        log_path = Path(processed_dir) / "skipped.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "w") as f:
+            f.write("dataset\tsubject\treason\n")
+            for e in skip_log_entries:
+                f.write(f"{e['dataset']}\t{e['subject']}\t{e['reason']}\n")
+        print(f"Skipped subjects logged → {log_path}  ({len(skip_log_entries)} entries)")
 
 
 if __name__ == "__main__":

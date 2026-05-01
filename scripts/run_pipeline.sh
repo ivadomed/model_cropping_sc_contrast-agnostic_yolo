@@ -27,8 +27,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."   # run from project root
 
 # ─── Pipeline control ─────────────────────────────────────────────────────────
 
-PLANE=sagittal       # axial | sagittal
-START_STEP=1      # 1–9
+PLANE=axial       # axial | sagittal
+START_STEP=4      # 1–9
 END_STEP=9        # 1–9
 MAKE_SPLITS=true # true = regenerate splits from data/raw (step 2)
 export SEED=50    # global random seed — propagated to all Python scripts via env
@@ -51,12 +51,13 @@ SAG_SC_RATIO=3           # SC/non-SC slice balance ratio in the YOLO dataset
 # Example: lumbar datasets oversampled ×5 because they are underrepresented.
 
 DATASET_FACTORS=(
-    lumbar-epfl:1
-    lumbar-vanderbilt:1
-    spider-challenge-2023:1
-    sct-testing-large:1
-    sci-zurich:1
-    canproco:1
+    lumbar-epfl:7
+    lumbar-vanderbilt:7
+    spider-challenge-2023:3
+    whole-spine:3
+    # sct-testing-large:1
+    # sci-zurich:1
+    # canproco:1
 )
 
 # ─── Parameters — TRAINING (shared) ──────────────────────────────────────────

@@ -241,6 +241,8 @@ SCRIPTS — un script, une responsabilité
   │                       meta.yaml inclut : shape_las, si_res_mm, rl_res_mm, ap_res_mm
   │                                          axial_res_mm (si --axial-res), channels=3 (si --3ch)
   │                       séquentiel (pas de multiprocessing — nibabel/scipy single-threadé, oversubscription)
+  │                       écrit processed/<variant>/skipped.log (TSV: dataset/subject/reason) si des sujets
+  │                       sont sautés : missing_nifti (git annex non téléchargé) ou no_sc_voxels (masque vide)
   │                       --update-meta --out <dir> : patche les meta.yaml existants sans re-préprocesser
   ├── build_dataset.py  ← processed/ + data/datasplits/*.yaml → datasets/
   │                       --processed processed_10mm_SI --out datasets_10mm_SI

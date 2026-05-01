@@ -110,13 +110,13 @@ datasets:
     commit: 2122dc4be6176606b69cc588a276959049de22af
 
   # ── spineimage.ca (Gitea SSH) ────────────────────────────────────────────────
-  - name: site_006_praxis
+  - name: site_006
     host: spineimage
     url_https: https://spineimage.ca/MON/site_006
     url_ssh:   gitea@spineimage.ca:MON/site_006.git
     commit: 1396112095272988de483c05416369b75340d339
 
-  - name: site_007_praxis
+  - name: site_007
     host: spineimage
     url_https: https://spineimage.ca/VGH/site_007
     url_ssh:   gitea@spineimage.ca:VGH/site_007.git

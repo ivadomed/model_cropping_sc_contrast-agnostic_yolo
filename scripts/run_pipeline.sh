@@ -60,6 +60,10 @@ DATASET_FACTORS=(
     # canproco:1
 )
 
+# Oversample ×2 slices with no SC or within this distance of the SC boundary (mm).
+# Set to "" to disable.
+BORDER_OVERSAMPLE_MM=40
+
 # ─── Parameters — TRAINING (shared) ──────────────────────────────────────────
 
 WITH_CANAL=false         # true = also extract spinal canal (class 1) during preprocessing
@@ -68,7 +72,7 @@ MODEL="yolo26n.pt"
 EPOCHS=200
 IMGSZ=320
 FL_GAMMA=2               # focal loss gamma (0 = standard BCE)
-WORKERS=4
+WORKERS=8
 
 # ─── Path overrides (optional) ───────────────────────────────────────────────
 # Leave empty to use auto-generated paths.
@@ -82,13 +86,17 @@ OVERRIDE_RUN_ID=""          # e.g. yolo26n_axial_v2
 
 # ─── Derived values (do not edit) ─────────────────────────────────────────────
 
+# Timestamp generated once at pipeline start — shared by DATASET_DIR and RUN_ID.
+# Override via OVERRIDE_DATASET_DIR / OVERRIDE_RUN_ID to resume an existing run.
+TS=$(date +%Y%m%d_%H%M%S)
+
 SPLITS_DIR="data/datasplits_seed${SEED}"
 
 if [[ "$PLANE" == "axial" ]]; then
 
     PROCESSED_DIR="processed/pipeline_${AXIAL_SI_RES%.*}mm_SI_${AXIAL_INPLANE_RES%.*}mm_axial_3ch"
-    DATASET_DIR="datasets/pipeline_${AXIAL_SI_RES%.*}mm_SI_${AXIAL_INPLANE_RES%.*}mm_axial_3ch"
-    RUN_ID="pipeline_run_yolo26n_axial_${EPOCHS}ep"
+    DATASET_DIR="datasets/pipeline_${AXIAL_SI_RES%.*}mm_SI_${AXIAL_INPLANE_RES%.*}mm_axial_3ch_${TS}"
+    RUN_ID="pipeline_yolo26n_axial_${EPOCHS}ep_${TS}"
 
     PREPROCESS_ARGS=(
         --si-res    "${AXIAL_SI_RES}"
@@ -101,8 +109,8 @@ if [[ "$PLANE" == "axial" ]]; then
 elif [[ "$PLANE" == "sagittal" ]]; then
 
     PROCESSED_DIR="processed/pipeline_${SAG_SI_RES%.*}mm_SI_${SAG_INPLANE_RES%.*}mm_axial_${SAG_INPLANE_RES%.*}mm_RL_3ch_sagittal_sc${SAG_SC_PAD}mm"
-    DATASET_DIR="datasets/pipeline_${SAG_SI_RES%.*}mm_SI_${SAG_INPLANE_RES%.*}mm_axial_${SAG_INPLANE_RES%.*}mm_RL_3ch_sagittal_sc${SAG_SC_PAD}mm"
-    RUN_ID="pipeline_run_yolo26n_sagittal_sc${SAG_SC_PAD}mm_${EPOCHS}ep"
+    DATASET_DIR="datasets/pipeline_${SAG_SI_RES%.*}mm_SI_${SAG_INPLANE_RES%.*}mm_axial_${SAG_INPLANE_RES%.*}mm_RL_3ch_sagittal_sc${SAG_SC_PAD}mm_${TS}"
+    RUN_ID="pipeline_yolo26n_sagittal_sc${SAG_SC_PAD}mm_${EPOCHS}ep_${TS}"
 
     PREPROCESS_ARGS=(
         --si-res    "${SAG_SI_RES}"
@@ -135,6 +143,7 @@ BUILD_DATASET_ARGS=(
     --dataset-factors "${DATASET_FACTORS[@]}"
     "${BUILD_DATASET_EXTRA_ARGS[@]}"
 )
+[[ -n "$BORDER_OVERSAMPLE_MM" ]] && BUILD_DATASET_ARGS+=(--border-oversample "${BORDER_OVERSAMPLE_MM}")
 
 CHECKPOINT="checkpoints/${RUN_ID}/weights/best.pt"
 PREDICTIONS_DIR="predictions/${RUN_ID}"
@@ -194,6 +203,7 @@ fi
 
 echo "══════════════════════════════════════════════════════════════"
 echo "  Spine detection pipeline"
+echo "  Timestamp   : ${TS}"
 echo "  Plane       : ${PLANE}"
 echo "  Steps       : ${START_STEP} → ${END_STEP}"
 echo "  Run ID      : ${RUN_ID}"
@@ -252,7 +262,8 @@ config = {
     "fl_gamma":       ${FL_GAMMA},
     "workers":        ${WORKERS},
     "with_canal":     "${WITH_CANAL}" == "true",
-    "dataset_factors": factors,
+    "dataset_factors":     factors,
+    "border_oversample_mm": float("${BORDER_OVERSAMPLE_MM}") if "${BORDER_OVERSAMPLE_MM}" else None,
     "processed_dir":  "${PROCESSED_DIR}",
     "dataset_dir":    "${DATASET_DIR}",
     "run_id":         "${RUN_ID}",

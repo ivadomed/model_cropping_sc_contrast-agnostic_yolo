@@ -53,14 +53,33 @@ def find_stem_dirs(dataset_dir: Path, subject: str) -> list[Path]:
 
 
 def collect_slices(stem_dir: Path, prefix: str, region: str, dataset: str) -> list[dict]:
-    """Return one dict per slice: {png, txt, prefix, region, dataset, has_sc}."""
+    """Return one dict per slice: {png, txt, prefix, region, dataset, has_sc, slice_idx}."""
     slices = []
     for png in sorted((stem_dir / "png").glob("slice_*.png")):
         txt    = stem_dir / "txt" / (png.stem + ".txt")
         has_sc = txt.exists() and bool(txt.read_text().strip())
         slices.append({"png": png, "txt": txt, "prefix": prefix,
-                        "region": region, "dataset": dataset, "has_sc": has_sc})
+                        "region": region, "dataset": dataset, "has_sc": has_sc,
+                        "slice_idx": int(png.stem.split("_")[1])})
     return slices
+
+
+def mark_border_slices(slices: list[dict], border_mm: float, stem_dir: Path) -> None:
+    """Mark slices near the SC boundary or without SC as border (is_border=True).
+
+    Border = no SC anywhere in volume, OR within border_mm of the first/last SC slice
+    on the SI axis. Mutates slices in place.
+    """
+    si_res = yaml.safe_load((stem_dir / "meta.yaml").read_text())["si_res_mm"]
+    sc_idxs = [s["slice_idx"] for s in slices if s["has_sc"]]
+    if not sc_idxs:
+        for s in slices:
+            s["is_border"] = True
+        return
+    z1, z2 = min(sc_idxs), max(sc_idxs)
+    for s in slices:
+        dist_mm = min(abs(s["slice_idx"] - z1), abs(s["slice_idx"] - z2)) * si_res
+        s["is_border"] = not s["has_sc"] or dist_mm <= border_mm
 
 
 def subsample_empty_slices(slices: list[dict], sc_ratio: int, seed: int) -> list[dict]:
@@ -144,6 +163,9 @@ def main():
     parser.add_argument("--sc-ratio",        type=int, default=None,
                         metavar="N",
                         help="Per-volume SC balance: keep all SC slices, subsample empty slices to N×n_sc (train only).")
+    parser.add_argument("--border-oversample", type=float, default=None,
+                        metavar="MM",
+                        help="Oversample ×2 slices with no SC or within MM of the superior/inferior SC boundary (train only).")
     args = parser.parse_args()
 
     assert not args.balance_regions or Path(args.regions_csv).exists(), \
@@ -190,6 +212,8 @@ def main():
                     if args.sc_ratio is not None and partition == "train":
                         seed   = hash(stem_dir.name) & 0xFFFFFFFF
                         slices = subsample_empty_slices(slices, args.sc_ratio, seed)
+                    if args.border_oversample is not None and partition == "train":
+                        mark_border_slices(slices, args.border_oversample, stem_dir)
                     all_slices[partition].extend(slices)
 
     region_factor = 1.0
@@ -203,10 +227,13 @@ def main():
             raw_counts[partition][s["dataset"]] = raw_counts[partition].get(s["dataset"], 0) + 1
 
     # Per-dataset final slice counts for train (after oversampling)
+    border_factor = 2 if args.border_oversample is not None else 1
     final_train: dict[str, int] = {}
     for s in all_slices["train"]:
         factor = region_factor if s["region"] == "lumbar" else 1.0
         factor *= dataset_factors.get(s["dataset"], 1.0)
+        if s.get("is_border", False):
+            factor *= border_factor
         final_train[s["dataset"]] = final_train.get(s["dataset"], 0) + max(1, round(factor))
 
     # Link all partitions
@@ -219,6 +246,8 @@ def main():
             def n_copies_fn(s):
                 base = region_factor if s["region"] == "lumbar" else 1.0
                 base *= dataset_factors.get(s["dataset"], 1.0)
+                if s.get("is_border", False):
+                    base *= border_factor
                 return max(1, round(base))
         else:
             def n_copies_fn(s):
@@ -237,13 +266,38 @@ def main():
         f"names:\n{names_str}\n"
     )
 
+    # Effective per-dataset factor (region × dataset × border, averaged — for W&B readability)
+    # Also accumulate SC/BG slice counts (raw and final after oversampling)
+    effective_factors = {}
+    border_counts: dict[str, int] = {}
+    sc_bg_raw   = {"sc": 0, "bg": 0}
+    sc_bg_final = {"sc": 0, "bg": 0}
+    for s in all_slices["train"]:
+        ds  = s["dataset"]
+        f   = region_factor if s["region"] == "lumbar" else 1.0
+        f  *= dataset_factors.get(ds, 1.0)
+        if s.get("is_border", False):
+            f *= border_factor
+            border_counts[ds] = border_counts.get(ds, 0) + 1
+        effective_factors.setdefault(ds, []).append(f)
+        key = "sc" if s["has_sc"] else "bg"
+        sc_bg_raw[key]   += 1
+        sc_bg_final[key] += max(1, round(f))
+    effective_factors = {ds: round(sum(fs) / len(fs), 3)
+                         for ds, fs in effective_factors.items()}
+
     build_stats = {
-        "balance_regions": args.balance_regions,
-        "region_factor":   round(region_factor, 3),
-        "dataset_factors": dataset_factors,
-        "slices_raw":      raw_counts,
-        "slices_train_final": dict(sorted(final_train.items())),
-        "total":           counts,
+        "balance_regions":      args.balance_regions,
+        "region_factor":        round(region_factor, 3),
+        "border_oversample_mm": args.border_oversample,
+        "dataset_factors":      dataset_factors,
+        "effective_factor":     dict(sorted(effective_factors.items())),
+        "border_slice_count":   dict(sorted(border_counts.items())),
+        "sc_bg_slices_raw":     sc_bg_raw,
+        "sc_bg_slices_final":   sc_bg_final,
+        "slices_raw":           raw_counts,
+        "slices_train_final":   dict(sorted(final_train.items())),
+        "total":                counts,
     }
     with open(out_dir / "build_stats.yaml", "w") as f:
         yaml.dump(build_stats, f, sort_keys=False, default_flow_style=False)

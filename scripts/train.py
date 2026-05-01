@@ -172,7 +172,18 @@ def main():
                 "fl_gamma": args.fl_gamma,
                 # pipeline context (from pipeline_config.yaml + build_stats.yaml)
                 **{f"pipeline/{k}": v for k, v in pipeline_config.items()},
-                **{f"data/{k}":     v for k, v in build_stats.items()},
+                **{f"data/{k}":     v for k, v in build_stats.items()
+                   if not isinstance(v, dict)},
+                # per-dataset factors and slice counts as individual W&B keys
+                **{f"data/factor/{ds}":       f
+                   for ds, f in build_stats.get("effective_factor", {}).items()},
+                **{f"data/train_slices/{ds}": n
+                   for ds, n in build_stats.get("slices_train_final", {}).items()},
+                # SC vs background slice balance (raw = before oversampling, final = after)
+                **{f"data/sc_bg_raw/{k}":   v
+                   for k, v in build_stats.get("sc_bg_slices_raw", {}).items()},
+                **{f"data/sc_bg_final/{k}": v
+                   for k, v in build_stats.get("sc_bg_slices_final", {}).items()},
             },
         )
 

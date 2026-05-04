@@ -21,7 +21,7 @@ from pathlib import Path
 
 # Mis à jour à chaque release.
 _RELEASE_URL = (
-    "https://github.com/neuropoly/model_cropping_sc_contrast-agnostic_yolo"
+    "https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo"
     "/releases/download/v0.1.0/sc_crop_models_v0.1.0.zip"
 )
 

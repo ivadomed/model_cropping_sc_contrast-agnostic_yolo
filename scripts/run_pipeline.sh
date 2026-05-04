@@ -28,7 +28,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."   # run from project root
 # ─── Pipeline control ─────────────────────────────────────────────────────────
 
 PLANE=axial       # axial | sagittal
-START_STEP=4      # 1–9
+START_STEP=1      # 1–9
 END_STEP=9        # 1–9
 MAKE_SPLITS=true # true = regenerate splits from data/raw (step 2)
 export SEED=50    # global random seed — propagated to all Python scripts via env
@@ -73,6 +73,7 @@ EPOCHS=200
 IMGSZ=320
 FL_GAMMA=2               # focal loss gamma (0 = standardq BCE)
 WORKERS=2
+EXTRA_AUGMENT=false       # true = extra MRI albumentations (bias field, invert, affine zoom…)
 WANDB_ENTITY="quentin-revillon-neuropoly" # W&B entity: "" = compte par défaut, "quentin-revillon-neuropoly" = compte perso, "neuropoly" = lab
 
 # ─── Path overrides (optional) ───────────────────────────────────────────────
@@ -149,28 +150,13 @@ BUILD_DATASET_ARGS=(
 CHECKPOINT="checkpoints/${RUN_ID}/weights/best.pt"
 PREDICTIONS_DIR="predictions/${RUN_ID}"
 
-# ─── Expected datasets — warn if any are missing ──────────────────────────────
+# ─── Expected datasets — derived from data/datasets.yaml ─────────────────────
 
-EXPECTED_DATASETS=(
-    data-multi-subject
-    basel-mp2rage
-    dcm-zurich
-    lumbar-vanderbilt
-    nih-ms-mp2rage
-    canproco
-    sci-colorado
-    sci-paris
-    sci-zurich
-    sct-testing-large
-    lumbar-epfl
-    dcm-brno
-    dcm-zurich-lesions
-    dcm-zurich-lesions-20231115
-    spider-challenge-2023
-    whole-spine
-    site_006
-    site_007
-)
+mapfile -t EXPECTED_DATASETS < <(python -c "
+import yaml
+with open('data/datasets.yaml') as f:
+    print('\n'.join(d['name'] for d in yaml.safe_load(f)['datasets']))
+")
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -320,7 +306,8 @@ if step 5 "Train — ${MODEL} × ${EPOCHS} epochs (fl-gamma=${FL_GAMMA})"; then
         --imgsz        "${IMGSZ}" \
         --workers      "${WORKERS}" \
         --fl-gamma     "${FL_GAMMA}" \
-        ${WANDB_ENTITY:+--wandb-entity "${WANDB_ENTITY}"}
+        ${WANDB_ENTITY:+--wandb-entity "${WANDB_ENTITY}"} \
+        $([[ "$EXTRA_AUGMENT" == "false" ]] && echo "--no-extra-augment")
 fi
 
 # ─── Step 6 : Evaluate ────────────────────────────────────────────────────────

@@ -1,0 +1,38 @@
+meta:
+  name: hc-lumbar-zurich
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/hc-lumbar-zurich
+  url_ssh: git@data.neuro.polymtl.ca:datasets/hc-lumbar-zurich
+  commit: b35dacd40c2f42dcd414d1d935a622e63966e645
+  seed: 50
+train:
+- sub-45
+- sub-26
+- sub-29
+- sub-36
+- sub-24
+- sub-33
+- sub-20
+- sub-46
+- sub-23
+- sub-38
+- sub-32
+- sub-21
+- sub-25
+- sub-41
+val:
+- sub-34
+- sub-39
+- sub-43
+- sub-44
+- sub-37
+- sub-22
+test:
+- sub-30
+- sub-47
+- sub-42
+- sub-27
+- sub-40
+- sub-31
+- sub-28
+- sub-35

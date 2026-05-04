@@ -74,35 +74,13 @@ from utils import (
     reorient_to_las, seg_to_yolo_bbox, write_bbox_3d,
 )
 
-# Explicit SC mask suffix per dataset — crashes on unknown dataset name
-DATASET_MASK_SUFFIX = {  # noqa: E241
-    "data-multi-subject":           "_label-SC_seg.nii.gz",
-    "basel-mp2rage":                "_label-SC_seg.nii.gz",
-    "dcm-zurich":                   "_label-SC_seg.nii.gz",
-    "lumbar-vanderbilt":            "_label-SC_seg.nii.gz",
-    "nih-ms-mp2rage":               "_label-SC_seg.nii.gz",
-    "canproco":                     "_seg-manual.nii.gz",
-    "sci-colorado":                 "_seg-manual.nii.gz",
-    "sci-paris":                    "_seg-manual.nii.gz",
-    "sci-zurich":                   "_seg-manual.nii.gz",
-    "sct-testing-large":            "_seg-manual.nii.gz",
-    "lumbar-epfl":                  "_seg-manual.nii.gz",
-    "dcm-brno":                     "_seg.nii.gz",
-    "dcm-zurich-lesions":           "_label-SC_mask-manual.nii.gz",
-    "dcm-zurich-lesions-20231115":  "_label-SC_mask-manual.nii.gz",
-    "spider-challenge-2023":        "_label-SC_seg.nii.gz",
-    "data-single-subject":          "_label-SC_seg.nii.gz",
-    "whole-spine":                  "_label-SC_seg.nii.gz",
-    "site_006":                     "_label-SC_seg.nii.gz",
-    "site_007":                     "_label-SC_seg.nii.gz"
-}
-
-# Canal mask suffix — only for datasets that have canal segmentations (class 1)
-DATASET_CANAL_SUFFIX = {
-    "data-multi-subject":    "_label-canal_seg.nii.gz",
-    "spider-challenge-2023": "_label-canal_seg.nii.gz",
-    "whole-spine":           "_label-canal_seg.nii.gz",
-}
+# Dataset registry — single source of truth is data/datasets.yaml
+_REGISTRY = yaml.safe_load(
+    (Path(__file__).parent.parent / "data" / "datasets.yaml").read_text()
+)["datasets"]
+DATASET_MASK_SUFFIX  = {d["name"]: d["mask_suffix"] for d in _REGISTRY}
+DATASET_LABELS_DIR   = {d["name"]: d["labels_dir"] for d in _REGISTRY if "labels_dir" in d}
+DATASET_CANAL_SUFFIX = {d["name"]: d["canal_suffix"] for d in _REGISTRY if d.get("canal_suffix")}
 
 
 _GZIP_MAGIC = b"\x1f\x8b"
@@ -124,7 +102,8 @@ def find_pairs(dataset_root: Path, with_canal: bool = False):
     """
     mask_suffix = DATASET_MASK_SUFFIX[dataset_root.name]
     canal_suffix = DATASET_CANAL_SUFFIX.get(dataset_root.name) if with_canal else None
-    labels_root = dataset_root / "derivatives" / "labels"
+    labels_dir = DATASET_LABELS_DIR.get(dataset_root.name, "labels")
+    labels_root = dataset_root / "derivatives" / labels_dir
 
     pairs, missing = [], []
     for sub_dir in sorted(labels_root.iterdir()):

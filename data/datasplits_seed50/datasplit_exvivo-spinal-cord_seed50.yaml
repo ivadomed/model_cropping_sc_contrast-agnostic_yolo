@@ -1,0 +1,13 @@
+meta:
+  name: exvivo-spinal-cord
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/exvivo-spinal-cord
+  url_ssh: git@data.neuro.polymtl.ca:datasets/exvivo-spinal-cord
+  commit: 4107d9ee2a2f5c543324345ef99170e2ef40d0b6
+  seed: 50
+train:
+- sub-exvivo001
+- sub-exvivo003
+val:
+- sub-exvivo002
+test: []

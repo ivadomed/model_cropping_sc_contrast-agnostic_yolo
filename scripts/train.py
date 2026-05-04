@@ -41,6 +41,8 @@ import os
 import random
 from pathlib import Path
 
+import yaml
+
 import albumentations as A
 import cv2
 import numpy as np
@@ -146,33 +148,52 @@ def main():
         description="Train YOLO for spinal cord detection on axial MRI slices",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--dataset-yaml",
-                        default="datasets/10mm_SI_1mm_axial_3ch_sc_only_region_balanced_all_datasets/dataset.yaml")
-    parser.add_argument("--run-id",  required=True, help="Run name used for checkpoints/ and W&B")
-    parser.add_argument("--model",   default="yolo26n.pt",
-                        help="Model weights: yolo26{n,s,m,l,x}.pt (latest) | yolo12{n,s,m,l,x}.pt | "
-                             "yolo11{n,s,m,l,x}.pt | yolov8{n,s,m,l,x}.pt | path/to/custom.pt")
-    parser.add_argument("--epochs",   type=int,   default=100)
-    parser.add_argument("--imgsz",    type=int,   default=320)
-    parser.add_argument("--batch",    type=int,   default=-1,
-                        help="Batch size (-1 = auto-detect optimal for GPU memory)")
-    parser.add_argument("--device",   default="0")
-    parser.add_argument("--patience", type=int,   default=100)
-    parser.add_argument("--workers",  type=int,   default=8)
-    parser.add_argument("--fraction", type=float, default=1.0, help="Fraction of dataset to use (e.g. 0.01 for quick test)")
-    parser.add_argument("--resume",   action="store_true",
-                        help="Resume from last.pt (set --model to last.pt path)")
-    parser.add_argument("--no-augment", action="store_true",
-                        help="Disable all augmentations (YOLO built-in + albumentations MRI)")
-    parser.add_argument("--no-extra-augment", action="store_true",
-                        help="Disable extra MRI albumentations only (keep YOLO built-in augmentations)")
-    parser.add_argument("--fl-gamma",  type=float, default=0.0,
-                        help="Focal loss gamma (0.0 = BCE, 2.0 = standard focal loss)")
-    parser.add_argument("--no-wandb", action="store_true")
-    parser.add_argument("--wandb-project", default="spine_detection")
-    parser.add_argument("--wandb-entity",  default=None,
-                        help="W&B entity (user or team). None = W&B default for the logged-in account.")
+    parser.add_argument("--config",        default=None, help="YAML config file (configs/training.yaml). CLI flags override config values.")
+    parser.add_argument("--dataset-yaml",  default=None)
+    parser.add_argument("--run-id",        required=True)
+    parser.add_argument("--model",         default=None)
+    parser.add_argument("--epochs",        type=int,   default=None)
+    parser.add_argument("--imgsz",         type=int,   default=None)
+    parser.add_argument("--batch",         type=int,   default=None)
+    parser.add_argument("--device",        default=None)
+    parser.add_argument("--patience",      type=int,   default=None)
+    parser.add_argument("--workers",       type=int,   default=None)
+    parser.add_argument("--fraction",      type=float, default=None)
+    parser.add_argument("--resume",        action="store_true")
+    parser.add_argument("--no-augment",    action="store_true")
+    parser.add_argument("--no-extra-augment", action="store_true")
+    parser.add_argument("--fl-gamma",      type=float, default=None)
+    parser.add_argument("--no-wandb",      action="store_true")
+    parser.add_argument("--wandb-project", default=None)
+    parser.add_argument("--wandb-entity",  default=None)
     args = parser.parse_args()
+
+    # Load config file and apply as defaults (CLI flags take priority)
+    if args.config:
+        cfg = yaml.safe_load(Path(args.config).read_text())
+        if args.model          is None: args.model          = cfg.get("model", "yolo26n.pt")
+        if args.epochs         is None: args.epochs         = cfg.get("epochs", 100)
+        if args.imgsz          is None: args.imgsz          = cfg.get("imgsz", 320)
+        if args.batch          is None: args.batch          = cfg.get("batch", -1)
+        if args.device         is None: args.device         = str(cfg.get("device", "0"))
+        if args.patience       is None: args.patience       = cfg.get("patience", 100)
+        if args.workers        is None: args.workers        = cfg.get("workers", 8)
+        if args.fraction       is None: args.fraction       = cfg.get("fraction", 1.0)
+        if args.fl_gamma       is None: args.fl_gamma       = cfg.get("fl_gamma", 0.0)
+        if args.wandb_project  is None: args.wandb_project  = cfg.get("wandb_project", "spine_detection")
+        if args.wandb_entity   is None: args.wandb_entity   = cfg.get("wandb_entity")
+        if not args.no_extra_augment:   args.no_extra_augment = not cfg.get("extra_augment", True)
+    # Hard defaults if no config provided
+    if args.model     is None: args.model     = "yolo26n.pt"
+    if args.epochs    is None: args.epochs    = 100
+    if args.imgsz     is None: args.imgsz     = 320
+    if args.batch     is None: args.batch     = -1
+    if args.device    is None: args.device    = "0"
+    if args.patience  is None: args.patience  = 100
+    if args.workers   is None: args.workers   = 8
+    if args.fraction  is None: args.fraction  = 1.0
+    if args.fl_gamma  is None: args.fl_gamma  = 0.0
+    if args.wandb_project is None: args.wandb_project = "spine_detection"
 
     seed = int(os.environ.get("SEED", 50))
     random.seed(seed)

@@ -343,28 +343,35 @@ def main():
         description="BIDS raw → processed_{res}mm_SI/ (LAS slices resampled on SI + YOLO labels)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--si-res",      type=float, default=None, help="Target SI (Z) resolution in mm (required unless --update-meta)")
-    parser.add_argument("--axial-res",   type=float, default=None, help="Target in-plane (RL, AP) isotropic resolution in mm (optional)")
-    parser.add_argument("--rl-res",      type=float, default=None,
-                        help="Target RL resolution in mm (sagittal slice thickness). "
-                             "Overrides --axial-res for the RL axis only. Appends '_{rl_res}mm_RL' to output dir.")
-    parser.add_argument("--raw",         default="data/raw",  help="BIDS root directory")
-    parser.add_argument("--out",         default=None,        help="Output directory (default: processed/{si_res}mm_SI[_{axial_res}mm_axial])")
-    parser.add_argument("--datasets",   nargs="+", default=None, help="Restrict to these dataset names (default: all)")
-    parser.add_argument("--3ch",          action="store_true", dest="three_ch",
-                        help="Export pseudo-RGB PNG (R=prev slice, G=current, B=next). Appends '_3ch' to output dir name.")
-    parser.add_argument("--with-canal",  action="store_true", dest="with_canal",
-                        help="Also extract canal bbox (class 1) alongside SC (class 0). "
-                             "Requires dataset to be in DATASET_CANAL_SUFFIX.")
-    parser.add_argument("--plane",       default="axial", choices=["axial", "sagittal"],
-                        help="Slice plane: axial (iterate SI axis) or sagittal (iterate RL axis). "
-                             "Appends '_sagittal' to output dir name when sagittal.")
-    parser.add_argument("--sc-pad",      type=float, default=None, dest="sc_pad_mm",
-                        help="Sagittal only: restrict to RL slices within [SC_rl_min−N mm, SC_rl_max+N mm]. "
-                             "Empty slices in that window are kept 1-in-2. Appends '_sc<N>mm' to output dir.")
-    parser.add_argument("--update-meta", action="store_true",
-                        help="Only patch existing meta.yaml with rl_res_mm/ap_res_mm (no re-preprocessing). Requires --out.")
+    parser.add_argument("--config",      default=None, help="YAML config file (configs/preprocess.yaml). CLI flags override config values.")
+    parser.add_argument("--plane",       default=None, choices=["axial", "sagittal"])
+    parser.add_argument("--si-res",      type=float, default=None)
+    parser.add_argument("--axial-res",   type=float, default=None)
+    parser.add_argument("--rl-res",      type=float, default=None)
+    parser.add_argument("--raw",         default="data/raw")
+    parser.add_argument("--out",         default=None)
+    parser.add_argument("--datasets",    nargs="+", default=None)
+    parser.add_argument("--3ch",         action="store_true", dest="three_ch")
+    parser.add_argument("--with-canal",  action="store_true", dest="with_canal")
+    parser.add_argument("--sc-pad",      type=float, default=None, dest="sc_pad_mm")
+    parser.add_argument("--update-meta", action="store_true")
     args = parser.parse_args()
+
+    # Load config file and apply as defaults (CLI flags take priority)
+    if args.config:
+        cfg = yaml.safe_load(Path(args.config).read_text())
+        plane = args.plane or cfg.get("plane", "axial")
+        plane_cfg = cfg.get(plane, {})
+        if args.si_res    is None: args.si_res    = plane_cfg.get("si_res")
+        if args.axial_res is None: args.axial_res = plane_cfg.get("inplane_res")
+        if args.rl_res    is None: args.rl_res    = plane_cfg.get("rl_res")
+        if not args.three_ch:      args.three_ch  = cfg.get("three_ch", False)
+        if not args.with_canal:    args.with_canal = cfg.get("with_canal", False)
+        if args.sc_pad_mm is None: args.sc_pad_mm = plane_cfg.get("sc_pad")
+        args.plane = plane
+    else:
+        if args.plane is None:
+            args.plane = "axial"
 
     if args.update_meta:
         assert args.out, "--out is required with --update-meta"

@@ -1,0 +1,21 @@
+# Dataset build config — passed to scripts/build_dataset.py via --config
+
+splits_dir: data/datasplits_seed50
+
+# Per-dataset slice multipliers (train only). Omit a dataset to use ×1.
+# Format: dataset_name: factor
+dataset_factors: {}
+  # lumbar-epfl: 7
+  # lumbar-vanderbilt: 7
+  # spider-challenge-2023: 3
+  # whole-spine: 3
+
+# Oversample ×2 slices near SC boundary or without SC (null = disabled)
+border_oversample_mm: null
+
+# SC/background balance per volume in train (null = disabled)
+# Keeps all SC slices, subsamples empty slices to sc_ratio × n_sc
+sc_ratio: null
+
+# Sagittal only — SC/non-SC balance ratio (null = disabled)
+sagittal_sc_ratio: 3

@@ -147,28 +147,32 @@ def main():
         description="Build YOLO dataset (flat symlinks) from processed/ + datasplit YAMLs",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--splits-dir",      default="data/datasplits_seed50")
-    parser.add_argument("--processed",       default="processed/10mm_SI_1mm_axial_3ch_sc_and_canal")
-    parser.add_argument("--out",             default="datasets/10mm_SI_1mm_axial_3ch_sc_and_canal")
+    parser.add_argument("--config",          default=None, help="YAML config file (configs/dataset.yaml). CLI flags override config values.")
+    parser.add_argument("--splits-dir",      default=None)
+    parser.add_argument("--processed",       default=None)
+    parser.add_argument("--out",             default=None)
     parser.add_argument("--nc",              type=int, default=1)
     parser.add_argument("--class-names",     nargs="+", default=["spine"])
     parser.add_argument("--regions-csv",     default="data/dataset_regions.csv")
-    parser.add_argument("--balance-regions", action="store_true", default=False,
-                        help="Oversample lumbar slices in train to match cervical count (default: off)")
+    parser.add_argument("--balance-regions", action="store_true", default=False)
     parser.add_argument("--no-balance-regions", dest="balance_regions", action="store_false")
-    parser.add_argument("--keep-classes",    nargs="+", type=int, default=None,
-                        metavar="ID",
-                        help="Keep only these class IDs in labels (e.g. --keep-classes 0 to drop spinal canal)")
-    parser.add_argument("--dataset-factors", nargs="*", default=[],
-                        metavar="DATASET:N",
-                        help="Per-dataset oversampling multipliers, e.g. sci-zurich:5 lumbar-epfl:3 (default: 1 for all)")
-    parser.add_argument("--sc-ratio",        type=int, default=None,
-                        metavar="N",
-                        help="Per-volume SC balance: keep all SC slices, subsample empty slices to N×n_sc (train only).")
-    parser.add_argument("--border-oversample", type=float, default=None,
-                        metavar="MM",
-                        help="Oversample ×2 slices with no SC or within MM of the superior/inferior SC boundary (train only).")
+    parser.add_argument("--keep-classes",    nargs="+", type=int, default=None, metavar="ID")
+    parser.add_argument("--dataset-factors", nargs="*", default=None, metavar="DATASET:N")
+    parser.add_argument("--sc-ratio",        type=int, default=None, metavar="N")
+    parser.add_argument("--border-oversample", type=float, default=None, metavar="MM")
     args = parser.parse_args()
+
+    # Load config file and apply as defaults (CLI flags take priority)
+    if args.config:
+        cfg = yaml.safe_load(Path(args.config).read_text())
+        if args.splits_dir        is None: args.splits_dir        = cfg.get("splits_dir", "data/datasplits_seed50")
+        if args.sc_ratio          is None: args.sc_ratio          = cfg.get("sc_ratio")
+        if args.border_oversample is None: args.border_oversample = cfg.get("border_oversample_mm")
+        if args.dataset_factors   is None:
+            factors_dict = cfg.get("dataset_factors") or {}
+            args.dataset_factors = [f"{k}:{v}" for k, v in factors_dict.items()]
+    if args.splits_dir      is None: args.splits_dir      = "data/datasplits_seed50"
+    if args.dataset_factors is None: args.dataset_factors = []
 
     assert not args.balance_regions or Path(args.regions_csv).exists(), \
         f"--regions-csv not found: {args.regions_csv}"

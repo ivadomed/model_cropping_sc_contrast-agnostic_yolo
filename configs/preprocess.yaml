@@ -1,0 +1,15 @@
+# Preprocessing config — passed to scripts/preprocess.py
+
+# ── Axial ────────────────────────────────────────────────────────────────────
+axial:
+  si_res: 10.0       # SI resampling resolution (mm)
+  inplane_res: 1.0   # in-plane (RL, AP) resampling resolution (mm)
+
+# ── Sagittal ─────────────────────────────────────────────────────────────────
+sagittal:
+  si_res: 1.0        # SI resampling resolution (mm)
+  inplane_res: 1.0   # in-plane (RL, AP) resampling resolution (mm)
+  sc_pad: 10         # slices kept = SC extent ± this value (mm)
+
+# ── Shared ───────────────────────────────────────────────────────────────────
+with_canal: false    # true = also extract spinal canal (class 1)

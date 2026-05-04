@@ -1,15 +1,20 @@
-# Preprocessing config — passed to scripts/preprocess.py
+# Preprocessing config — passed to scripts/preprocess.py via --config
 
-# ── Axial ────────────────────────────────────────────────────────────────────
+plane: axial   # axial | sagittal
+seed: 50
+out: processed/10mm_SI_1mm_axial_3ch   # output directory (shared across runs)
+
+# ── Axial ─────────────────────────────────────────────────────────────────────
 axial:
   si_res: 10.0       # SI resampling resolution (mm)
   inplane_res: 1.0   # in-plane (RL, AP) resampling resolution (mm)
 
-# ── Sagittal ─────────────────────────────────────────────────────────────────
+# ── Sagittal ──────────────────────────────────────────────────────────────────
 sagittal:
   si_res: 1.0        # SI resampling resolution (mm)
   inplane_res: 1.0   # in-plane (RL, AP) resampling resolution (mm)
   sc_pad: 10         # slices kept = SC extent ± this value (mm)
 
-# ── Shared ───────────────────────────────────────────────────────────────────
+# ── Shared ────────────────────────────────────────────────────────────────────
+channels: 3          # 1 = grayscale, 3 = pseudo-RGB (superior/current/inferior slices)
 with_canal: false    # true = also extract spinal canal (class 1)

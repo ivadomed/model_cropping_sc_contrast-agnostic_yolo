@@ -22,6 +22,8 @@ Usage:
         --exclude-csv bad_gt.csv
 """
 
+from __future__ import annotations
+
 import argparse
 import math
 import os
@@ -344,7 +346,12 @@ def write_failures(out_dir: Path, top: pd.DataFrame, metric: str, col: str,
                       patient_dir / "overview.png", metric, row[col], conf_thresh, rank)
 
 
-def main():
+def run(inference: str | Path, splits_dir: str | Path) -> None:
+    """Find worst-performing volumes from saved predictions."""
+    main(["--inference", str(inference), "--splits-dir", str(splits_dir)])
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Top-K worst volumes per dataset for iou_gt_mean and iou_all_mean",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -365,7 +372,7 @@ def main():
                         help="Metrics to compute (default: iou_3d_mm + 6 gaps + 6 gaps_neg)")
     parser.add_argument("--exclude-csv", default=str(Path.home() / "bad_gt.csv"),
                         help="CSV with columns 'dataset' and 'stem' — matching pairs are excluded (default: ~/bad_gt.csv if it exists)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     pred_root    = Path(args.inference)
     splits_map   = load_splits(Path(args.splits_dir))

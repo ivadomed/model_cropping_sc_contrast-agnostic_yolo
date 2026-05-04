@@ -5,7 +5,7 @@ Build the YOLO dataset from processed slices and per-dataset split YAMLs.
 Iterates all datasplit_<dataset>_seed<N>.yaml in --splits-dir.
 For each file, resolves the dataset name and maps each listed subject to all
 its acquisition folders in processed/<dataset>/<subject>_*/.
-Datasets with role=test in data/datasets.yaml are placed entirely in test,
+Datasets with role=test in configs/datasets.yaml are placed entirely in test,
 bypassing the datasplit yaml (out-of-domain hold-out).
 Creates flat per-slice symlinks (not copies) into datasets/:
   datasets/images/{train,val,test}/<dataset>_<subject>_<acq>_slice_NNN[_rN].png
@@ -32,13 +32,14 @@ Usage:
         --out datasets/10mm_SI_1mm_axial_3ch_sc_only_all_datasets
 """
 
+from __future__ import annotations
+
 import argparse
 import random
 import re
 from pathlib import Path
 from typing import Optional
 
-import pandas as pd
 import yaml
 from tqdm import tqdm
 
@@ -142,65 +143,51 @@ def compute_region_factor(train_slices: list[dict]) -> float:
     return factor
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Build YOLO dataset (flat symlinks) from processed/ + datasplit YAMLs",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument("--config",          default=None, help="YAML config file (configs/dataset.yaml). CLI flags override config values.")
-    parser.add_argument("--splits-dir",      default=None)
-    parser.add_argument("--processed",       default=None)
-    parser.add_argument("--out",             default=None)
-    parser.add_argument("--nc",              type=int, default=1)
-    parser.add_argument("--class-names",     nargs="+", default=["spine"])
-    parser.add_argument("--regions-csv",     default="data/dataset_regions.csv")
-    parser.add_argument("--balance-regions", action="store_true", default=False)
-    parser.add_argument("--no-balance-regions", dest="balance_regions", action="store_false")
-    parser.add_argument("--keep-classes",    nargs="+", type=int, default=None, metavar="ID")
-    parser.add_argument("--dataset-factors", nargs="*", default=None, metavar="DATASET:N")
-    parser.add_argument("--sc-ratio",        type=int, default=None, metavar="N")
-    parser.add_argument("--border-oversample", type=float, default=None, metavar="MM")
-    args = parser.parse_args()
+def run(config: str | Path | None = None,
+        processed: str | Path | None = None,
+        splits_dir: str | Path | None = None,
+        out: str | Path | None = None,
+        nc: int = 1,
+        class_names: list | None = None,
+        balance_regions: bool = False,
+        keep_classes: list | None = None,
+        dataset_factors: dict | None = None,
+        sc_ratio: int | None = None,
+        border_oversample: float | None = None,
+        test_datasets: list | None = None) -> None:
+    """Build YOLO dataset (flat symlinks) from processed/ + datasplit YAMLs."""
+    if class_names is None:
+        class_names = ["spine"]
 
-    # Load config file and apply as defaults (CLI flags take priority)
-    if args.config:
-        cfg = yaml.safe_load(Path(args.config).read_text())
-        if args.splits_dir        is None: args.splits_dir        = cfg.get("splits_dir", "data/datasplits_seed50")
-        if args.sc_ratio          is None: args.sc_ratio          = cfg.get("sc_ratio")
-        if args.border_oversample is None: args.border_oversample = cfg.get("border_oversample_mm")
-        if args.dataset_factors   is None:
-            factors_dict = cfg.get("dataset_factors") or {}
-            args.dataset_factors = [f"{k}:{v}" for k, v in factors_dict.items()]
-    if args.splits_dir      is None: args.splits_dir      = "data/datasplits_seed50"
-    if args.dataset_factors is None: args.dataset_factors = []
+    if config:
+        cfg = yaml.safe_load(Path(config).read_text())
+        if sc_ratio         is None: sc_ratio         = cfg.get("sc_ratio")
+        if border_oversample is None: border_oversample = cfg.get("border_oversample_mm")
+        if dataset_factors  is None:
+            dataset_factors = cfg.get("dataset_factors") or {}
 
-    assert not args.balance_regions or Path(args.regions_csv).exists(), \
-        f"--regions-csv not found: {args.regions_csv}"
+    if splits_dir   is None: splits_dir   = "data/datasplits_seed50"
+    if dataset_factors is None: dataset_factors = {}
 
-    dataset_factors = {k: float(v) for k, v in (f.split(":") for f in args.dataset_factors)}
     if dataset_factors:
         print(f"Dataset factors: {dataset_factors}")
 
-    regions = {}
-    if Path(args.regions_csv).exists():
-        df = pd.read_csv(args.regions_csv)
-        regions = dict(zip(df["dataset"], df["region"]))
-
-    # Datasets with role=test go entirely to test (out-of-domain hold-out)
-    _registry_path = Path(__file__).parent.parent / "data" / "datasets.yaml"
+    _registry_path = Path(__file__).parent.parent / "configs" / "datasets.yaml"
     _registry = yaml.safe_load(_registry_path.read_text())["datasets"]
-    test_only = {d["name"] for d in _registry if d.get("role") == "test"}
-    if test_only:
-        print(f"Test-only datasets (role=test): {sorted(test_only)}")
+    regions = {d["name"]: d.get("region") or "unknown" for d in _registry}
 
-    processed_dir = Path(args.processed)
-    out_dir       = Path(args.out)
+    test_only = set(test_datasets) if test_datasets else set()
+    if test_only:
+        print(f"Test-only datasets: {sorted(test_only)}")
+
+    processed_dir = Path(processed)
+    out_dir       = Path(out)
 
     for partition in ("train", "val", "test"):
         (out_dir / "images" / partition).mkdir(parents=True, exist_ok=True)
         (out_dir / "labels" / partition).mkdir(parents=True, exist_ok=True)
 
-    split_files = sorted(Path(args.splits_dir).glob("datasplit_*.yaml"))
+    split_files = sorted(Path(splits_dir).glob("datasplit_*.yaml"))
 
     all_slices: dict[str, list[dict]] = {"train": [], "val": [], "test": []}
 
@@ -225,14 +212,13 @@ def main():
                 for stem_dir in find_stem_dirs(dataset_dir, subject):
                     prefix = f"{dataset}_{stem_dir.name}"
                     slices = collect_slices(stem_dir, prefix, region, dataset)
-                    if args.sc_ratio is not None and partition == "train":
+                    if sc_ratio is not None and partition == "train":
                         seed   = hash(stem_dir.name) & 0xFFFFFFFF
-                        slices = subsample_empty_slices(slices, args.sc_ratio, seed)
-                    if args.border_oversample is not None and partition == "train":
-                        mark_border_slices(slices, args.border_oversample, stem_dir)
+                        slices = subsample_empty_slices(slices, sc_ratio, seed)
+                    if border_oversample is not None and partition == "train":
+                        mark_border_slices(slices, border_oversample, stem_dir)
                     all_slices[partition].extend(slices)
 
-    # Test-only datasets: all subjects → test partition, no datasplit yaml needed
     for dataset in sorted(test_only):
         dataset_dir = processed_dir / dataset
         if not dataset_dir.is_dir():
@@ -249,18 +235,16 @@ def main():
         print(f"{dataset} [role=test, {region}]: {n_subjects} subjects → test")
 
     region_factor = 1.0
-    if args.balance_regions:
+    if balance_regions:
         region_factor = compute_region_factor(all_slices["train"])
 
-    # Per-dataset raw slice counts
     raw_counts: dict[str, dict[str, int]] = {"train": {}, "val": {}, "test": {}}
     for partition, slices in all_slices.items():
         for s in slices:
             raw_counts[partition][s["dataset"]] = raw_counts[partition].get(s["dataset"], 0) + 1
 
-    border_factor = 2 if args.border_oversample is not None else 1
+    border_factor = 2 if border_oversample is not None else 1
 
-    # Link all partitions
     counts = {}
     for partition, slices in all_slices.items():
         images_out = out_dir / "images" / partition
@@ -277,20 +261,19 @@ def main():
             def n_copies_fn(s):
                 return 1
 
-        keep = set(args.keep_classes) if args.keep_classes is not None else None
+        keep = set(keep_classes) if keep_classes is not None else None
         counts[partition] = make_symlinks(slices, images_out, labels_out, n_copies_fn, keep)
 
-    names_str = "\n".join(f"  {i}: {n}" for i, n in enumerate(args.class_names))
+    names_str = "\n".join(f"  {i}: {n}" for i, n in enumerate(class_names))
     (out_dir / "dataset.yaml").write_text(
         f"path: {out_dir.resolve()}\n"
         f"train: images/train\n"
         f"val:   images/val\n"
         f"test:  images/test\n"
-        f"\nnc: {args.nc}\n"
+        f"\nnc: {nc}\n"
         f"names:\n{names_str}\n"
     )
 
-    # Final slice counts and SC/BG balance — single pass over train slices
     slices_final: dict[str, int] = {}
     sc_bg_raw    = {"sc": 0, "bg": 0}
     sc_bg_final  = {"sc": 0, "bg": 0}
@@ -308,7 +291,7 @@ def main():
 
     all_datasets = sorted(slices_final)
     build_stats = {
-        "border_oversample_mm": args.border_oversample,
+        "border_oversample_mm": border_oversample,
         "dataset_factors":      {ds: dataset_factors.get(ds, 1.0) for ds in all_datasets},
         "sc_bg_slices_raw":     sc_bg_raw,
         "sc_bg_slices_final":   sc_bg_final,
@@ -323,6 +306,43 @@ def main():
         print(f"  {partition:5s}: {n} slices (with oversampling)")
     print(f"Dataset YAML:      {out_dir / 'dataset.yaml'}")
     print(f"Build stats YAML:  {out_dir / 'build_stats.yaml'}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Build YOLO dataset (flat symlinks) from processed/ + datasplit YAMLs",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--config",          default=None, help="YAML config file (configs/training_dataset.yaml). CLI flags override config values.")
+    parser.add_argument("--splits-dir",      default=None)
+    parser.add_argument("--processed",       default=None)
+    parser.add_argument("--out",             default=None)
+    parser.add_argument("--nc",              type=int, default=1)
+    parser.add_argument("--class-names",     nargs="+", default=["spine"])
+    parser.add_argument("--balance-regions", action="store_true", default=False)
+    parser.add_argument("--no-balance-regions", dest="balance_regions", action="store_false")
+    parser.add_argument("--keep-classes",    nargs="+", type=int, default=None, metavar="ID")
+    parser.add_argument("--dataset-factors", nargs="*", default=None, metavar="DATASET:N")
+    parser.add_argument("--sc-ratio",        type=int, default=None, metavar="N")
+    parser.add_argument("--border-oversample", type=float, default=None, metavar="MM")
+    args = parser.parse_args()
+
+    # Parse dataset-factors CLI list into dict (config loading handled inside run())
+    dataset_factors = None
+    if args.dataset_factors is not None:
+        dataset_factors = {k: float(v) for k, v in (f.split(":") for f in args.dataset_factors)}
+
+    run(config=args.config,
+        processed=args.processed,
+        splits_dir=args.splits_dir,
+        out=args.out,
+        nc=args.nc,
+        class_names=args.class_names,
+        balance_regions=args.balance_regions,
+        keep_classes=args.keep_classes,
+        dataset_factors=dataset_factors,
+        sc_ratio=args.sc_ratio,
+        border_oversample=args.border_oversample)
 
 
 if __name__ == "__main__":

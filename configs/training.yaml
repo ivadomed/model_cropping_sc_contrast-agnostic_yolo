@@ -1,5 +1,7 @@
 # Training config — passed to scripts/train.py via --config
 
+seed: 50
+
 model: yolo26n.pt   # yolo26{n,s,m,l,x}.pt | yolo12*.pt | yolo11*.pt | yolov8*.pt
 epochs: 200
 imgsz: 320
@@ -11,7 +13,7 @@ fraction: 1.0       # fraction of dataset to use (e.g. 0.01 for a quick test)
 
 fl_gamma: 2.0       # focal loss gamma (0.0 = standard BCE)
 
-extra_augment: true # true = MRI albumentations (bias field, invert, affine zoom…)
+extra_augment: false # true = MRI albumentations (bias field, invert, affine zoom…)
 
 wandb_entity: quentin-revillon-neuropoly  # "" = W&B default account
 wandb_project: spine_detection

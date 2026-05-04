@@ -31,6 +31,8 @@ exclude-csv format (two columns, no index):
     dcm-zurich,sub-001
 """
 
+from __future__ import annotations
+
 import argparse
 import re
 from pathlib import Path
@@ -357,7 +359,12 @@ def plot_global_violins(split_dfs: dict, metric: str, title: str, out_path: Path
     print(f"  → {out_path}")
 
 
-def main():
+def run(inference: str | Path, splits_dir: str | Path) -> None:
+    """Plot per-patient metric violin plots from saved predictions."""
+    main(["--inference", str(inference), "--splits-dir", str(splits_dir)])
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Per-patient metric violin plots per dataset",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -387,7 +394,7 @@ def main():
     parser.add_argument("--suffix",     default="",
                         help="Suffix appended to output filename (e.g. _no_nih)")
     parser.add_argument("--dpi",        type=int, default=150)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     pred_root    = Path(args.inference)
     splits_map   = load_splits(Path(args.splits_dir))

@@ -36,6 +36,8 @@ Usage:
         --dataset-yaml datasets/10mm_SI_1mm_axial_3ch_sc_and_canal/dataset.yaml
 """
 
+from __future__ import annotations
+
 import argparse
 import os
 import random
@@ -143,64 +145,46 @@ def patch_albumentations_mri() -> None:
     Albumentations.__init__ = _patched_init
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Train YOLO for spinal cord detection on axial MRI slices",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument("--config",        default=None, help="YAML config file (configs/training.yaml). CLI flags override config values.")
-    parser.add_argument("--dataset-yaml",  default=None)
-    parser.add_argument("--run-id",        required=True)
-    parser.add_argument("--model",         default=None)
-    parser.add_argument("--epochs",        type=int,   default=None)
-    parser.add_argument("--imgsz",         type=int,   default=None)
-    parser.add_argument("--batch",         type=int,   default=None)
-    parser.add_argument("--device",        default=None)
-    parser.add_argument("--patience",      type=int,   default=None)
-    parser.add_argument("--workers",       type=int,   default=None)
-    parser.add_argument("--fraction",      type=float, default=None)
-    parser.add_argument("--resume",        action="store_true")
-    parser.add_argument("--no-augment",    action="store_true")
-    parser.add_argument("--no-extra-augment", action="store_true")
-    parser.add_argument("--fl-gamma",      type=float, default=None)
-    parser.add_argument("--no-wandb",      action="store_true")
-    parser.add_argument("--wandb-project", default=None)
-    parser.add_argument("--wandb-entity",  default=None)
-    args = parser.parse_args()
+def run(config: str | Path | None = None,
+        dataset_yaml: str | Path | None = None,
+        run_dir: str | Path | None = None,
+        no_wandb: bool = False,
+        no_augment: bool = False,
+        no_extra_augment: bool = False) -> None:
+    """Train YOLO model. All hyper-parameters read from config file."""
+    model_name    = "yolo26n.pt"
+    epochs        = 100
+    imgsz         = 320
+    batch         = -1
+    device        = "0"
+    patience      = 100
+    workers       = 8
+    fraction      = 1.0
+    fl_gamma      = 0.0
+    wandb_project = "spine_detection"
+    wandb_entity  = None
 
-    # Load config file and apply as defaults (CLI flags take priority)
-    if args.config:
-        cfg = yaml.safe_load(Path(args.config).read_text())
-        if args.model          is None: args.model          = cfg.get("model", "yolo26n.pt")
-        if args.epochs         is None: args.epochs         = cfg.get("epochs", 100)
-        if args.imgsz          is None: args.imgsz          = cfg.get("imgsz", 320)
-        if args.batch          is None: args.batch          = cfg.get("batch", -1)
-        if args.device         is None: args.device         = str(cfg.get("device", "0"))
-        if args.patience       is None: args.patience       = cfg.get("patience", 100)
-        if args.workers        is None: args.workers        = cfg.get("workers", 8)
-        if args.fraction       is None: args.fraction       = cfg.get("fraction", 1.0)
-        if args.fl_gamma       is None: args.fl_gamma       = cfg.get("fl_gamma", 0.0)
-        if args.wandb_project  is None: args.wandb_project  = cfg.get("wandb_project", "spine_detection")
-        if args.wandb_entity   is None: args.wandb_entity   = cfg.get("wandb_entity")
-        if not args.no_extra_augment:   args.no_extra_augment = not cfg.get("extra_augment", True)
-    # Hard defaults if no config provided
-    if args.model     is None: args.model     = "yolo26n.pt"
-    if args.epochs    is None: args.epochs    = 100
-    if args.imgsz     is None: args.imgsz     = 320
-    if args.batch     is None: args.batch     = -1
-    if args.device    is None: args.device    = "0"
-    if args.patience  is None: args.patience  = 100
-    if args.workers   is None: args.workers   = 8
-    if args.fraction  is None: args.fraction  = 1.0
-    if args.fl_gamma  is None: args.fl_gamma  = 0.0
-    if args.wandb_project is None: args.wandb_project = "spine_detection"
+    if config:
+        cfg = yaml.safe_load(Path(config).read_text())
+        model_name    = cfg.get("model",          model_name)
+        epochs        = cfg.get("epochs",         epochs)
+        imgsz         = cfg.get("imgsz",          imgsz)
+        batch         = cfg.get("batch",          batch)
+        device        = str(cfg.get("device",     device))
+        patience      = cfg.get("patience",       patience)
+        workers       = cfg.get("workers",        workers)
+        fraction      = cfg.get("fraction",       fraction)
+        fl_gamma      = cfg.get("fl_gamma",       fl_gamma)
+        wandb_project = cfg.get("wandb_project",  wandb_project)
+        wandb_entity  = cfg.get("wandb_entity",   wandb_entity)
+        if not no_extra_augment:
+            no_extra_augment = not cfg.get("extra_augment", True)
 
     seed = int(os.environ.get("SEED", 50))
     random.seed(seed)
     np.random.seed(seed)
 
-    # Load pipeline + dataset build context for W&B logging
-    dataset_dir = Path(args.dataset_yaml).parent
+    dataset_dir = Path(dataset_yaml).parent
     pipeline_config, build_stats = {}, {}
     for fname, target in [("pipeline_config.yaml", pipeline_config),
                            ("build_stats.yaml",     build_stats)]:
@@ -209,56 +193,52 @@ def main():
             import yaml as _yaml
             target.update(_yaml.safe_load(p.read_text()) or {})
 
-    if args.no_wandb:
+    if no_wandb:
         SETTINGS["wandb"] = False
         os.environ["WANDB_MODE"] = "disabled"
     else:
         SETTINGS["wandb"] = True
-        # wb.py is imported once at Python startup — if SETTINGS["wandb"] was False then,
-        # wb=None is frozen. Force reload so the assert passes and callbacks are registered.
         import importlib
         import ultralytics.utils.callbacks.wb as _wb_mod
         importlib.reload(_wb_mod)
         import wandb
         wb_run = wandb.init(
-            project=args.wandb_project,
-            entity=args.wandb_entity,
-            name=args.run_id,
+            project=wandb_project,
+            entity=wandb_entity,
+            name=Path(run_dir).name,
             tags=["yolo", "spine", "mri"],
             config={
-                "model":    args.model,
-                "dataset":  args.dataset_yaml,
-                "imgsz":    args.imgsz,
-                "batch":    args.batch,
-                "epochs":   args.epochs,
-                "patience": args.patience,
+                "model":    model_name,
+                "dataset":  str(dataset_yaml),
+                "imgsz":    imgsz,
+                "batch":    batch,
+                "epochs":   epochs,
+                "patience": patience,
                 "seed":     seed,
-                "augment":  not args.no_augment,
-                "fl_gamma": args.fl_gamma,
+                "augment":  not no_augment,
+                "fl_gamma": fl_gamma,
                 "aug": {
-                    # ── YOLO built-in ──────────────────────────────
-                    "yolo_brightness":          0.0 if args.no_augment else 0.15,
-                    "yolo_rotation_deg":        0.0 if args.no_augment else 15.0,
-                    "yolo_scale":               0.0 if args.no_augment else 0.2,
-                    "yolo_translate":           0.0 if args.no_augment else 0.1,
-                    "yolo_flip_lr":             0.0 if args.no_augment else 0.5,
-                    "yolo_flip_ud":             0.0 if args.no_augment else 0.5,
-                    # ── Albumentations ─────────────────────────────
-                    "affine_p":                 0.0 if args.no_augment else 0.2,
+                    "yolo_brightness":          0.0 if no_augment else 0.15,
+                    "yolo_rotation_deg":        0.0 if no_augment else 15.0,
+                    "yolo_scale":               0.0 if no_augment else 0.2,
+                    "yolo_translate":           0.0 if no_augment else 0.1,
+                    "yolo_flip_lr":             0.0 if no_augment else 0.5,
+                    "yolo_flip_ud":             0.0 if no_augment else 0.5,
+                    "affine_p":                 0.0 if no_augment else 0.2,
                     "affine_scale_range":       [0.25, 4.0],
                     "affine_translate_range":   [-0.3, 0.3],
-                    "gauss_noise_p":            0.0 if args.no_augment else 0.1,
+                    "gauss_noise_p":            0.0 if no_augment else 0.1,
                     "gauss_noise_std_range":    [0.01, 0.03],
-                    "gaussian_blur_p":          0.0 if args.no_augment else 0.2,
+                    "gaussian_blur_p":          0.0 if no_augment else 0.2,
                     "gaussian_blur_limit":      [3, 7],
-                    "downscale_p":              0.0 if args.no_augment else 0.25,
+                    "downscale_p":              0.0 if no_augment else 0.25,
                     "downscale_scale_range":    [0.25, 1.0],
-                    "random_gamma_p":           0.0 if args.no_augment else 0.1,
+                    "random_gamma_p":           0.0 if no_augment else 0.1,
                     "random_gamma_limit":       [80, 120],
-                    "bias_field_p":             0.0 if args.no_augment else 0.2,
+                    "bias_field_p":             0.0 if no_augment else 0.2,
                     "bias_field_coef_range":    [-0.4, 0.4],
-                    "pixel_invert_p":           0.0 if args.no_augment else 0.25,
-                    "contrast_p":               0.0 if args.no_augment else 0.15,
+                    "pixel_invert_p":           0.0 if no_augment else 0.25,
+                    "contrast_p":               0.0 if no_augment else 0.15,
                     "contrast_limit":           [-0.3, 0.3],
                 },
                 "pipeline": pipeline_config,
@@ -272,17 +252,15 @@ def main():
             },
         )
 
-    if not args.no_wandb:
-        # Save W&B run ID so metrics.py can resume this exact run later
-        wandb_id_file = Path("checkpoints") / args.run_id / "wandb_run_id.txt"
-        wandb_id_file.parent.mkdir(parents=True, exist_ok=True)
+    if not no_wandb:
+        wandb_id_file = Path(run_dir) / "wandb_run_id.txt"
         wandb_id_file.write_text(wb_run.id)
 
-    if not args.no_augment and not args.no_extra_augment:
+    if not no_augment and not no_extra_augment:
         patch_albumentations_mri()
 
-    model = YOLO(args.model)
-    if args.fl_gamma > 0.0:
+    model = YOLO(model_name)
+    if fl_gamma > 0.0:
         model.add_callback("on_train_start", inject_focal_loss)
 
     aug = dict(
@@ -290,7 +268,7 @@ def main():
         degrees=0.0, scale=0.0, shear=0.0, perspective=0.0, translate=0.0,
         fliplr=0.0, flipud=0.0,
         mosaic=0.0, copy_paste=0.0,
-    ) if args.no_augment else dict(
+    ) if no_augment else dict(
         hsv_h=0.0, hsv_s=0.0, hsv_v=0.15,
         degrees=15.0, scale=0.2, shear=0.0, perspective=0.0, translate=0.1,
         fliplr=0.5, flipud=0.5,
@@ -298,17 +276,17 @@ def main():
     )
 
     results = model.train(
-        resume=args.resume,
-        data=args.dataset_yaml,
-        epochs=args.epochs,
-        imgsz=args.imgsz,
-        batch=args.batch,
-        device=args.device,
-        project=str(Path("checkpoints").resolve()),
-        name=args.run_id,
-        patience=args.patience,
-        workers=args.workers,
-        fraction=args.fraction,
+        resume=False,
+        data=str(dataset_yaml),
+        epochs=epochs,
+        imgsz=imgsz,
+        batch=batch,
+        device=device,
+        project=str(Path(run_dir).resolve()),
+        name="checkpoints",
+        patience=patience,
+        workers=workers,
+        fraction=fraction,
         seed=seed,
         save=True,
         val=True,
@@ -318,6 +296,24 @@ def main():
 
     save_dir = Path(results.save_dir) if results is not None else Path(model.trainer.save_dir)
     print(f"\nBest weights: {save_dir / 'weights' / 'best.pt'}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Train YOLO for spinal cord detection on axial MRI slices",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--config",        default=None, help="YAML config file (configs/training.yaml). CLI flags override config values.")
+    parser.add_argument("--dataset-yaml",  default=None)
+    parser.add_argument("--run-dir",       required=True, help="Run directory (runs/<TS>). Checkpoints saved to <run-dir>/checkpoints/.")
+    parser.add_argument("--no-augment",    action="store_true")
+    parser.add_argument("--no-extra-augment", action="store_true")
+    parser.add_argument("--no-wandb",      action="store_true")
+    args = parser.parse_args()
+
+    run(config=args.config, dataset_yaml=args.dataset_yaml, run_dir=args.run_dir,
+        no_wandb=args.no_wandb, no_augment=args.no_augment,
+        no_extra_augment=args.no_extra_augment)
 
 
 if __name__ == "__main__":

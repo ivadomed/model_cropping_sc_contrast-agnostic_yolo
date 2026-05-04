@@ -49,6 +49,8 @@ Usage:
         --processed processed/10mm_SI_1mm_axial --split val --metrics iou_3d_mm iou_3d
 """
 
+from __future__ import annotations
+
 import argparse
 import re
 import sys
@@ -641,7 +643,15 @@ def build_report(df: pd.DataFrame, conf_thresh: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def main():
+def run(inference: str | Path, splits_dir: str | Path, processed: str | Path | None = None) -> None:
+    """Compute per-slice and per-patient metrics from saved predictions."""
+    argv = ["--inference", str(inference), "--splits-dir", str(splits_dir)]
+    if processed is not None:
+        argv += ["--processed", str(processed)]
+    main(argv)
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Compute per-slice and per-patient metrics at all confidence thresholds",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -664,7 +674,7 @@ def main():
                         help="Patch only these bbox metrics in existing patient.csv (skips slices.csv)")
     parser.add_argument("--datasets",      nargs="+", default=None,
                         help="Restrict to these dataset names (default: all)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     pred_root  = Path(args.inference)
     splits_map = load_splits(Path(args.splits_dir))

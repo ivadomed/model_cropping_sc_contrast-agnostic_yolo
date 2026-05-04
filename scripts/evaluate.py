@@ -38,6 +38,8 @@ Usage:
         --processed processed/10mm_SI_1mm_axial
 """
 
+from __future__ import annotations
+
 import argparse
 import re
 import sys
@@ -270,6 +272,50 @@ def render_overlays(pred_root: Path, processed_dir: Path = None) -> None:
                 str(out_png_dir / png_src.name))
 
 
+def run(checkpoint: str | Path, processed: str | Path, out: str | Path,
+        splits_dir: str | Path | None = None, conf: float = CONF_THRESH) -> None:
+    """Run YOLO inference on all patients in processed/ → out/."""
+    processed_dir = Path(processed)
+    pred_root     = Path(out)
+
+    model      = YOLO(str(checkpoint))
+    batch_size = auto_batch(model, conf)
+
+    patients = []
+    for dataset_dir in sorted(processed_dir.iterdir()):
+        if not dataset_dir.is_dir():
+            continue
+        for patient_dir in sorted(dataset_dir.iterdir()):
+            if not (patient_dir / "png").is_dir():
+                continue
+            patients.append((dataset_dir.name, patient_dir))
+
+    print(f"Running inference on {len(patients)} patients → {pred_root}")
+
+    failed: list[tuple[str, str, str]] = []
+    skipped = 0
+    for dataset, patient_dir in tqdm(patients, desc="Patients", unit="pat"):
+        pred_dir = pred_root / "predictions" / dataset / patient_dir.name
+        if (pred_dir / "meta.yaml").exists():
+            skipped += 1
+            continue
+        try:
+            infer_patient(model, patient_dir, pred_dir, conf, batch_size, True)
+        except Exception as e:
+            failed.append((dataset, patient_dir.name, str(e)))
+
+    print(f"Predictions saved to: {pred_root}"
+          + (f"  ({skipped} already done, skipped)" if skipped else ""))
+
+    if failed:
+        log_path = pred_root / "failed_patients.log"
+        with open(log_path, "w") as f:
+            f.write("dataset\tpatient\terror\n")
+            for ds, pat, err in failed:
+                f.write(f"{ds}\t{pat}\t{err}\n")
+        print(f"WARNING: {len(failed)}/{len(patients)} patients failed — see {log_path}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="YOLO inference on processed/ slices → predictions/<run-id>/",
@@ -300,21 +346,19 @@ def main():
 
     if args.viz_only:
         assert args.run_id is not None, "--run-id is required with --viz-only"
-    else:
-        assert args.checkpoint is not None, "--checkpoint is required unless --viz-only is set"
-        if args.run_id is None:
-            base = Path(args.checkpoint).parent.parent.name
-            args.run_id = base + "_flipx" if args.flip_x else base
+        render_overlays(Path(args.out) / args.run_id, processed_dir)
+        return
+
+    assert args.checkpoint is not None, "--checkpoint is required unless --viz-only is set"
+    if args.run_id is None:
+        base = Path(args.checkpoint).parent.parent.name
+        args.run_id = base + "_flipx" if args.flip_x else base
 
     pred_root = Path(args.out) / args.run_id
 
-    if args.viz_only:
-        render_overlays(pred_root, processed_dir)
-        return
-
-    split_subjects = None
+    split_subjects_set = None
     if args.split:
-        split_subjects = load_split_subjects(Path(args.splits_dir), args.split)
+        split_subjects_set = load_split_subjects(Path(args.splits_dir), args.split)
 
     model = YOLO(args.checkpoint)
     batch_size = auto_batch(model, args.conf) if args.batch == -1 else args.batch
@@ -328,17 +372,17 @@ def main():
         for patient_dir in sorted(dataset_dir.iterdir()):
             if not (patient_dir / "png").is_dir():
                 continue
-            if split_subjects is not None:
+            if split_subjects_set is not None:
                 m = re.match(r"(sub-[^_]+)", patient_dir.name)
                 subject = m.group(1) if m else patient_dir.name
-                if (dataset_dir.name, subject) not in split_subjects:
+                if (dataset_dir.name, subject) not in split_subjects_set:
                     continue
             patients.append((dataset_dir.name, patient_dir))
 
     print(f"Running inference on {len(patients)} patients → {pred_root}"
           + (f" [{args.split}]" if args.split else ""))
 
-    failed: list[tuple[str, str, str]] = []  # (dataset, patient, error)
+    failed: list[tuple[str, str, str]] = []
     skipped = 0
     for dataset, patient_dir in tqdm(patients, desc="Patients", unit="pat"):
         pred_dir = pred_root / "predictions" / dataset / patient_dir.name

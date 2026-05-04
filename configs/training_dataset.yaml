@@ -1,9 +1,18 @@
 # Dataset build config — passed to scripts/build_dataset.py via --config
 
-splits_dir: data/datasplits_seed50
+seed: 50
+
+# Train/val/test split fractions (must sum to 1.0)
+train: 0.5
+val:   0.2
+test:  0.3
+
+# Datasets reserved for out-of-domain testing only (all subjects → test partition).
+# These supplement datasets already marked role: test in configs/datasets.yaml.
+test_datasets: null
+  # - sct-testing-large
 
 # Per-dataset slice multipliers (train only). Omit a dataset to use ×1.
-# Format: dataset_name: factor
 dataset_factors: {}
   # lumbar-epfl: 7
   # lumbar-vanderbilt: 7
@@ -14,8 +23,4 @@ dataset_factors: {}
 border_oversample_mm: null
 
 # SC/background balance per volume in train (null = disabled)
-# Keeps all SC slices, subsamples empty slices to sc_ratio × n_sc
 sc_ratio: null
-
-# Sagittal only — SC/non-SC balance ratio (null = disabled)
-sagittal_sc_ratio: 3

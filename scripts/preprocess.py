@@ -55,6 +55,8 @@ Usage:
     python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --datasets spider-challenge-2023
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path
@@ -74,9 +76,9 @@ from utils import (
     reorient_to_las, seg_to_yolo_bbox, write_bbox_3d,
 )
 
-# Dataset registry — single source of truth is data/datasets.yaml
+# Dataset registry — single source of truth is configs/datasets.yaml
 _REGISTRY = yaml.safe_load(
-    (Path(__file__).parent.parent / "data" / "datasets.yaml").read_text()
+    (Path(__file__).parent.parent / "configs" / "datasets.yaml").read_text()
 )["datasets"]
 DATASET_MASK_SUFFIX  = {d["name"]: d["mask_suffix"] for d in _REGISTRY}
 DATASET_LABELS_DIR   = {d["name"]: d["labels_dir"] for d in _REGISTRY if "labels_dir" in d}
@@ -338,79 +340,53 @@ def update_meta_resolutions(processed_dir: Path) -> None:
     print(f"Done — updated: {counts['updated']}  skipped (already had fields): {counts['skipped']}")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="BIDS raw → processed_{res}mm_SI/ (LAS slices resampled on SI + YOLO labels)",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument("--config",      default=None, help="YAML config file (configs/preprocess.yaml). CLI flags override config values.")
-    parser.add_argument("--plane",       default=None, choices=["axial", "sagittal"])
-    parser.add_argument("--si-res",      type=float, default=None)
-    parser.add_argument("--axial-res",   type=float, default=None)
-    parser.add_argument("--rl-res",      type=float, default=None)
-    parser.add_argument("--raw",         default="data/raw")
-    parser.add_argument("--out",         default=None)
-    parser.add_argument("--datasets",    nargs="+", default=None)
-    parser.add_argument("--3ch",         action="store_true", dest="three_ch")
-    parser.add_argument("--with-canal",  action="store_true", dest="with_canal")
-    parser.add_argument("--sc-pad",      type=float, default=None, dest="sc_pad_mm")
-    parser.add_argument("--update-meta", action="store_true")
-    args = parser.parse_args()
-
-    # Load config file and apply as defaults (CLI flags take priority)
-    if args.config:
-        cfg = yaml.safe_load(Path(args.config).read_text())
-        plane = args.plane or cfg.get("plane", "axial")
+def run(config: str | Path | None = None,
+        raw: str | Path = "data/raw",
+        out: str | Path | None = None,
+        datasets: list | None = None,
+        plane: str | None = None,
+        si_res: float | None = None,
+        axial_res: float | None = None,
+        rl_res: float | None = None,
+        three_ch: bool = False,
+        with_canal: bool = False,
+        sc_pad_mm: float | None = None) -> Path:
+    """Preprocess raw BIDS data to processed slices. Returns the output directory path."""
+    if config:
+        cfg = yaml.safe_load(Path(config).read_text())
+        plane     = plane or cfg.get("plane", "axial")
         plane_cfg = cfg.get(plane, {})
-        if args.si_res    is None: args.si_res    = plane_cfg.get("si_res")
-        if args.axial_res is None: args.axial_res = plane_cfg.get("inplane_res")
-        if args.rl_res    is None: args.rl_res    = plane_cfg.get("rl_res")
-        if not args.three_ch:      args.three_ch  = cfg.get("three_ch", False)
-        if not args.with_canal:    args.with_canal = cfg.get("with_canal", False)
-        if args.sc_pad_mm is None: args.sc_pad_mm = plane_cfg.get("sc_pad")
-        args.plane = plane
-    else:
-        if args.plane is None:
-            args.plane = "axial"
+        if si_res    is None: si_res    = plane_cfg.get("si_res")
+        if axial_res is None: axial_res = plane_cfg.get("inplane_res")
+        if rl_res    is None: rl_res    = plane_cfg.get("rl_res")
+        if not three_ch:      three_ch  = cfg.get("three_ch", False)
+        if not with_canal:    with_canal = cfg.get("with_canal", False)
+        if sc_pad_mm is None: sc_pad_mm = plane_cfg.get("sc_pad")
+        if out is None:       out       = cfg.get("out")
+    if plane is None:
+        plane = "axial"
 
-    if args.update_meta:
-        assert args.out, "--out is required with --update-meta"
-        update_meta_resolutions(Path(args.out))
-        return
+    assert si_res is not None, "si_res is required (set in config or via --si-res)"
+    assert sc_pad_mm is None or plane == "sagittal", "--sc-pad is only valid with sagittal plane"
 
-    assert args.si_res is not None, "--si-res is required"
-    si_res     = args.si_res
-    axial_res  = args.axial_res
-    rl_res     = args.rl_res
-    three_ch   = args.three_ch
-    with_canal = args.with_canal
-    plane      = args.plane
-    sc_pad_mm  = args.sc_pad_mm
-    assert sc_pad_mm is None or plane == "sagittal", "--sc-pad is only valid with --plane sagittal"
-    if args.out:
-        processed_dir = str(Path(args.out))
-    else:
+    if out is None:
         name = f"{si_res:g}mm_SI"
-        if axial_res is not None:
-            name += f"_{axial_res:g}mm_axial"
-        if rl_res is not None:
-            name += f"_{rl_res:g}mm_RL"
-        if three_ch:
-            name += "_3ch"
-        if plane == "sagittal":
-            name += "_sagittal"
-        if sc_pad_mm is not None:
-            name += f"_sc{sc_pad_mm:g}mm"
-        if with_canal:
-            name += "_sc_and_canal"
-        processed_dir = str(Path("processed") / name)
+        if axial_res  is not None: name += f"_{axial_res:g}mm_axial"
+        if rl_res     is not None: name += f"_{rl_res:g}mm_RL"
+        if three_ch:               name += "_3ch"
+        if plane == "sagittal":    name += "_sagittal"
+        if sc_pad_mm is not None:  name += f"_sc{sc_pad_mm:g}mm"
+        if with_canal:             name += "_sc_and_canal"
+        out = Path("processed") / name
+
+    processed_dir = str(Path(out))
 
     worker_args = []
-    skip_log_entries = []   # {"dataset", "subject", "reason"} — written to skipped.log at the end
-    for dataset_dir in sorted(Path(args.raw).iterdir()):
+    skip_log_entries = []
+    for dataset_dir in sorted(Path(raw).iterdir()):
         if not dataset_dir.is_dir():
             continue
-        if args.datasets and dataset_dir.name not in args.datasets:
+        if datasets and dataset_dir.name not in datasets:
             continue
         pairs, missing = find_pairs(dataset_dir, with_canal=with_canal)
         print(f"{dataset_dir.name}: {len(pairs)} pairs  ({len(missing)} missing NIfTI)")
@@ -425,8 +401,8 @@ def main():
         )
 
     if not worker_args:
-        print("No pairs found. Check --raw path.")
-        return
+        print("No pairs found. Check raw path.")
+        return Path(processed_dir)
 
     counts = {"processed": 0, "already_processed": 0, "no_sc_voxels": 0}
     for args_tuple in tqdm(worker_args, desc="Volumes", unit="vol"):
@@ -450,6 +426,38 @@ def main():
             for e in skip_log_entries:
                 f.write(f"{e['dataset']}\t{e['subject']}\t{e['reason']}\n")
         print(f"Skipped subjects logged → {log_path}  ({len(skip_log_entries)} entries)")
+
+    return Path(processed_dir)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="BIDS raw → processed_{res}mm_SI/ (LAS slices resampled on SI + YOLO labels)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--config",      default=None, help="YAML config file (configs/preprocess.yaml). CLI flags override config values.")
+    parser.add_argument("--plane",       default=None, choices=["axial", "sagittal"])
+    parser.add_argument("--si-res",      type=float, default=None)
+    parser.add_argument("--axial-res",   type=float, default=None)
+    parser.add_argument("--rl-res",      type=float, default=None)
+    parser.add_argument("--raw",         default="data/raw")
+    parser.add_argument("--out",         default=None)
+    parser.add_argument("--datasets",    nargs="+", default=None)
+    parser.add_argument("--3ch",         action="store_true", dest="three_ch")
+    parser.add_argument("--with-canal",  action="store_true", dest="with_canal")
+    parser.add_argument("--sc-pad",      type=float, default=None, dest="sc_pad_mm")
+    parser.add_argument("--update-meta", action="store_true")
+    args = parser.parse_args()
+
+    if args.update_meta:
+        assert args.out, "--out is required with --update-meta"
+        update_meta_resolutions(Path(args.out))
+        return
+
+    run(config=args.config, raw=args.raw, out=args.out, datasets=args.datasets,
+        plane=args.plane, si_res=args.si_res, axial_res=args.axial_res,
+        rl_res=args.rl_res, three_ch=args.three_ch, with_canal=args.with_canal,
+        sc_pad_mm=args.sc_pad_mm)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,89 @@
+meta:
+  name: inspired
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/inspired
+  url_ssh: git@data.neuro.polymtl.ca:datasets/inspired
+  commit: f72fdab2e9f51a025a77046eee6d2f71041d3694
+  seed: 50
+train:
+- sub-zurichDCM019
+- sub-zurichDCM003
+- sub-zurichSCI010
+- sub-zurichHC001
+- sub-torontoHC014
+- sub-torontoDCM021
+- sub-torontoHC006
+- sub-zurichDCM007
+- sub-zurichDCM010
+- sub-zurichDCM016
+- sub-torontoDCM006
+- sub-zurichDCM006
+- sub-zurichDCM024
+- sub-zurichDCM001
+- sub-torontoDCM005
+- sub-torontoDCM018
+- sub-torontoHC013
+- sub-zurichDCM018
+- sub-zurichDCM023
+- sub-torontoHC012
+- sub-torontoHC004
+- sub-zurichDCM004
+- sub-torontoHC002
+- sub-zurichSCI016
+- sub-torontoHC009
+- sub-torontoDCM007
+- sub-zurichSCI014
+- sub-torontoHC011
+- sub-zurichDCM021
+- sub-zurichSCI005
+- sub-zurichDCM014
+- sub-torontoHC015
+- sub-torontoDCM015
+- sub-torontoDCM023
+- sub-zurichDCM008
+- sub-torontoDCM017
+- sub-torontoSCI012
+- sub-zurichSCI012
+- sub-zurichSCI007
+- sub-zurichHC009
+val:
+- sub-torontoDCM010
+- sub-zurichSCI015
+- sub-torontoHC005
+- sub-zurichDCM020
+- sub-zurichHC010
+- sub-torontoDCM001
+- sub-zurichHC007
+- sub-zurichDCM012
+- sub-zurichDCM022
+- sub-zurichHC005
+- sub-zurichHC003
+- sub-zurichSCI002
+- sub-zurichSCI013
+- sub-torontoDCM009
+- sub-zurichSCI017
+- sub-torontoHC016
+test:
+- sub-zurichHC004
+- sub-zurichDCM009
+- sub-torontoHC010
+- sub-zurichHC002
+- sub-torontoDCM008
+- sub-zurichSCI003
+- sub-torontoHC001
+- sub-zurichSCI008
+- sub-zurichSCI004
+- sub-torontoDCM022
+- sub-zurichDCM015
+- sub-torontoHC007
+- sub-zurichSCI011
+- sub-torontoSCI003
+- sub-zurichDCM011
+- sub-zurichSCI006
+- sub-torontoDCM019
+- sub-zurichDCM013
+- sub-zurichHC008
+- sub-zurichDCM002
+- sub-zurichDCM017
+- sub-zurichDCM005
+- sub-zurichSCI001

@@ -1,0 +1,19 @@
+meta:
+  name: uqueensland_mouse
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/uqueensland_mouse
+  url_ssh: git@data.neuro.polymtl.ca:datasets/uqueensland_mouse
+  commit: 0c2a4e923b02b2e20a096342fffad2b4f2d276a4
+  seed: 50
+train:
+- sub-442
+- sub-347
+- sub-EAE3
+- sub-439
+val:
+- sub-437
+- sub-441
+test:
+- sub-438
+- sub-440
+- sub-67

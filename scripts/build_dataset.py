@@ -5,6 +5,8 @@ Build the YOLO dataset from processed slices and per-dataset split YAMLs.
 Iterates all datasplit_<dataset>_seed<N>.yaml in --splits-dir.
 For each file, resolves the dataset name and maps each listed subject to all
 its acquisition folders in processed/<dataset>/<subject>_*/.
+Datasets with role=test in data/datasets.yaml are placed entirely in test,
+bypassing the datasplit yaml (out-of-domain hold-out).
 Creates flat per-slice symlinks (not copies) into datasets/:
   datasets/images/{train,val,test}/<dataset>_<subject>_<acq>_slice_NNN[_rN].png
   datasets/labels/{train,val,test}/<dataset>_<subject>_<acq>_slice_NNN[_rN].txt
@@ -180,6 +182,13 @@ def main():
         df = pd.read_csv(args.regions_csv)
         regions = dict(zip(df["dataset"], df["region"]))
 
+    # Datasets with role=test go entirely to test (out-of-domain hold-out)
+    _registry_path = Path(__file__).parent.parent / "data" / "datasets.yaml"
+    _registry = yaml.safe_load(_registry_path.read_text())["datasets"]
+    test_only = {d["name"] for d in _registry if d.get("role") == "test"}
+    if test_only:
+        print(f"Test-only datasets (role=test): {sorted(test_only)}")
+
     processed_dir = Path(args.processed)
     out_dir       = Path(args.out)
 
@@ -193,6 +202,9 @@ def main():
 
     for split_yaml in split_files:
         dataset     = dataset_name_from_yaml(split_yaml)
+        if dataset in test_only:
+            print(f"  skip {dataset} (role=test, handled separately)")
+            continue
         dataset_dir = processed_dir / dataset
         if not dataset_dir.is_dir():
             print(f"  skip {dataset} (no processed dir)")
@@ -215,6 +227,22 @@ def main():
                     if args.border_oversample is not None and partition == "train":
                         mark_border_slices(slices, args.border_oversample, stem_dir)
                     all_slices[partition].extend(slices)
+
+    # Test-only datasets: all subjects → test partition, no datasplit yaml needed
+    for dataset in sorted(test_only):
+        dataset_dir = processed_dir / dataset
+        if not dataset_dir.is_dir():
+            print(f"  skip {dataset} (role=test, no processed dir)")
+            continue
+        region = regions.get(dataset, "unknown")
+        n_subjects = 0
+        for stem_dir in sorted(dataset_dir.iterdir()):
+            if not stem_dir.is_dir():
+                continue
+            prefix = f"{dataset}_{stem_dir.name}"
+            all_slices["test"].extend(collect_slices(stem_dir, prefix, region, dataset))
+            n_subjects += 1
+        print(f"{dataset} [role=test, {region}]: {n_subjects} subjects → test")
 
     region_factor = 1.0
     if args.balance_regions:

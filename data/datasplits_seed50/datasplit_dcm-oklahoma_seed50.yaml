@@ -1,0 +1,52 @@
+meta:
+  name: dcm-oklahoma
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/dcm-oklahoma
+  url_ssh: git@data.neuro.polymtl.ca:datasets/dcm-oklahoma
+  commit: a8f9c679fba98d0ecf2df05f29b9ebf391c35d1c
+  seed: 50
+train:
+- sub-CSM138
+- sub-CSM065
+- sub-CSM048
+- sub-CSM028
+- sub-CSM125
+- sub-CSM049
+- sub-CSM070
+- sub-CSM135
+- sub-CSM148
+- sub-CSM094
+- sub-CSM020
+- sub-CSM081
+- sub-CSM137
+- sub-CSM092
+- sub-CSM053
+- sub-CSM127
+- sub-CSM142
+- sub-CSM130
+- sub-CSM055
+- sub-CSM073
+- sub-CSM087
+val:
+- sub-CSM029
+- sub-CSM036
+- sub-CSM046
+- sub-CSM050
+- sub-CSM099
+- sub-CSM030
+- sub-CSM093
+- sub-CSM050f
+test:
+- sub-CSM032
+- sub-CSM100
+- sub-CSM129
+- sub-CSM057
+- sub-CSM075
+- sub-CSM128
+- sub-CSM033
+- sub-CSM078
+- sub-CSM103
+- sub-CSM061
+- sub-CSM084
+- sub-CSM068
+- sub-CSM124

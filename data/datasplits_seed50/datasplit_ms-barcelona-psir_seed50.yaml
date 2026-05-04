@@ -1,0 +1,72 @@
+meta:
+  name: ms-barcelona-psir
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/ms-barcelona-psir
+  url_ssh: git@data.neuro.polymtl.ca:datasets/ms-barcelona-psir
+  commit: 86e499b93162cba4800341d4a891111409a70268
+  seed: 50
+train:
+- sub-067
+- sub-003
+- sub-012
+- sub-020
+- sub-057
+- sub-066
+- sub-065
+- sub-030
+- sub-040
+- sub-027
+- sub-029
+- sub-063
+- sub-002
+- sub-062
+- sub-017
+- sub-025
+- sub-064
+- sub-035
+- sub-033
+- sub-019
+- sub-068
+- sub-043
+- sub-046
+- sub-004
+- sub-045
+- sub-014
+- sub-026
+- sub-009
+- sub-011
+- sub-008
+- sub-001
+val:
+- sub-051
+- sub-038
+- sub-039
+- sub-050
+- sub-028
+- sub-059
+- sub-005
+- sub-013
+- sub-053
+- sub-060
+- sub-052
+- sub-007
+test:
+- sub-023
+- sub-010
+- sub-058
+- sub-037
+- sub-047
+- sub-015
+- sub-021
+- sub-036
+- sub-006
+- sub-022
+- sub-054
+- sub-031
+- sub-048
+- sub-016
+- sub-044
+- sub-024
+- sub-018
+- sub-061
+- sub-032

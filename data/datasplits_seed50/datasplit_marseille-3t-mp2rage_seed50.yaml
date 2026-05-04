@@ -1,0 +1,37 @@
+meta:
+  name: marseille-3t-mp2rage
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/marseille-3t-mp2rage
+  url_ssh: git@data.neuro.polymtl.ca:datasets/marseille-3t-mp2rage
+  commit: 372955118e04e6b2dd5e85b30c06d45eb65b1ee8
+  seed: 50
+train:
+- sub-MRS24
+- sub-MRS06
+- sub-MRS09
+- sub-MRS16
+- sub-MRS04
+- sub-MRS13
+- sub-MRS00
+- sub-MRS25
+- sub-MRS03
+- sub-MRS18
+- sub-MRS12
+- sub-MRS01
+- sub-MRS05
+- sub-MRS21
+val:
+- sub-MRS14
+- sub-MRS19
+- sub-MRS22
+- sub-MRS23
+- sub-MRS17
+test:
+- sub-MRS02
+- sub-MRS10
+- sub-MRS26
+- sub-MRS07
+- sub-MRS20
+- sub-MRS11
+- sub-MRS08
+- sub-MRS15

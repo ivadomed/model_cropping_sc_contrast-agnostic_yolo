@@ -1,0 +1,24 @@
+meta:
+  name: hc-lumbar-shanghai
+  host: neuro
+  url_https: https://data.neuro.polymtl.ca/datasets/hc-lumbar-shanghai
+  url_ssh: git@data.neuro.polymtl.ca:datasets/hc-lumbar-shanghai
+  commit: c0dcdea76204d2f6d4a5ad57adb9773f4d06e60e
+  seed: 50
+train:
+- sub-10
+- sub-07
+- sub-09
+- sub-02
+- sub-03
+- sub-13
+- sub-01
+val:
+- sub-12
+- sub-14
+- sub-04
+test:
+- sub-11
+- sub-06
+- sub-05
+- sub-08

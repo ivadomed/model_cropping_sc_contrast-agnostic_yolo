@@ -106,8 +106,12 @@ class RandomInvert(A.ImageOnlyTransform):
 
 
 
-def inject_mri_augmentations(trainer) -> None:
-    """Inject MRI-specific albumentations after the dataloader is built."""
+def patch_albumentations_mri() -> None:
+    """Monkeypatch ultralytics Albumentations.__init__ to inject MRI transforms.
+
+    Must be called BEFORE YOLO() so the patch is active when the dataset is built
+    and workers are forked — a callback on_train_start fires too late (after fork).
+    """
     from ultralytics.data.augment import Albumentations
 
     extra = [
@@ -122,19 +126,19 @@ def inject_mri_augmentations(trainer) -> None:
         RandomInvert(p=0.25),
         A.RandomBrightnessContrast(brightness_limit=0, contrast_limit=(-0.3, 0.3), p=0.15),
     ]
+    bbox_params = A.BboxParams(format="yolo", label_fields=["class_labels"])
 
-    dataset = trainer.train_loader.dataset
-    for t in dataset.transforms.transforms:
-        if isinstance(t, Albumentations) and t.transform is not None:
-            bbox_params = None
-            if hasattr(t.transform, "processors") and "bboxes" in t.transform.processors:
-                bbox_params = A.BboxParams(format="yolo", label_fields=["class_labels"])
-            t.transform = A.Compose(list(t.transform.transforms) + extra, bbox_params=bbox_params)
-            names = [type(e).__name__ for e in t.transform.transforms]
-            print(f"\n[MRI AUG] Pipeline actif ({len(names)} transforms): {names}\n")
-            return
+    _original_init = Albumentations.__init__
 
-    print("\n[MRI AUG] WARNING: pipeline albumentations non trouvé — augmentations MRI ignorées\n")
+    def _patched_init(self, *args, **kwargs):
+        _original_init(self, *args, **kwargs)
+        existing = list(self.transform.transforms) if self.transform is not None else []
+        self.transform = A.Compose(existing + extra, bbox_params=bbox_params)
+        self.contains_spatial = True  # force la branche bbox dans __call__
+        names = [type(e).__name__ for e in self.transform.transforms]
+        print(f"\n[MRI AUG] Pipeline patché ({len(names)} transforms): {names}\n")
+
+    Albumentations.__init__ = _patched_init
 
 
 def main():
@@ -160,6 +164,8 @@ def main():
                         help="Resume from last.pt (set --model to last.pt path)")
     parser.add_argument("--no-augment", action="store_true",
                         help="Disable all augmentations (YOLO built-in + albumentations MRI)")
+    parser.add_argument("--no-extra-augment", action="store_true",
+                        help="Disable extra MRI albumentations only (keep YOLO built-in augmentations)")
     parser.add_argument("--fl-gamma",  type=float, default=0.0,
                         help="Focal loss gamma (0.0 = BCE, 2.0 = standard focal loss)")
     parser.add_argument("--no-wandb", action="store_true")
@@ -251,9 +257,10 @@ def main():
         wandb_id_file.parent.mkdir(parents=True, exist_ok=True)
         wandb_id_file.write_text(wb_run.id)
 
+    if not args.no_augment and not args.no_extra_augment:
+        patch_albumentations_mri()
+
     model = YOLO(args.model)
-    if not args.no_augment:
-        model.add_callback("on_train_start", inject_mri_augmentations)
     if args.fl_gamma > 0.0:
         model.add_callback("on_train_start", inject_focal_loss)
 

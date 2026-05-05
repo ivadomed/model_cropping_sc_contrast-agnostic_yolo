@@ -535,7 +535,6 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
 from pathlib import Path
 
 import nibabel as nib
@@ -544,121 +543,81 @@ from nibabel.orientations import axcodes2ornt, ornt_transform
 from nibabel.processing import resample_to_output
 from PIL import Image as PILImage
 from PIL import ImageDraw
+
 from ultralytics import YOLO
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Data structures
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────────────────────
 
-@dataclass
-class Volume:
-    img: nib.Nifti1Image
-    data: np.ndarray
-    shape: tuple
-    zooms: tuple  # (RL, AP, SI)
+def load_config(model_dir: str | Path) -> dict:
+    import yaml
+    return yaml.safe_load((Path(model_dir) / "config.yaml").read_text())
 
 
-@dataclass
-class BBox3D:
-    rl: tuple
-    ap: tuple
-    si: tuple
+# ─────────────────────────────────────────────────────────────
+# ORIENTATION (LAS ONLY)
+# ─────────────────────────────────────────────────────────────
 
-    def pad(self, padding, zooms: tuple) -> "BBox3D":
-        rl_mm, ap_mm, si_mm = zooms
-
-        def parse(p):
-            return (p, p) if isinstance(p, (int, float)) else p
-
-        prl_l, prl_r = parse(padding[0])
-        pap_a, pap_p = parse(padding[1])
-        psi_s, psi_i = parse(padding[2])
-
-        prl_l = int(np.ceil(prl_l / rl_mm))
-        prl_r = int(np.ceil(prl_r / rl_mm))
-        pap_a = int(np.ceil(pap_a / ap_mm))
-        pap_p = int(np.ceil(pap_p / ap_mm))
-        psi_s = int(np.ceil(psi_s / si_mm))
-        psi_i = int(np.ceil(psi_i / si_mm))
-
-        (rl1, rl2), (ap1, ap2), (z1, z2) = self.rl, self.ap, self.si
-
-        return BBox3D(
-            (max(0, rl1 - prl_l), rl2 + prl_r),
-            (max(0, ap1 - pap_a), ap2 + pap_p),
-            (max(0, z1 - psi_s), z2 + psi_i),
-        )
+def to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
+    cur = nib.io_orientation(img.affine)
+    tgt = axcodes2ornt(("L", "A", "S"))
+    return img.as_reoriented(ornt_transform(cur, tgt))
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Orientation
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# RESAMPLE
+# ─────────────────────────────────────────────────────────────
 
-def reorient_to_las(img):
-    current = nib.io_orientation(img.affine)
-    target = axcodes2ornt(("L", "A", "S"))
-    return img.as_reoriented(ornt_transform(current, target))
+def resample(img: nib.Nifti1Image, si_res: float, inplane: float | None):
+    rl, ap, si = img.header.get_zooms()[:3]
 
+    if inplane is None:
+        inplane = rl
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Resampling
-# ─────────────────────────────────────────────────────────────────────────────
+    if abs(rl - inplane) < 1e-2 and abs(ap - inplane) < 1e-2 and abs(si - si_res) < 1e-2:
+        return img
 
-def resample(vol: Volume, si_res: float, inplane_res: float | None):
-    rl, ap, si = vol.zooms
-
-    trl = inplane_res or rl
-    tap = inplane_res or ap
-
-    if abs(trl - rl) < 1e-2 and abs(tap - ap) < 1e-2 and abs(si_res - si) < 1e-2:
-        return vol
-
-    img = resample_to_output(vol.img, voxel_sizes=(trl, tap, si_res), order=1)
-    return Volume(img, img.get_fdata(dtype=np.float32), img.shape, (trl, tap, si_res))
+    return resample_to_output(img, voxel_sizes=(inplane, inplane, si_res), order=1)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Normalization
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# SLICE CONVENTION (IMPORTANT PART)
+# ─────────────────────────────────────────────────────────────
 
-def normalize(arr):
-    nz = arr[arr > 0]
+def slice_axial(data: np.ndarray, z: int) -> np.ndarray:
+    """(AP, RL) with:
+        row 0 = anterior
+        col 0 = left
+    """
+    return data[:, :, z].T[::-1, ::-1]
+
+
+def normalize(x: np.ndarray) -> np.ndarray:
+    nz = x[x > 0]
     if len(nz) == 0:
-        return np.zeros_like(arr, dtype=np.uint8)
-
+        return np.zeros_like(x, dtype=np.uint8)
     lo, hi = np.percentile(nz, [0.5, 99.5])
-    if hi <= lo:
-        return np.zeros_like(arr, dtype=np.uint8)
-
-    return ((np.clip(arr, lo, hi) - lo) / (hi - lo) * 255).astype(np.uint8)
+    return ((np.clip(x, lo, hi) - lo) / (hi - lo) * 255).astype(np.uint8)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Slices
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# SLICE BUILD
+# ─────────────────────────────────────────────────────────────
 
-def get_slice(data, z):
-    ap, rl, _ = data.shape
-    if z < 0 or z >= _:
-        return np.zeros((ap, rl), np.uint8)
+def build_slices(data: np.ndarray, channels: int):
+    RL, AP, Z = data.shape
+    black = np.zeros((AP, RL), np.uint8)
 
-    return normalize(data[:, :, z]).T[::-1, ::-1]
+    slices, idxs = [], []
 
-
-def build_slices(data, channels):
-    rl, ap, zmax = data.shape
-    black = np.zeros((ap, rl), np.uint8)
-
-    slices = []
-    idxs = []
-
-    for z in range(zmax - 1, -1, -1):
-        cur = get_slice(data, z)
+    for z in range(Z - 1, -1, -1):
+        cur = slice_axial(data, z)
 
         if channels == 3:
-            sup = get_slice(data, z + 1)
-            inf = get_slice(data, z - 1)
+            sup = slice_axial(data, min(z + 1, Z - 1))
+            inf = slice_axial(data, max(z - 1, 0))
             slices.append(np.stack([sup, cur, inf], axis=-1))
         else:
             slices.append(cur)
@@ -668,107 +627,129 @@ def build_slices(data, channels):
     return slices, idxs
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# YOLO
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# INFERENCE
+# ─────────────────────────────────────────────────────────────
 
 def infer(model, slices, idxs, conf):
-    results = model.predict(slices, conf=conf, verbose=False)
+    res = model.predict(slices, conf=conf, verbose=False)
 
-    preds = {}
-    for z, r in zip(idxs, results):
+    out = {}
+    for z, r in zip(idxs, res):
         if r.boxes is None or len(r.boxes) == 0:
             continue
-
         i = int(r.boxes.conf.argmax())
-        cx, cy, w, h = r.boxes.xywhn[i].tolist()
-        preds[z] = (cx, cy, w, h)
-
-    return preds
+        out[z] = r.boxes.xywhn[i].tolist()
+    return out
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# BBox aggregation
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# BBOX 3D
+# ─────────────────────────────────────────────────────────────
 
-def aggregate(preds, shape, si_zoom):
-    RL, AP, Z = shape
+def bbox_3d(preds, RL, AP, Z, si_zoom):
+    rl1, rl2, ap1, ap2, zs = [], [], [], [], []
 
-    rl, ap, z = [], [], []
+    for z, (cx, cy, w, h) in preds.items():
+        zz = min(Z - 1, round(z / si_zoom))
 
-    for zi, (cx, cy, w, h) in preds.items():
-        rl_c = cx * RL
-        ap_c = (1 - cy) * AP
+        cx *= RL
+        cy = (1 - cy) * AP
 
-        rl.append((rl_c - w * RL / 2, rl_c + w * RL / 2))
-        ap.append((ap_c - h * AP / 2, ap_c + h * AP / 2))
-        z.append(zi / si_zoom)
+        w *= RL / 2
+        h *= AP / 2
 
-    def reduce(v):
-        return int(min(x[0] for x in v)), int(max(x[1] for x in v))
+        rl1.append(int(cx - w))
+        rl2.append(int(cx + w))
+        ap1.append(int(cy - h))
+        ap2.append(int(cy + h))
+        zs.append(zz)
 
-    rl = reduce(rl)
-    ap = reduce(ap)
-    z = (int(min(z)), int(max(z)))
-
-    return BBox3D(rl, ap, z)
+    return min(rl1), max(rl2), min(ap1), max(ap2), min(zs), max(zs)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Crop
-# ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# PADDING
+# ─────────────────────────────────────────────────────────────
 
-def crop(vol: Volume, bbox: BBox3D):
-    (rl1, rl2), (ap1, ap2), (z1, z2) = bbox.rl, bbox.ap, bbox.si
+def pad(bbox, rl_mm, ap_mm, si_mm, RL, AP, Z,
+        p_rl=10.0, p_ap=15.0, p_si=20.0):
 
-    data = vol.data[rl1:rl2, ap1:ap2, z1:z2]
+    rl1, rl2, ap1, ap2, z1, z2 = bbox
 
-    affine = vol.img.affine.copy()
-    affine[:3, 3] += vol.img.affine[:3, :3] @ np.array([rl1, ap1, z1])
+    p_rl_l, p_rl_r = (p_rl, p_rl) if isinstance(p_rl, (int, float)) else p_rl
+    p_ap_a, p_ap_p = (p_ap, p_ap) if isinstance(p_ap, (int, float)) else p_ap
+    p_si_s, p_si_i = (p_si, p_si) if isinstance(p_si, (int, float)) else p_si
 
-    return nib.Nifti1Image(data, affine)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Pipeline
-# ─────────────────────────────────────────────────────────────────────────────
-
-def run(
-    input_path,
-    model_path,
-    si_res,
-    inplane_res=None,
-    conf=0.1,
-    padding=(10.0, 15.0, 20.0),
-    debug=False,
-):
-    img = nib.load(input_path)
-    img = reorient_to_las(img)
-
-    vol = Volume(
-        img,
-        img.get_fdata(dtype=np.float32),
-        img.shape,
-        tuple(img.header.get_zooms()[:3]),
+    return (
+        max(0, rl1 - int(p_rl_l / rl_mm)),
+        min(RL, rl2 + int(p_rl_r / rl_mm)),
+        max(0, ap1 - int(p_ap_a / ap_mm)),
+        min(AP, ap2 + int(p_ap_p / ap_mm)),
+        max(0, z1 - int(p_si_s / si_mm)),
+        min(Z, z2 + int(p_si_i / si_mm)),
     )
 
-    vol = resample(vol, si_res, inplane_res)
 
-    model = YOLO(model_path)
+# ─────────────────────────────────────────────────────────────
+# CROP
+# ─────────────────────────────────────────────────────────────
 
-    slices, idxs = build_slices(vol.data, 3)
+def crop(img, bbox):
+    r1, r2, a1, a2, z1, z2 = bbox
+    data = img.get_fdata()
+
+    crop = data[r1:r2, a1:a2, z1:z2]
+
+    affine = img.affine.copy()
+    affine[:3, 3] = img.affine[:3, :3] @ np.array([r1, a1, z1]) + img.affine[:3, 3]
+
+    return nib.Nifti1Image(crop, affine)
+
+
+# ─────────────────────────────────────────────────────────────
+# RUN PIPELINE
+# ─────────────────────────────────────────────────────────────
+
+def run(input_path,
+        config=None,
+        model_path=None,
+        padding_rl_mm=10,
+        padding_ap_mm=15,
+        padding_si_mm=20,
+        conf=None,
+        debug=False):
+
+    img = nib.load(input_path)
+    img = to_las(img)
+
+    RL, AP, Z = img.shape
+    rl_mm, ap_mm, si_mm = img.header.get_zooms()[:3]
+
+    cfg = config or load_config(Path(model_path).parent)
+
+    si_res = cfg["si_res"]
+    inplane = cfg.get("inplane_res", rl_mm)
+    conf = conf or cfg.get("conf", 0.1)
+
+    img_i = resample(img, si_res, inplane)
+    data = img_i.get_fdata()
+
+    model = YOLO(str(model_path))
+
+    slices, idxs = build_slices(data, cfg.get("channels", 3))
     preds = infer(model, slices, idxs, conf)
 
     if not preds:
         raise RuntimeError("No detection")
 
-    bbox = aggregate(preds, vol.shape, si_res / vol.zooms[2])
-    padded = bbox.pad(padding, vol.zooms)
+    bbox = bbox_3d(preds, RL, AP, Z, si_mm / si_res)
+    bbox_p = pad(bbox, rl_mm, ap_mm, si_mm, RL, AP, Z,
+                 padding_rl_mm, padding_ap_mm, padding_si_mm)
 
-    cropped = crop(vol, padded)
+    cropped = crop(img, bbox_p)
 
     return {
         "output": cropped,
-        "bbox": bbox,
-        "bbox_padded": padded,
+        "bbox": bbox_p,
     }

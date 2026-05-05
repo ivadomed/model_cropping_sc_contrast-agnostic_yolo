@@ -378,7 +378,7 @@ def run(input_path: str,
                     (auto-downloaded if absent via ensure_model()).
     config        : dict (si_res, inplane_res, channels, conf). Default: loaded from
                     config.yaml next to model.pt.
-    output_path   : output file. Default: <input>_crop.nii.gz next to input.
+    output_path   : output file. Default: <input>_crop_las.nii.gz next to input.
     padding_rl_mm : padding in Right-Left direction. float or (left_mm, right_mm).
     padding_ap_mm : padding in Anterior-Posterior direction. float or (anterior_mm, posterior_mm).
     padding_si_mm : padding in Superior-Inferior direction. float or (superior_mm, inferior_mm).
@@ -471,11 +471,11 @@ def run(input_path: str,
     if output_path is None:
         inp        = Path(input_path)
         stem       = inp.name.replace(".nii.gz", "").replace(".nii", "")
-        output_path = str(inp.parent / f"{stem}_crop.nii.gz")
+        output_path = str(inp.parent / f"{stem}_crop_las.nii.gz")
 
     out_path = Path(output_path)
-    output_before_path = str(out_path.parent / out_path.name.replace(".nii.gz", "_before_padding.nii.gz").replace(".nii", "_before_padding.nii"))
-    input_las_path = str(out_path.parent / out_path.name.replace(".nii.gz", "_input_las.nii.gz").replace(".nii", "_input_las.nii"))
+    output_before_path = str(out_path.parent / out_path.name.replace("_crop_las.nii.gz", "_crop_before_padding_las.nii.gz").replace("_crop_las.nii", "_crop_before_padding_las.nii"))
+    input_las_path = str(out_path.parent / out_path.name.replace("_crop_las.nii.gz", "_input_las.nii.gz").replace("_crop_las.nii", "_input_las.nii"))
 
     nib.save(img_las, input_las_path)
     print(f"Saved   : {input_las_path}  shape={img_las.shape}")
@@ -491,9 +491,9 @@ def run(input_path: str,
           f"sizes=({sizes_mm[0]:.1f}, {sizes_mm[1]:.1f}, {sizes_mm[2]:.1f}) mm")
 
     base = Path(output_path).parent / Path(output_path).stem
-    bbox_before_path = Path(str(base) + "_bbox_before_padding.txt")
-    bbox_after_path = Path(str(base) + "_bbox_after_padding.txt")
-    bbox_path = Path(str(base) + "_bbox.txt")
+    bbox_before_path = Path(str(base) + "_bbox_before_padding_las.txt")
+    bbox_after_path = Path(str(base) + "_bbox_after_padding_las.txt")
+    bbox_path = Path(str(base) + "_bbox_las.txt")
 
     corner_before_mm, sizes_before_mm = bbox_before_mm
     with open(bbox_before_path, "w") as f:

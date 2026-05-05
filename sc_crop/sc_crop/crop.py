@@ -221,7 +221,7 @@ def aggregate_bbox_3d(preds: dict,
     for las_idx_inf, (cx, cy, w, h) in preds.items():
         z_nat   = min(Z_nat - 1, round(las_idx_inf / si_zoom))
         rl_c    = cx * RL_nat
-        ap_c    = cy * AP_nat
+        ap_c    = (1.0 - cy) * AP_nat
         rl_half = w / 2 * RL_nat
         ap_half = h / 2 * AP_nat
         rl1s.append(max(0,      int(rl_c - rl_half)))

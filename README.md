@@ -7,13 +7,10 @@
 ### Install
 
 ```bash
-git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo
-cd model_cropping_sc_contrast-agnostic_yolo
-conda create -n sc_crop python=3.11
-conda activate sc_crop
-pip install -r requirements.txt
-pip install -e sc_crop/
+pip install git+https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git#subdirectory=sc_crop
 ```
+
+Dependencies (`ultralytics`, `nibabel`, `numpy`, `pillow`, `pyyaml`) are installed automatically.
 
 ### Download the model
 

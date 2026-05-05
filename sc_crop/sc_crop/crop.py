@@ -328,11 +328,21 @@ def save_debug_panel(model, slices: list, las_idxs: list,
         # Slice convention T[::-1,::-1]: col 0=Left (LAS RL max), row 0=Anterior (LAS AP max).
         # LAS rl_vox → image_x = (1 - rl_vox/W)*CELL ; LAS ap_vox → image_y = (1 - ap_vox/H)*CELL
         if has_padded and padded_z1 <= las_idx <= padded_z2:
-            x1_pad = (padded_rl2 / W) * CELL
-            x2_pad = (padded_rl1 / W) * CELL
+            # RL (pas de flip)
+            x1_pad = (padded_rl1 / W) * CELL
+            x2_pad = (padded_rl2 / W) * CELL
+
+            # AP (flip vertical)
             y1_pad = (1 - padded_ap2 / H) * CELL
             y2_pad = (1 - padded_ap1 / H) * CELL
-            draw.rectangle([x1_pad, y1_pad, x2_pad, y2_pad], outline=(255, 0, 0), width=2)
+
+            # sécurisation PIL
+            x0 = min(x1_pad, x2_pad)
+            x1 = max(x1_pad, x2_pad)
+            y0 = min(y1_pad, y2_pad)
+            y1 = max(y1_pad, y2_pad)
+
+            draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=2)
 
         draw.text((2, 1), f"z{las_idx}", fill=(200, 200, 200))
         cells.append(cell)

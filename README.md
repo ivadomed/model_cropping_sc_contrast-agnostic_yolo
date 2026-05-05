@@ -6,26 +6,10 @@
 
 ### Install
 
-We recommend installing in a dedicated virtual environment to avoid conflicts with your existing packages.
-
 ```bash
-python -m venv ~/.venvs/sc_crop
-source ~/.venvs/sc_crop/bin/activate        # Linux / Mac
-# ~/.venvs/sc_crop/Scripts/activate         # Windows
-```
-
-Install CPU-only versions of PyTorch first to avoid downloading large CUDA libraries unnecessarily:
-
-```bash
-pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
-pip install torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu
-
-```
-
-Then install the package:
-
-```bash
-pip install "git+https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git#subdirectory=sc_crop"
+git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
+cd model_cropping_sc_contrast-agnostic_yolo
+pip install -e sc_crop/
 ```
 
 ### Download the model

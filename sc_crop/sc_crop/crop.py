@@ -5,7 +5,7 @@ Uses ultralytics YOLO (best.pt) for inference — identical preprocessing to the
 training pipeline (preprocess.py): LAS reorientation, nibabel resample_to_output,
 axial slices as data[:, :, las_idx].T[::-1, ::-1] → (AP, RL, C) uint8.
 
-The output is in the same orientation, space, and resolution as the input.
+The output is saved in LAS orientation for visualization (e.g., fsleyes).
 
 Usage:
     from sc_crop.crop import run, load_config
@@ -21,6 +21,8 @@ Usage:
     
     output_path = result["output"]
     corner_mm, sizes_mm = result["bbox_mm"]
+    bbox_before_file = result["bbox_before_file"]
+    bbox_after_file = result["bbox_after_file"]
     result = run("t2.nii.gz", debug=True)
     # debug=True → also saves <stem>_debug.png: panel of all slices with
     # max-confidence bbox overlaid (no threshold), green if conf ≥ threshold, orange otherwise.
@@ -238,6 +240,26 @@ def aggregate_bbox_3d(preds: dict,
     return min(rl1s), max(rl2s), min(ap1s), max(ap2s), min(zs), max(zs)
 
 
+def bbox_vox_to_mm(img_las: nib.Nifti1Image,
+                   bbox: tuple,
+                   rl_mm: float,
+                   ap_mm: float,
+                   si_mm: float,
+                   original_affine: np.ndarray | None = None) -> tuple:
+    """Convert a voxel bbox (LAS index space) to (corner_mm, sizes_mm)."""
+    rl1, rl2, ap1, ap2, z1, z2 = bbox
+    corner_las_mm = img_las.affine[:3, :3] @ np.array([rl1, ap1, z1]) + img_las.affine[:3, 3]
+    sizes_mm = np.array([(rl2 - rl1) * rl_mm,
+                         (ap2 - ap1) * ap_mm,
+                         (z2 - z1) * si_mm])
+
+    if original_affine is not None:
+        corner_mm = np.linalg.inv(original_affine[:3, :3]) @ (corner_las_mm - original_affine[:3, 3])
+    else:
+        corner_mm = corner_las_mm
+    return corner_mm, sizes_mm
+
+
 # ─── Crop ─────────────────────────────────────────────────────────────────────
 
 def crop_volume(img_las: nib.Nifti1Image, padded_bbox: tuple,
@@ -269,20 +291,10 @@ def crop_volume(img_las: nib.Nifti1Image, padded_bbox: tuple,
     affine[:3, 3] = img_las.affine[:3, :3] @ np.array([rl1p, ap1p, z1p]) \
                     + img_las.affine[:3, 3]
 
-    # Compute bbox in mm: corner and sizes
-    corner_las_mm = img_las.affine[:3, :3] @ np.array([rl1p, ap1p, z1p]) \
-                    + img_las.affine[:3, 3]
-    sizes_mm = np.array([(rl2p - rl1p) * rl_mm,
-                         (ap2p - ap1p) * ap_mm,
-                         (z2p - z1p) * si_mm])
-
-    # If original_affine provided, transform to original space
-    if original_affine is not None:
-        corner_orig_mm = np.linalg.inv(original_affine[:3, :3]) @ (corner_las_mm - original_affine[:3, 3])
-    else:
-        corner_orig_mm = corner_las_mm
-
-    bbox_mm = (corner_orig_mm, sizes_mm)
+    bbox_mm = bbox_vox_to_mm(
+        img_las, padded_bbox, rl_mm, ap_mm, si_mm,
+        original_affine=original_affine
+    )
     return nib.Nifti1Image(cropped, affine), padded_bbox, bbox_mm
 
 
@@ -378,9 +390,11 @@ def run(input_path: str,
     padding_rl_mm : padding in Right-Left direction. float or (left_mm, right_mm).
     padding_ap_mm : padding in Anterior-Posterior direction. float or (anterior_mm, posterior_mm).
     padding_si_mm : padding in Superior-Inferior direction. float or (superior_mm, inferior_mm).
-    Returns       : dict with:
+        Returns       : dict with:
       - output: path to the saved cropped volume
-      - bbox_file: path to the bbox txt file
+            - bbox_file: path to the bbox txt file (after padding, backward-compatible)
+            - bbox_before_file: path to bbox txt file before padding
+            - bbox_after_file: path to bbox txt file after padding
       - bbox_mm: (corner_mm, sizes_mm) in original image space
         * corner_mm: (x, y, z) minimum corner in mm
         * sizes_mm: [RL_size, AP_size, SI_size] dimensions in mm
@@ -430,6 +444,11 @@ def run(input_path: str,
     rl1, rl2, ap1, ap2, z1, z2 = bbox
     print(f"SC bbox : RL [{rl1}:{rl2}]  AP [{ap1}:{ap2}]  SI [{z1}:{z2}]  (before padding)")
 
+    bbox_before_mm = bbox_vox_to_mm(
+        img_las, bbox, rl_mm_nat, ap_mm_nat, si_mm_nat,
+        original_affine=original_affine
+    )
+
     # Compute padded bbox ONCE (single source of truth)
     padded_bbox = compute_padded_bbox_3d(
         bbox, RL_nat, AP_nat, Z_nat, rl_mm_nat, ap_mm_nat, si_mm_nat,
@@ -471,18 +490,43 @@ def run(input_path: str,
     print(f"BBox MM : corner=({corner_mm[0]:.1f}, {corner_mm[1]:.1f}, {corner_mm[2]:.1f}) mm  "
           f"sizes=({sizes_mm[0]:.1f}, {sizes_mm[1]:.1f}, {sizes_mm[2]:.1f}) mm")
 
-    # Save bbox to txt file
-    bbox_path = Path(output_path).parent / (Path(output_path).stem + "_bbox.txt")
-    with open(bbox_path, "w") as f:
-        f.write("# Bounding box: corner (mm) and dimensions (mm)\n")
-        f.write(f"# Format: corner_x corner_y corner_z size_rl size_ap size_si\n")
+    base = Path(output_path).parent / Path(output_path).stem
+    bbox_before_path = Path(str(base) + "_bbox_before_padding.txt")
+    bbox_after_path = Path(str(base) + "_bbox_after_padding.txt")
+    bbox_path = Path(str(base) + "_bbox.txt")
+
+    corner_before_mm, sizes_before_mm = bbox_before_mm
+    with open(bbox_before_path, "w") as f:
+        f.write("# Bounding box BEFORE padding\n")
+        f.write("# Vox format: rl1 rl2 ap1 ap2 z1 z2\n")
+        f.write(f"{rl1} {rl2} {ap1} {ap2} {z1} {z2}\n")
+        f.write("# MM format: corner_x corner_y corner_z size_rl size_ap size_si\n")
+        f.write(f"{corner_before_mm[0]:.2f} {corner_before_mm[1]:.2f} {corner_before_mm[2]:.2f} "
+                f"{sizes_before_mm[0]:.2f} {sizes_before_mm[1]:.2f} {sizes_before_mm[2]:.2f}\n")
+
+    with open(bbox_after_path, "w") as f:
+        f.write("# Bounding box AFTER padding\n")
+        f.write("# Vox format: rl1 rl2 ap1 ap2 z1 z2\n")
+        f.write(f"{rl1p} {rl2p} {ap1p} {ap2p} {z1p} {z2p}\n")
+        f.write("# MM format: corner_x corner_y corner_z size_rl size_ap size_si\n")
         f.write(f"{corner_mm[0]:.2f} {corner_mm[1]:.2f} {corner_mm[2]:.2f} "
                 f"{sizes_mm[0]:.2f} {sizes_mm[1]:.2f} {sizes_mm[2]:.2f}\n")
-    print(f"BBox    : {bbox_path}")
+
+    # Backward-compatible alias to after-padding bbox
+    with open(bbox_path, "w") as f:
+        f.write("# Bounding box AFTER padding\n")
+        f.write("# MM format: corner_x corner_y corner_z size_rl size_ap size_si\n")
+        f.write(f"{corner_mm[0]:.2f} {corner_mm[1]:.2f} {corner_mm[2]:.2f} "
+                f"{sizes_mm[0]:.2f} {sizes_mm[1]:.2f} {sizes_mm[2]:.2f}\n")
+
+    print(f"BBox pre: {bbox_before_path}")
+    print(f"BBox post: {bbox_after_path}")
 
     return {
         "output": output_path,
         "bbox_file": str(bbox_path),
+        "bbox_before_file": str(bbox_before_path),
+        "bbox_after_file": str(bbox_after_path),
         "bbox_mm": bbox_mm,
         "corner_mm": corner_mm,
         "sizes_mm": sizes_mm

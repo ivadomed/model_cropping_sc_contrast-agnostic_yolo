@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Export a trained YOLO checkpoint to a release-ready zip for sc_crop.
+Produce a release-ready zip for sc_crop from a trained YOLO checkpoint.
 
-Lit preprocess.yaml depuis le snapshot du run, exporte best.pt → model.onnx
-via ultralytics, puis produit un zip prêt à attacher à une GitHub release :
+Reads preprocess.yaml from the run snapshot, copies best.pt directly (no ONNX
+conversion), and writes a config.yaml with the inference parameters.
 
+Output:
   sc_crop_models_v<version>.zip
-  ├── model.onnx
+  ├── model.pt
   └── config.yaml
 
-Les utilisateurs téléchargent ce zip via `sc-crop download` ou `sct_download_data`.
-Ce script n'écrit RIEN dans le package sc_crop lui-même.
+This script writes nothing to the sc_crop package itself.
 
 Requires: conda activate contrast_agnostic
 
 Usage:
-    python scripts/export_model.py --run-dir runs/20260504_134652 --version 0.1.0
+    python scripts/export_model.py --run-dir runs/20260504_135903 --version 0.2.0
 """
 
 import argparse
@@ -39,23 +39,14 @@ def load_preprocess_cfg(run_dir: Path) -> dict:
     raise FileNotFoundError(f"preprocess.yaml introuvable dans {run_dir} ou configs/")
 
 
-def export_onnx(pt_path: Path) -> Path:
-    from ultralytics import YOLO
-    model = YOLO(str(pt_path))
-    model.export(format="onnx", simplify=True, dynamic=False, opset=11)
-    onnx_path = pt_path.with_suffix(".onnx")
-    assert onnx_path.exists(), f"Export n'a produit aucun fichier à {onnx_path}"
-    return onnx_path
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Exporte un checkpoint YOLO en zip de release pour sc_crop.",
+        description="Produit un zip de release sc_crop depuis un checkpoint YOLO.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--run-dir", required=True,
                         help="Run directory contenant checkpoints/weights/best.pt")
-    parser.add_argument("--version", default="0.1.0",
+    parser.add_argument("--version", default="0.2.0",
                         help="Version du modèle (utilisée dans le nom du zip)")
     parser.add_argument("--out-dir", default=".",
                         help="Dossier où écrire le zip de release")
@@ -72,7 +63,7 @@ def main():
 
     pre_cfg = load_preprocess_cfg(run_dir)
     if pre_cfg.get("plane", "axial") != "axial":
-        print(f"Seul le mode axial est supporté.", file=sys.stderr)
+        print("Seul le mode axial est supporté.", file=sys.stderr)
         sys.exit(1)
 
     config = {
@@ -81,22 +72,22 @@ def main():
         "channels":    pre_cfg["channels"],
         "conf":        0.1,
     }
+    config_yaml = yaml.dump(config, default_flow_style=False, sort_keys=False)
 
-    print(f"Export {pt_path} …")
-    onnx_path = export_onnx(pt_path)
+    # Write config.yaml next to best.pt so --model path/to/best.pt works directly.
+    (pt_path.parent / "config.yaml").write_text(config_yaml)
+    print(f"Config      : {pt_path.parent / 'config.yaml'}")
 
     zip_name = f"sc_crop_models_v{args.version}.zip"
     zip_path = out_dir / zip_name
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
-        shutil.copy2(onnx_path, tmp / "model.onnx")
-        (tmp / "config.yaml").write_text(
-            yaml.dump(config, default_flow_style=False, sort_keys=False)
-        )
+        shutil.copy2(pt_path, tmp / "model.pt")
+        (tmp / "config.yaml").write_text(config_yaml)
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.write(tmp / "model.onnx", "model.onnx")
-            zf.write(tmp / "config.yaml", "config.yaml")
+            zf.write(tmp / "model.pt",     "model.pt")
+            zf.write(tmp / "config.yaml",  "config.yaml")
 
     print(f"Release zip : {zip_path.resolve()}")
     print(f"Config      : {config}")

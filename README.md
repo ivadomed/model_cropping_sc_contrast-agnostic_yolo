@@ -1,5 +1,54 @@
 # Spinal cord detection
 
+## sc_crop — use the model without training
+
+`sc_crop` is a standalone Python package that crops any NIfTI volume around the spinal cord. It uses the pre-trained YOLO model from this repository and requires no knowledge of the training pipeline.
+
+### Install
+
+```bash
+pip install git+https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git#subdirectory=sc_crop
+```
+
+Or if you have cloned the repository:
+
+```bash
+pip install model_cropping_sc_contrast-agnostic_yolo/sc_crop/
+```
+
+### Download the model
+
+```bash
+sc-crop download
+# downloads to ~/.sc_crop/sc_crop_models/
+```
+
+### Crop a volume
+
+```bash
+sc-crop t2.nii.gz
+# → t2_crop.nii.gz next to the input, same orientation / resolution / world space
+
+sc-crop t2.nii.gz -o output.nii.gz   # explicit output path
+sc-crop t2.nii.gz --padding 20        # margin around the bbox in mm (default 10)
+sc-crop t2.nii.gz --conf 0.05         # confidence threshold (default 0.1)
+sc-crop t2.nii.gz --debug             # also saves t2_debug.png (per-slice panel)
+```
+
+### Python API
+
+```python
+from sc_crop.crop import run
+out = run("t2.nii.gz")
+out = run("t2.nii.gz", padding_mm=20, conf=0.05, debug=True)
+```
+
+### Requirements
+
+Python ≥ 3.8, automatically installed by pip: `ultralytics`, `nibabel`, `numpy`, `pillow`, `pyyaml`.
+
+---
+
 ## Project description
 
 ### The goal

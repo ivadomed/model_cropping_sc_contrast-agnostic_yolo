@@ -4,6 +4,7 @@ Command-line interface for sc-crop.
 Usage:
     sc-crop t2.nii.gz                     # crops, télécharge le modèle si absent
     sc-crop t2.nii.gz -o t2_crop.nii.gz
+    sc-crop t2.nii.gz --debug             # produit aussi <stem>_debug.png
     sc-crop download                      # téléchargement explicite du modèle
 """
 
@@ -11,7 +12,7 @@ import argparse
 import sys
 
 from .crop import run
-from .download import download, ensure_model
+from .download import download
 
 
 def main():
@@ -28,15 +29,13 @@ def main():
     parser.add_argument("-o", "--output", default=None,
                         help="Output file. Default: <input>_crop.nii.gz next to input")
     parser.add_argument("--model", default=None,
-                        help="Path to model.onnx (override ~/.sc_crop/sc_crop_models/)")
+                        help="Path to model.pt (override ~/.sc_crop/sc_crop_models/)")
     parser.add_argument("--padding", type=float, default=10.0,
                         help="Padding around the 3D bbox (mm)")
     parser.add_argument("--conf", type=float, default=None,
                         help="Detection confidence threshold (default: from config.yaml)")
-    parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
-                        help="Inference device (GPU requires onnxruntime-gpu)")
     parser.add_argument("--debug", action="store_true",
-                        help="Print per-slice detections and intermediate bbox values")
+                        help="Save <stem>_debug.png: all slices with max-confidence bbox")
     args = parser.parse_args()
 
     run(
@@ -45,7 +44,6 @@ def main():
         model_path  = args.model,
         padding_mm  = args.padding,
         conf        = args.conf,
-        device      = args.device,
         debug       = args.debug,
     )
 

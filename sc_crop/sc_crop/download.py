@@ -8,7 +8,7 @@ Pattern identique à SCT :
 Lors de l'intégration SCT, la seule ligne qui change dans core.py est :
   - from sc_crop.download import ensure_model; model_path = ensure_model()
   + from spinalcordtoolbox.utils.sys import sct_dir_local_path
-  + model_path = Path(sct_dir_local_path('data', 'sc_crop_models', 'model.onnx'))
+  + model_path = Path(sct_dir_local_path('data', 'sc_crop_models', 'model.pt'))
 
 Usage:
     sc-crop download
@@ -29,8 +29,8 @@ _DATA_DIR = Path.home() / ".sc_crop" / "sc_crop_models"
 
 
 def ensure_model() -> Path:
-    """Retourne le chemin vers model.onnx, télécharge depuis la release si absent."""
-    model_path = _DATA_DIR / "model.onnx"
+    """Retourne le chemin vers model.pt, télécharge depuis la release si absent."""
+    model_path = _DATA_DIR / "model.pt"
     if model_path.exists():
         return model_path
     download()
@@ -49,9 +49,9 @@ def download() -> None:
         zf.extractall(_DATA_DIR)
     zip_path.unlink()
 
-    if not (_DATA_DIR / "model.onnx").exists():
+    if not (_DATA_DIR / "model.pt").exists():
         raise RuntimeError(
-            f"model.onnx absent de {_DATA_DIR} après téléchargement — "
+            f"model.pt absent de {_DATA_DIR} après téléchargement — "
             "vérifier la structure du zip de release."
         )
     print(f"Model saved to {_DATA_DIR}")

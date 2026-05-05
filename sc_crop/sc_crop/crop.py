@@ -1,19 +1,18 @@
 """
 Core logic for spinal cord detection and volume cropping.
 
-Takes a NIfTI volume, runs ONNX YOLO inference slice-by-slice (axial),
-aggregates detections into a 3D bounding box, and crops the original volume.
+Uses ultralytics YOLO (best.pt) for inference — identical preprocessing to the
+training pipeline (preprocess.py): LAS reorientation, nibabel resample_to_output,
+axial slices as data[:, :, las_idx].T[::-1, ::-1] → (AP, RL, C) uint8.
 
 The output is in the same orientation, space, and resolution as the input.
-No ultralytics dependency — only nibabel, numpy, onnxruntime, pillow.
 
 Usage:
     from sc_crop.crop import run, load_config
-    config = load_config()
-    out = run("t2.nii.gz", config=config)
-    out = run("t2.nii.gz", config=config, debug=True)
-    # debug=True → also saves <stem>_debug.png: panel of all slices
-    # with max-confidence bbox overlaid (no threshold), green if conf≥0.1 else orange
+    out = run("t2.nii.gz")
+    out = run("t2.nii.gz", debug=True)
+    # debug=True → also saves <stem>_debug.png: panel of all slices with
+    # max-confidence bbox overlaid (no threshold), green if conf ≥ threshold, orange otherwise.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ from PIL import ImageDraw
 
 
 def load_config(model_dir: str | Path) -> dict:
-    """Load config.yaml from the directory containing model.onnx."""
+    """Load config.yaml from the directory containing model.pt."""
     import yaml
     return yaml.safe_load((Path(model_dir) / "config.yaml").read_text())
 
@@ -57,7 +56,7 @@ def resample_for_inference(img_las: nib.Nifti1Image,
                             inplane_res: float | None) -> nib.Nifti1Image:
     """Resample LAS image to match training preprocessing resolution.
 
-    Uses nibabel.processing.resample_to_output (order=1) — identical to training.
+    Uses nibabel.processing.resample_to_output (order=1).
     """
     rl_mm, ap_mm, si_mm = [float(v) for v in img_las.header.get_zooms()[:3]]
     target_rl = inplane_res if inplane_res is not None else rl_mm
@@ -82,105 +81,66 @@ def normalize_to_uint8(arr: np.ndarray) -> np.ndarray:
     return ((np.clip(arr, lo, hi) - lo) / (hi - lo) * 255).astype(np.uint8)
 
 
-# ─── Letterbox ────────────────────────────────────────────────────────────────
+# ─── Slice extraction ─────────────────────────────────────────────────────────
 
-def letterbox(img_hwc: np.ndarray, imgsz: int):
-    """Resize to imgsz×imgsz preserving aspect ratio, pad with 0.
+def _get_slice(data: np.ndarray, las_idx: int,
+               black: np.ndarray) -> np.ndarray:
+    """Extract one axial slice in (AP, RL) uint8, identical to preprocess.py.
 
-    Returns (padded, scale, pad_top, pad_left).
+    Convention: data[:, :, las_idx].T[::-1, ::-1]
+      rows = AP (row 0 = Anterior), cols = RL (col 0 = Left).
+    Out-of-bounds las_idx returns a black frame.
     """
-    H, W   = img_hwc.shape[:2]
-    scale  = imgsz / max(H, W)
-    new_h  = int(H * scale)
-    new_w  = int(W * scale)
-    resized  = np.array(PILImage.fromarray(img_hwc).resize((new_w, new_h), PILImage.BILINEAR))
-    pad_top  = (imgsz - new_h) // 2
-    pad_left = (imgsz - new_w) // 2
-    padded   = np.zeros((imgsz, imgsz, img_hwc.shape[2]), dtype=np.uint8)
-    padded[pad_top:pad_top + new_h, pad_left:pad_left + new_w] = resized
-    return padded, scale, pad_top, pad_left
+    Z = data.shape[2]
+    if las_idx < 0 or las_idx >= Z:
+        return black
+    return normalize_to_uint8(data[:, :, las_idx]).T[::-1, ::-1]
 
 
-# ─── ONNX inference ───────────────────────────────────────────────────────────
+def build_slices(data: np.ndarray, channels: int) -> tuple:
+    """Build all axial slices Superior→Inferior, matching preprocess.py convention.
 
-def _nms(boxes_x1y1x2y2: np.ndarray, scores: np.ndarray,
-         iou_thresh: float = 0.45) -> list:
-    x1, y1, x2, y2 = boxes_x1y1x2y2.T
-    areas = (x2 - x1) * (y2 - y1)
-    order = scores.argsort()[::-1]
-    keep  = []
-    while order.size:
-        i = order[0]
-        keep.append(i)
-        xx1 = np.maximum(x1[i], x1[order[1:]])
-        yy1 = np.maximum(y1[i], y1[order[1:]])
-        xx2 = np.minimum(x2[i], x2[order[1:]])
-        yy2 = np.minimum(y2[i], y2[order[1:]])
-        inter = np.maximum(0, xx2 - xx1) * np.maximum(0, yy2 - yy1)
-        iou   = inter / (areas[i] + areas[order[1:]] - inter + 1e-6)
-        order = order[1:][iou <= iou_thresh]
-    return keep
+    3ch: R=Superior neighbour (las_idx+1), G=current, B=Inferior neighbour (las_idx-1).
+    Border channels are black (zeros).
 
-
-def infer_slices(session, data: np.ndarray, imgsz: int,
-                 conf_thresh: float, channels: int = 3) -> dict:
-    """Run ONNX inference on each axial slice.
-
-    data : (RL, AP, Z) float32 LAS volume at inference resolution
-    Returns {z_inf: (cx_norm, cy_norm, w_norm, h_norm)} normalised to [0,1]
-    in the inference (RL, AP) space — maps directly to native space via native dims.
+    Returns (slices_list, las_idxs_list) where las_idx is the LAS SI index in
+    the resampled volume (0 = Inferior, Z-1 = Superior).
     """
-    RL, AP, Z  = data.shape
-    input_name = session.get_inputs()[0].name
-    preds      = {}
+    RL, AP, Z = data.shape
+    black     = np.zeros((AP, RL), dtype=np.uint8)
+    slices, las_idxs = [], []
 
-    for z in range(Z):
-        # z=0 is Superior in LAS after preprocessing (slice_000 convention).
-        # 3ch: R=Superior neighbor (z-1), G=current, B=Inferior neighbor (z+1).
+    for las_idx in range(Z - 1, -1, -1):   # Superior → Inferior
+        cur = _get_slice(data, las_idx, black)
         if channels == 3:
-            sup_z = max(0, z - 1)
-            inf_z = min(Z - 1, z + 1)
-            img_hwc = np.stack([
-                normalize_to_uint8(data[:, :, sup_z]),
-                normalize_to_uint8(data[:, :, z]),
-                normalize_to_uint8(data[:, :, inf_z]),
-            ], axis=-1)
+            # R=Superior neighbour, G=current, B=Inferior neighbour (preprocess.py axial convention)
+            sup = _get_slice(data, las_idx + 1, black)
+            inf = _get_slice(data, las_idx - 1, black)
+            slices.append(np.stack([sup, cur, inf], axis=2))
         else:
-            img_hwc = normalize_to_uint8(data[:, :, z])[:, :, None]
+            slices.append(cur)
+        las_idxs.append(las_idx)
 
-        padded, scale, pad_top, pad_left = letterbox(img_hwc, imgsz)
+    return slices, las_idxs
 
-        inp = padded.transpose(2, 0, 1)[None].astype(np.float32) / 255.0
-        out = session.run(None, {input_name: inp})[0][0]
-        if out.shape[0] > out.shape[1]:  # [num_anchors, 5+] → [5+, num_anchors]
-            out = out.T
 
-        scores = out[4]
-        mask   = scores > conf_thresh
-        if not mask.any():
+# ─── YOLO inference ───────────────────────────────────────────────────────────
+
+def infer_slices(model, slices: list, las_idxs: list,
+                 conf_thresh: float) -> dict:
+    """Run YOLO inference on pre-built slices.
+
+    Returns {las_idx: (cx, cy, w, h)} where cx/cy/w/h are normalised [0,1]
+    in the slice image space (AP, RL) with ::-1 flip on both axes.
+    """
+    results = model.predict(slices, conf=conf_thresh, verbose=False)
+    preds   = {}
+    for las_idx, res in zip(las_idxs, results):
+        if res.boxes is None or len(res.boxes) == 0:
             continue
-
-        cxcywh = out[:4, mask].T
-        sc     = scores[mask]
-
-        x1 = cxcywh[:, 0] - cxcywh[:, 2] / 2
-        y1 = cxcywh[:, 1] - cxcywh[:, 3] / 2
-        x2 = cxcywh[:, 0] + cxcywh[:, 2] / 2
-        y2 = cxcywh[:, 1] + cxcywh[:, 3] / 2
-        keep     = _nms(np.stack([x1, y1, x2, y2], axis=1), sc)
-        best_idx = keep[int(np.argmax(sc[keep]))]
-
-        cx_lb, cy_lb, w_lb, h_lb = cxcywh[best_idx]
-
-        # Unletterbox → normalised to inference (RL, AP).
-        # Normalised coords map 1-to-1 to native space regardless of in-plane resampling.
-        cx_norm = (cx_lb - pad_left) / scale / AP
-        cy_norm = (cy_lb - pad_top)  / scale / RL
-        w_norm  = w_lb / scale / AP
-        h_norm  = h_lb / scale / RL
-
-        preds[z] = (cx_norm, cy_norm, w_norm, h_norm)
-
+        best         = int(res.boxes.conf.argmax())
+        cx, cy, w, h = res.boxes.xywhn[best].tolist()
+        preds[las_idx] = (cx, cy, w, h)
     return preds
 
 
@@ -191,16 +151,23 @@ def aggregate_bbox_3d(preds: dict,
                       si_zoom: float) -> tuple:
     """Aggregate per-slice detections → (rl1, rl2, ap1, ap2, z1, z2) in native LAS voxels.
 
-    si_zoom = si_mm_nat / si_res  (Z_inf = Z_nat * si_zoom).
-    Normalised in-plane coords scale directly to native dims (FOV-preserving resampling).
+    Slices were presented as (AP, RL) with ::-1 flip on both axes, so to map back
+    to native LAS indices: rl_c = (1-cx)*RL_nat, ap_c = (1-cy)*AP_nat.
+    Normalised in-plane coords are FOV-preserving → valid in native space directly.
+
+    si_zoom = si_mm_nat / si_res; z_nat = round(las_idx_inf / si_zoom).
     """
     rl1s, rl2s, ap1s, ap2s, zs = [], [], [], [], []
-    for z_inf, (cx, cy, w, h) in preds.items():
-        z_nat = min(Z_nat - 1, round(z_inf / si_zoom))
-        rl1s.append(max(0,      int((cy - h / 2) * RL_nat)))
-        rl2s.append(min(RL_nat, int((cy + h / 2) * RL_nat)))
-        ap1s.append(max(0,      int((cx - w / 2) * AP_nat)))
-        ap2s.append(min(AP_nat, int((cx + w / 2) * AP_nat)))
+    for las_idx_inf, (cx, cy, w, h) in preds.items():
+        z_nat   = min(Z_nat - 1, round(las_idx_inf / si_zoom))
+        rl_c    = (1.0 - cx) * RL_nat
+        ap_c    = (1.0 - cy) * AP_nat
+        rl_half = w / 2 * RL_nat
+        ap_half = h / 2 * AP_nat
+        rl1s.append(max(0,      int(rl_c - rl_half)))
+        rl2s.append(min(RL_nat, int(rl_c + rl_half)))
+        ap1s.append(max(0,      int(ap_c - ap_half)))
+        ap2s.append(min(AP_nat, int(ap_c + ap_half)))
         zs.append(z_nat)
     return min(rl1s), max(rl2s), min(ap1s), max(ap2s), min(zs), max(zs)
 
@@ -238,55 +205,34 @@ def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
 
 # ─── Debug panel ──────────────────────────────────────────────────────────────
 
-def save_debug_panel(session, data: np.ndarray, imgsz: int,
-                     channels: int, conf_thresh: float, out_path: str) -> None:
+def save_debug_panel(model, slices: list, las_idxs: list,
+                     conf_thresh: float, out_path: str) -> None:
     """Save a near-square panel of all axial slices with max-confidence bbox.
 
-    Each cell shows the max-confidence detection regardless of threshold.
+    Runs inference at conf=0.001 so every slice shows its best prediction.
     bbox color: green if conf ≥ conf_thresh, orange otherwise.
     """
-    CELL = 128
-    RL, AP, Z  = data.shape
-    input_name = session.get_inputs()[0].name
-    cells      = []
+    CELL    = 128
+    results = model.predict(slices, conf=0.001, verbose=False)
+    cells   = []
 
-    for z in range(Z):
-        if channels == 3:
-            sup_z = max(0, z - 1)
-            inf_z = min(Z - 1, z + 1)
-            img_hwc = np.stack([
-                normalize_to_uint8(data[:, :, sup_z]),
-                normalize_to_uint8(data[:, :, z]),
-                normalize_to_uint8(data[:, :, inf_z]),
-            ], axis=-1)
-        else:
-            gray    = normalize_to_uint8(data[:, :, z])[:, :, None]
-            img_hwc = np.repeat(gray, 3, axis=-1)
+    for las_idx, res, sl in zip(las_idxs, results, slices):
+        rgb  = sl if sl.ndim == 3 else np.stack([sl] * 3, axis=-1)
+        cell = PILImage.fromarray(rgb).resize((CELL, CELL), PILImage.BILINEAR)
+        draw = ImageDraw.Draw(cell)
 
-        padded, _scale, _pt, _pl = letterbox(img_hwc, imgsz)
-        inp = padded.transpose(2, 0, 1)[None].astype(np.float32) / 255.0
-        out = session.run(None, {input_name: inp})[0][0]
-        if out.shape[0] > out.shape[1]:  # [num_anchors, 5+] → [5+, num_anchors]
-            out = out.T
+        if res.boxes is not None and len(res.boxes) > 0:
+            best         = int(res.boxes.conf.argmax())
+            conf         = float(res.boxes.conf[best])
+            cx, cy, w, h = res.boxes.xywhn[best].tolist()
+            x1, y1 = (cx - w / 2) * CELL, (cy - h / 2) * CELL
+            x2, y2 = (cx + w / 2) * CELL, (cy + h / 2) * CELL
+            color = (0, 220, 0) if conf >= conf_thresh else (255, 140, 0)
+            draw.rectangle([x1, y1, x2, y2], outline=color, width=1)
+            draw.text((2, CELL - 11), f"{conf:.2f}", fill=color)
 
-        scores   = out[4]
-        best_idx = int(np.argmax(scores))
-        conf     = float(scores[best_idx])
-
-        cell_img = PILImage.fromarray(padded).resize((CELL, CELL), PILImage.BILINEAR)
-        draw     = ImageDraw.Draw(cell_img)
-
-        k         = CELL / imgsz
-        cx, cy, w, h = out[:4, best_idx]
-        x1, y1    = (cx - w / 2) * k, (cy - h / 2) * k
-        x2, y2    = (cx + w / 2) * k, (cy + h / 2) * k
-        color     = (0, 220, 0) if conf >= conf_thresh else (255, 140, 0)
-        draw.rectangle([x1, y1, x2, y2], outline=color, width=1)
-
-        draw.text((2, 1),          f"z{z}",        fill=(200, 200, 200))
-        draw.text((2, CELL - 11),  f"{conf:.2f}",  fill=color)
-
-        cells.append(cell_img)
+        draw.text((2, 1), f"z{las_idx}", fill=(200, 200, 200))
+        cells.append(cell)
 
     n    = len(cells)
     cols = math.ceil(math.sqrt(n))
@@ -309,19 +255,18 @@ def run(input_path: str,
         model_path: str | None = None,
         padding_mm: float = 10.0,
         conf: float | None = None,
-        device: str = "auto",
         debug: bool = False) -> str:
     """Full pipeline: load → LAS → resample → infer → bbox 3D → crop → reorient → save.
 
-    model_path  : chemin vers model.onnx. Par défaut : ~/.sc_crop/sc_crop_models/model.onnx
-                  (téléchargé automatiquement si absent via ensure_model()).
-    config      : dict (si_res, inplane_res, channels, conf). Par défaut : lu depuis
-                  config.yaml au même endroit que model_path.
-    output_path : fichier de sortie. Par défaut : <input>_crop.nii.gz au même endroit.
-    Returns     : chemin vers le volume croppé sauvegardé.
+    model_path  : path to model.pt. Default: ~/.sc_crop/sc_crop_models/model.pt
+                  (auto-downloaded if absent via ensure_model()).
+    config      : dict (si_res, inplane_res, channels, conf). Default: loaded from
+                  config.yaml next to model.pt.
+    output_path : output file. Default: <input>_crop.nii.gz next to input.
+    Returns     : path to the saved cropped volume.
     """
     from .download import ensure_model
-    import onnxruntime as ort
+    from ultralytics import YOLO
 
     model_path = Path(model_path) if model_path else ensure_model()
     config     = config if config is not None else load_config(model_path.parent)
@@ -331,15 +276,12 @@ def run(input_path: str,
     channels    = config.get("channels", 3)
     conf        = conf if conf is not None else config.get("conf", 0.1)
 
-    providers = (["CPUExecutionProvider"] if device == "cpu"
-                 else ["CUDAExecutionProvider", "CPUExecutionProvider"])
-
     img           = nib.load(input_path)
     original_ornt = nib.io_orientation(img.affine)
     img_las       = reorient_to_las(img)
     RL_nat, AP_nat, Z_nat = img_las.shape
     si_mm_nat     = float(img_las.header.get_zooms()[2])
-    rl_mm_nat, ap_mm_nat  = [float(v) for v in img_las.header.get_zooms()[:2]]
+    rl_mm_nat, ap_mm_nat = [float(v) for v in img_las.header.get_zooms()[:2]]
     si_zoom       = si_mm_nat / si_res
 
     print(f"Input   : {Path(input_path).name}  shape={img.shape}  zooms={img.header.get_zooms()[:3]}")
@@ -350,18 +292,18 @@ def run(input_path: str,
     data_inf = img_inf.get_fdata(dtype=np.float32)
     print(f"Infer   : shape={data_inf.shape}  si_zoom={si_zoom:.3f}")
 
-    session = ort.InferenceSession(str(model_path), providers=providers)
-    print(f"Device  : {session.get_providers()[0]}")
-    imgsz = session.get_inputs()[0].shape[2]
-    print(f"Model   : imgsz={imgsz}  channels={channels}  conf={conf}")
+    model = YOLO(str(model_path))
+    print(f"Model   : {model_path.name}  channels={channels}  conf={conf}")
+
+    slices, las_idxs = build_slices(data_inf, channels)
 
     if debug:
         inp_p      = Path(input_path)
         stem       = inp_p.name.replace(".nii.gz", "").replace(".nii", "")
         debug_path = str(inp_p.parent / f"{stem}_debug.png")
-        save_debug_panel(session, data_inf, imgsz, channels, conf, debug_path)
+        save_debug_panel(model, slices, las_idxs, conf, debug_path)
 
-    preds = infer_slices(session, data_inf, imgsz, conf, channels)
+    preds = infer_slices(model, slices, las_idxs, conf)
     print(f"Detected: {len(preds)}/{data_inf.shape[2]} slices")
 
     if not preds:
@@ -381,8 +323,8 @@ def run(input_path: str,
     cropped = reorient_to_original(cropped_las, original_ornt)
 
     if output_path is None:
-        inp    = Path(input_path)
-        stem   = inp.name.replace(".nii.gz", "").replace(".nii", "")
+        inp        = Path(input_path)
+        stem       = inp.name.replace(".nii.gz", "").replace(".nii", "")
         output_path = str(inp.parent / f"{stem}_crop.nii.gz")
 
     nib.save(cropped, output_path)

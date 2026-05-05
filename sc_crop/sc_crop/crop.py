@@ -3,7 +3,7 @@ Core logic for spinal cord detection and volume cropping.
 
 Uses ultralytics YOLO (best.pt) for inference — identical preprocessing to the
 training pipeline (preprocess.py): LAS reorientation, nibabel resample_to_output,
-axial slices as data[:, :, las_idx].T[::-1, ::-1] → (AP, RL, C) uint8.
+axial slices as data[:, :, las_idx].T → (AP, RL, C) uint8.
 
 The output is saved in LAS orientation for visualization (e.g., fsleyes).
 
@@ -108,14 +108,14 @@ def _get_slice(data: np.ndarray, las_idx: int,
                black: np.ndarray) -> np.ndarray:
     """Extract one axial slice in (AP, RL) uint8, identical to preprocess.py.
 
-    Convention: data[:, :, las_idx].T[::-1, ::-1]
+        Convention: data[:, :, las_idx].T
       rows = AP (row 0 = Anterior), cols = RL (col 0 = Left).
     Out-of-bounds las_idx returns a black frame.
     """
     Z = data.shape[2]
     if las_idx < 0 or las_idx >= Z:
         return black
-    return normalize_to_uint8(data[:, :, las_idx]).T[::-1, ::-1]
+        return normalize_to_uint8(data[:, :, las_idx]).T
 
 
 def build_slices(data: np.ndarray, channels: int) -> tuple:
@@ -152,7 +152,7 @@ def infer_slices(model, slices: list, las_idxs: list,
     """Run YOLO inference on pre-built slices.
 
     Returns {las_idx: (cx, cy, w, h)} where cx/cy/w/h are normalised [0,1]
-    in the slice image space (AP, RL) with ::-1 flip on both axes.
+    in the slice image space (AP, RL).
     """
     results = model.predict(slices, conf=conf_thresh, verbose=False)
     preds   = {}
@@ -219,8 +219,8 @@ def aggregate_bbox_3d(preds: dict,
                       si_zoom: float) -> tuple:
     """Aggregate per-slice detections → (rl1, rl2, ap1, ap2, z1, z2) in native LAS voxels.
 
-    Slices were presented as (AP, RL) with ::-1 flip on both axes, so to map back
-    to native LAS indices: rl_c = (1-cx)*RL_nat, ap_c = (1-cy)*AP_nat.
+    Slices were presented as (AP, RL), so to map back to native LAS indices:
+    rl_c = cx * RL_nat, ap_c = cy * AP_nat.
     Normalised in-plane coords are FOV-preserving → valid in native space directly.
 
     si_zoom = si_mm_nat / si_res; z_nat = round(las_idx_inf / si_zoom).
@@ -228,8 +228,8 @@ def aggregate_bbox_3d(preds: dict,
     rl1s, rl2s, ap1s, ap2s, zs = [], [], [], [], []
     for las_idx_inf, (cx, cy, w, h) in preds.items():
         z_nat   = min(Z_nat - 1, round(las_idx_inf / si_zoom))
-        rl_c    = (1.0 - cx) * RL_nat
-        ap_c    = (1.0 - cy) * AP_nat
+        rl_c    = cx * RL_nat
+        ap_c    = cy * AP_nat
         rl_half = w / 2 * RL_nat
         ap_half = h / 2 * AP_nat
         rl1s.append(max(0,      int(rl_c - rl_half)))
@@ -306,7 +306,7 @@ def save_debug_panel(model, slices: list, las_idxs: list,
             - Red rectangle: boundaries of 3D crop region (rl1p:rl2p, ap1p:ap2p)
             - Shown on slices within crop z-range (z1p:z2p)
     
-        Slice convention: data[:, :, z].T[::-1, ::-1] gives (AP, RL) with both axes flipped.
+        Slice convention: data[:, :, z].T gives (AP, RL) with row 0 = Anterior and col 0 = Left.
     """
     CELL    = 128
     results = model.predict(slices, conf=0.001, verbose=False)
@@ -335,14 +335,11 @@ def save_debug_panel(model, slices: list, las_idxs: list,
         # Draw padded bbox 3D region (red)
         # Slice convention: rows=AP (0=Anterior), cols=RL flipped (0=Right after flip)
         if has_padded and padded_z1 <= las_idx <= padded_z2:
-            # Map voxel coords to pixel coords, accounting for flip
-            # AP: mapping follows aggregate_bbox_3d convention: cy = 1 - (ap / AP)
-            # therefore top edge = 1 - ap2/AP, bottom = 1 - ap1/AP
-            y1_pad = (1.0 - padded_ap2 / H) * CELL
-            y2_pad = (1.0 - padded_ap1 / H) * CELL
-            # RL: flipped, col increases from right to left in display
-            x1_pad = (1.0 - padded_rl2 / W) * CELL
-            x2_pad = (1.0 - padded_rl1 / W) * CELL
+            # Direct mapping in LAS slice space: row 0 = Anterior, col 0 = Left.
+            y1_pad = (padded_ap1 / H) * CELL
+            y2_pad = (padded_ap2 / H) * CELL
+            x1_pad = (padded_rl1 / W) * CELL
+            x2_pad = (padded_rl2 / W) * CELL
             draw.rectangle([x1_pad, y1_pad, x2_pad, y2_pad], outline=(255, 0, 0), width=2)
 
         draw.text((2, 1), f"z{las_idx}", fill=(200, 200, 200))

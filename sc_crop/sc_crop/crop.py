@@ -214,24 +214,25 @@ def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
 
     # Parse padding: convert float to symmetric tuple
     pad_rl_left, pad_rl_right = (padding_rl_mm, padding_rl_mm) if isinstance(padding_rl_mm, (int, float)) else padding_rl_mm
-    pad_ap_post, pad_ap_ant = (padding_ap_mm, padding_ap_mm) if isinstance(padding_ap_mm, (int, float)) else padding_ap_mm
-    pad_si_inf, pad_si_sup = (padding_si_mm, padding_si_mm) if isinstance(padding_si_mm, (int, float)) else padding_si_mm
+    pad_ap_ant, pad_ap_post = (padding_ap_mm, padding_ap_mm) if isinstance(padding_ap_mm, (int, float)) else padding_ap_mm
+    pad_si_sup, pad_si_inf = (padding_si_mm, padding_si_mm) if isinstance(padding_si_mm, (int, float)) else padding_si_mm
 
     # Convert mm to voxels
     pad_rl_left_vox = int(np.ceil(pad_rl_left / rl_mm))
     pad_rl_right_vox = int(np.ceil(pad_rl_right / rl_mm))
-    pad_ap_post_vox = int(np.ceil(pad_ap_post / ap_mm))
     pad_ap_ant_vox = int(np.ceil(pad_ap_ant / ap_mm))
-    pad_si_inf_vox = int(np.ceil(pad_si_inf / si_mm))
+    pad_ap_post_vox = int(np.ceil(pad_ap_post / ap_mm))
     pad_si_sup_vox = int(np.ceil(pad_si_sup / si_mm))
+    pad_si_inf_vox = int(np.ceil(pad_si_inf / si_mm))
 
     # Apply padding, clamped to bounds
+    # LAS convention: L (0→Left), A (0→Anterior), S (0→Superior)
     rl1p = max(0,  rl1 - pad_rl_left_vox)
     rl2p = min(RL, rl2 + pad_rl_right_vox)
-    ap1p = max(0,  ap1 - pad_ap_post_vox)
-    ap2p = min(AP, ap2 + pad_ap_ant_vox)
-    z1p  = max(0,  z1  - pad_si_inf_vox)
-    z2p  = min(Z,  z2  + pad_si_sup_vox)
+    ap1p = max(0,  ap1 - pad_ap_ant_vox)
+    ap2p = min(AP, ap2 + pad_ap_post_vox)
+    z1p  = max(0,  z1  - pad_si_sup_vox)
+    z2p  = min(Z,  z2  + pad_si_inf_vox)
 
     data    = img_las.get_fdata(dtype=np.float32)
     cropped = data[rl1p:rl2p, ap1p:ap2p, z1p:z2p]
@@ -403,24 +404,24 @@ def run(input_path: str,
 
     # Compute padded bbox for debug
     if debug:
-        # Parse padding to compute padded coords
+        # Parse padding to compute padded coords (same convention as crop_volume)
         pad_rl_left, pad_rl_right = (padding_rl_mm, padding_rl_mm) if isinstance(padding_rl_mm, (int, float)) else padding_rl_mm
-        pad_ap_post, pad_ap_ant = (padding_ap_mm, padding_ap_mm) if isinstance(padding_ap_mm, (int, float)) else padding_ap_mm
-        pad_si_inf, pad_si_sup = (padding_si_mm, padding_si_mm) if isinstance(padding_si_mm, (int, float)) else padding_si_mm
+        pad_ap_ant, pad_ap_post = (padding_ap_mm, padding_ap_mm) if isinstance(padding_ap_mm, (int, float)) else padding_ap_mm
+        pad_si_sup, pad_si_inf = (padding_si_mm, padding_si_mm) if isinstance(padding_si_mm, (int, float)) else padding_si_mm
 
         pad_rl_left_vox = int(np.ceil(pad_rl_left / rl_mm_nat))
         pad_rl_right_vox = int(np.ceil(pad_rl_right / rl_mm_nat))
-        pad_ap_post_vox = int(np.ceil(pad_ap_post / ap_mm_nat))
         pad_ap_ant_vox = int(np.ceil(pad_ap_ant / ap_mm_nat))
-        pad_si_inf_vox = int(np.ceil(pad_si_inf / si_mm_nat))
+        pad_ap_post_vox = int(np.ceil(pad_ap_post / ap_mm_nat))
         pad_si_sup_vox = int(np.ceil(pad_si_sup / si_mm_nat))
+        pad_si_inf_vox = int(np.ceil(pad_si_inf / si_mm_nat))
 
         rl1p = max(0,  rl1 - pad_rl_left_vox)
         rl2p = min(RL_nat, rl2 + pad_rl_right_vox)
-        ap1p = max(0,  ap1 - pad_ap_post_vox)
-        ap2p = min(AP_nat, ap2 + pad_ap_ant_vox)
-        z1p  = max(0,  z1  - pad_si_inf_vox)
-        z2p  = min(Z_nat,  z2  + pad_si_sup_vox)
+        ap1p = max(0,  ap1 - pad_ap_ant_vox)
+        ap2p = min(AP_nat, ap2 + pad_ap_post_vox)
+        z1p  = max(0,  z1  - pad_si_sup_vox)
+        z2p  = min(Z_nat,  z2  + pad_si_inf_vox)
         padded_bbox_debug = (rl1p, rl2p, ap1p, ap2p, z1p, z2p)
     else:
         padded_bbox_debug = None

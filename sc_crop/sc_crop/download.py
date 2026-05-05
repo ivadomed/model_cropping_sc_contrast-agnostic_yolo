@@ -22,7 +22,7 @@ from pathlib import Path
 # Mis à jour à chaque release.
 _RELEASE_URL = (
     "https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo"
-    "/releases/download/v0.1.0/sc_crop_models_v0.1.0.zip"
+    "/releases/download/v0.2.0/sc_crop_models_v0.2.0.zip"
 )
 
 _DATA_DIR = Path.home() / ".sc_crop" / "sc_crop_models"

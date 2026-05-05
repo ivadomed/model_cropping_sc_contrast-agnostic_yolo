@@ -60,6 +60,14 @@ def reorient_to_original(img_las: nib.Nifti1Image,
     return img_las.as_reoriented(transform)
 
 
+def reorient_to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
+    """Reorient image to LAS convention for fsleyes."""
+    current_ornt = io_orientation(img.affine)
+    las_ornt     = axcodes2ornt(("L", "A", "S"))
+    transform    = ornt_transform(current_ornt, las_ornt)
+    return img.as_reoriented(transform)
+
+
 # ─── Resampling ───────────────────────────────────────────────────────────────
 
 def resample_for_inference(img_las: nib.Nifti1Image,
@@ -449,7 +457,7 @@ def run(input_path: str,
     print(f"Padded  : RL [{rl1p}:{rl2p}]  AP [{ap1p}:{ap2p}]  SI [{z1p}:{z2p}]  "
           f"→ shape=({rl2p-rl1p},{ap2p-ap1p},{z2p-z1p})")
 
-    cropped = reorient_to_original(cropped_las, original_ornt)
+    cropped = reorient_to_las(cropped_las)
 
     if output_path is None:
         inp        = Path(input_path)

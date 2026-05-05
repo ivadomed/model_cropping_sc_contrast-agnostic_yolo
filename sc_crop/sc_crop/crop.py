@@ -330,8 +330,8 @@ def save_debug_panel(model, slices: list, las_idxs: list,
         if has_padded and padded_z1 <= las_idx <= padded_z2:
             x1_pad = (padded_rl1 / W) * CELL
             x2_pad = (padded_rl2 / W) * CELL
-            y1_pad = (padded_ap1 / H) * CELL
-            y2_pad = (padded_ap2 / H) * CELL
+            y1_pad = (1 - padded_ap1 / H) * CELL
+            y2_pad = (1 - padded_ap2 / H) * CELL
             draw.rectangle([x1_pad, y1_pad, x2_pad, y2_pad], outline=(255, 0, 0), width=2)
 
         draw.text((2, 1), f"z{las_idx}", fill=(200, 200, 200))

@@ -303,9 +303,10 @@ def save_debug_panel(model, slices: list, las_idxs: list,
         # Slice convention: rows=AP (0=Anterior), cols=RL flipped (0=Right after flip)
         if has_padded and padded_z1 <= las_idx <= padded_z2:
             # Map voxel coords to pixel coords, accounting for flip
-            # AP: no flip, row increases from anterior to posterior
-            y1_pad = (padded_ap1 / H) * CELL
-            y2_pad = (padded_ap2 / H) * CELL
+            # AP: mapping follows aggregate_bbox_3d convention: cy = 1 - (ap / AP)
+            # therefore top edge = 1 - ap2/AP, bottom = 1 - ap1/AP
+            y1_pad = (1.0 - padded_ap2 / H) * CELL
+            y2_pad = (1.0 - padded_ap1 / H) * CELL
             # RL: flipped, col increases from right to left in display
             x1_pad = (1.0 - padded_rl2 / W) * CELL
             x2_pad = (1.0 - padded_rl1 / W) * CELL

@@ -329,8 +329,8 @@ def save_debug_panel(model, slices: list, las_idxs: list,
         # LAS rl_vox → image_x = (1 - rl_vox/W)*CELL ; LAS ap_vox → image_y = (1 - ap_vox/H)*CELL
         if has_padded and padded_z1 <= las_idx <= padded_z2:
             # RL (pas de flip)
-            x1_pad = (1 - padded_rl2 / W) * CELL
-            x2_pad = (1 - padded_rl1 / W) * CELL
+            x1_pad = (padded_rl1 / W) * CELL
+            x2_pad = (padded_rl2 / W) * CELL
 
             # AP (flip vertical)
             y1_pad = (1 - padded_ap2 / H) * CELL

@@ -17,7 +17,7 @@ source ~/.venvs/sc_crop/bin/activate        # Linux / Mac
 Install CPU-only versions of PyTorch first to avoid downloading large CUDA libraries unnecessarily:
 
 ```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cpu
 ```
 
 Then install the package:

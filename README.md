@@ -7,13 +7,12 @@
 ### Install
 
 ```bash
-pip install git+https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git#subdirectory=sc_crop
-```
-
-Or if you have cloned the repository:
-
-```bash
-pip install model_cropping_sc_contrast-agnostic_yolo/sc_crop/
+git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo
+cd model_cropping_sc_contrast-agnostic_yolo
+conda create -n sc_crop python=3.11
+conda activate sc_crop
+pip install -r requirements.txt
+pip install -e sc_crop/
 ```
 
 ### Download the model

@@ -35,6 +35,8 @@ def main():
                         help="Detection confidence threshold (default: from config.yaml)")
     parser.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"],
                         help="Inference device (GPU requires onnxruntime-gpu)")
+    parser.add_argument("--debug", action="store_true",
+                        help="Print per-slice detections and intermediate bbox values")
     args = parser.parse_args()
 
     run(
@@ -44,6 +46,7 @@ def main():
         padding_mm  = args.padding,
         conf        = args.conf,
         device      = args.device,
+        debug       = args.debug,
     )
 
 

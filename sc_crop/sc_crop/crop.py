@@ -11,10 +11,14 @@ Usage:
     from sc_crop.crop import run, load_config
     config = load_config()
     out = run("t2.nii.gz", config=config)
+    out = run("t2.nii.gz", config=config, debug=True)
+    # debug=True → also saves <stem>_debug.png: panel of all slices
+    # with max-confidence bbox overlaid (no threshold), green if conf≥0.1 else orange
 """
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import nibabel as nib
@@ -22,6 +26,7 @@ import numpy as np
 from nibabel.orientations import axcodes2ornt, ornt_transform
 from nibabel.processing import resample_to_output
 from PIL import Image as PILImage
+from PIL import ImageDraw
 
 
 def load_config(model_dir: str | Path) -> dict:
@@ -229,6 +234,69 @@ def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
     return nib.Nifti1Image(cropped, affine), (rl1p, rl2p, ap1p, ap2p, z1p, z2p)
 
 
+# ─── Debug panel ──────────────────────────────────────────────────────────────
+
+def save_debug_panel(session, data: np.ndarray, imgsz: int,
+                     channels: int, conf_thresh: float, out_path: str) -> None:
+    """Save a near-square panel of all axial slices with max-confidence bbox.
+
+    Each cell shows the max-confidence detection regardless of threshold.
+    bbox color: green if conf ≥ conf_thresh, orange otherwise.
+    """
+    CELL = 128
+    RL, AP, Z  = data.shape
+    input_name = session.get_inputs()[0].name
+    cells      = []
+
+    for z in range(Z):
+        if channels == 3:
+            sup_z = max(0, z - 1)
+            inf_z = min(Z - 1, z + 1)
+            img_hwc = np.stack([
+                normalize_to_uint8(data[:, :, sup_z]),
+                normalize_to_uint8(data[:, :, z]),
+                normalize_to_uint8(data[:, :, inf_z]),
+            ], axis=-1)
+        else:
+            gray    = normalize_to_uint8(data[:, :, z])[:, :, None]
+            img_hwc = np.repeat(gray, 3, axis=-1)
+
+        padded, _scale, _pt, _pl = letterbox(img_hwc, imgsz)
+        inp = padded.transpose(2, 0, 1)[None].astype(np.float32) / 255.0
+        out = session.run(None, {input_name: inp})[0][0]  # [5+, anchors]
+
+        scores   = out[4]
+        best_idx = int(np.argmax(scores))
+        conf     = float(scores[best_idx])
+
+        cell_img = PILImage.fromarray(padded).resize((CELL, CELL), PILImage.BILINEAR)
+        draw     = ImageDraw.Draw(cell_img)
+
+        k         = CELL / imgsz
+        cx, cy, w, h = out[:4, best_idx]
+        x1, y1    = (cx - w / 2) * k, (cy - h / 2) * k
+        x2, y2    = (cx + w / 2) * k, (cy + h / 2) * k
+        color     = (0, 220, 0) if conf >= conf_thresh else (255, 140, 0)
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=1)
+
+        draw.text((2, 1),          f"z{z}",        fill=(200, 200, 200))
+        draw.text((2, CELL - 11),  f"{conf:.2f}",  fill=color)
+
+        cells.append(cell_img)
+
+    n    = len(cells)
+    cols = math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+
+    canvas = PILImage.new("RGB", (cols * CELL, rows * CELL), (20, 20, 20))
+    for i, cell in enumerate(cells):
+        r, c = divmod(i, cols)
+        canvas.paste(cell, (c * CELL, r * CELL))
+
+    canvas.save(out_path)
+    print(f"Debug   : {out_path}")
+
+
 # ─── Main entry point ─────────────────────────────────────────────────────────
 
 def run(input_path: str,
@@ -237,7 +305,8 @@ def run(input_path: str,
         model_path: str | None = None,
         padding_mm: float = 10.0,
         conf: float | None = None,
-        device: str = "auto") -> str:
+        device: str = "auto",
+        debug: bool = False) -> str:
     """Full pipeline: load → LAS → resample → infer → bbox 3D → crop → reorient → save.
 
     model_path  : chemin vers model.onnx. Par défaut : ~/.sc_crop/sc_crop_models/model.onnx
@@ -266,18 +335,30 @@ def run(input_path: str,
     img_las       = reorient_to_las(img)
     RL_nat, AP_nat, Z_nat = img_las.shape
     si_mm_nat     = float(img_las.header.get_zooms()[2])
+    rl_mm_nat, ap_mm_nat  = [float(v) for v in img_las.header.get_zooms()[:2]]
     si_zoom       = si_mm_nat / si_res
+
+    print(f"Input   : {Path(input_path).name}  shape={img.shape}  zooms={img.header.get_zooms()[:3]}")
+    print(f"LAS     : shape=({RL_nat},{AP_nat},{Z_nat})  "
+          f"res=({rl_mm_nat:.2f},{ap_mm_nat:.2f},{si_mm_nat:.2f})mm")
 
     img_inf  = resample_for_inference(img_las, si_res, inplane_res)
     data_inf = img_inf.get_fdata(dtype=np.float32)
+    print(f"Infer   : shape={data_inf.shape}  si_zoom={si_zoom:.3f}")
 
     session = ort.InferenceSession(str(model_path), providers=providers)
     print(f"Device  : {session.get_providers()[0]}")
     imgsz = session.get_inputs()[0].shape[2]
+    print(f"Model   : imgsz={imgsz}  channels={channels}  conf={conf}")
 
-    print(f"Slices  : {data_inf.shape[2]} at {si_res} mm SI"
-          + (f", {inplane_res} mm in-plane" if inplane_res else ""))
+    if debug:
+        inp_p      = Path(input_path)
+        stem       = inp_p.name.replace(".nii.gz", "").replace(".nii", "")
+        debug_path = str(inp_p.parent / f"{stem}_debug.png")
+        save_debug_panel(session, data_inf, imgsz, channels, conf, debug_path)
+
     preds = infer_slices(session, data_inf, imgsz, conf, channels)
+    print(f"Detected: {len(preds)}/{data_inf.shape[2]} slices")
 
     if not preds:
         raise RuntimeError(
@@ -288,8 +369,12 @@ def run(input_path: str,
     rl1, rl2, ap1, ap2, z1, z2 = bbox
     print(f"SC bbox : RL [{rl1}:{rl2}]  AP [{ap1}:{ap2}]  SI [{z1}:{z2}]  (before padding)")
 
-    cropped_las, _ = crop_volume(img_las, bbox, padding_mm)
-    cropped        = reorient_to_original(cropped_las, original_ornt)
+    cropped_las, bbox_pad = crop_volume(img_las, bbox, padding_mm)
+    rl1p, rl2p, ap1p, ap2p, z1p, z2p = bbox_pad
+    print(f"Padded  : RL [{rl1p}:{rl2p}]  AP [{ap1p}:{ap2p}]  SI [{z1p}:{z2p}]  "
+          f"→ shape=({rl2p-rl1p},{ap2p-ap1p},{z2p-z1p})")
+
+    cropped = reorient_to_original(cropped_las, original_ornt)
 
     if output_path is None:
         inp    = Path(input_path)

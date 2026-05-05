@@ -391,7 +391,8 @@ def run(input_path: str,
     padding_ap_mm : padding in Anterior-Posterior direction. float or (anterior_mm, posterior_mm).
     padding_si_mm : padding in Superior-Inferior direction. float or (superior_mm, inferior_mm).
         Returns       : dict with:
-      - output: path to the saved cropped volume
+            - output: path to the saved cropped volume after padding
+            - output_before_file: path to the saved cropped volume before padding
             - bbox_file: path to the bbox txt file (after padding, backward-compatible)
             - bbox_before_file: path to bbox txt file before padding
             - bbox_after_file: path to bbox txt file after padding
@@ -444,10 +445,12 @@ def run(input_path: str,
     rl1, rl2, ap1, ap2, z1, z2 = bbox
     print(f"SC bbox : RL [{rl1}:{rl2}]  AP [{ap1}:{ap2}]  SI [{z1}:{z2}]  (before padding)")
 
-    bbox_before_mm = bbox_vox_to_mm(
-        img_las, bbox, rl_mm_nat, ap_mm_nat, si_mm_nat,
-        original_affine=original_affine
+    cropped_before_las, _, bbox_before_mm = crop_volume(
+        img_las, bbox,
+        original_affine=original_affine,
+        rl_mm=rl_mm_nat, ap_mm=ap_mm_nat, si_mm=si_mm_nat
     )
+    cropped_before = reorient_to_las(cropped_before_las)
 
     # Compute padded bbox ONCE (single source of truth)
     padded_bbox = compute_padded_bbox_3d(
@@ -482,6 +485,12 @@ def run(input_path: str,
         inp        = Path(input_path)
         stem       = inp.name.replace(".nii.gz", "").replace(".nii", "")
         output_path = str(inp.parent / f"{stem}_crop.nii.gz")
+
+    out_path = Path(output_path)
+    output_before_path = str(out_path.parent / out_path.name.replace(".nii.gz", "_before_padding.nii.gz").replace(".nii", "_before_padding.nii"))
+
+    nib.save(cropped_before, output_before_path)
+    print(f"Saved   : {output_before_path}  shape={cropped_before.shape}")
 
     nib.save(cropped, output_path)
     print(f"Saved   : {output_path}  shape={cropped.shape}")
@@ -523,6 +532,7 @@ def run(input_path: str,
     print(f"BBox post: {bbox_after_path}")
 
     return {
+        "output_before_file": output_before_path,
         "output": output_path,
         "bbox_file": str(bbox_path),
         "bbox_before_file": str(bbox_before_path),

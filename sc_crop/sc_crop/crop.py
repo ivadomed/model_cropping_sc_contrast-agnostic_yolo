@@ -9,8 +9,19 @@ The output is in the same orientation, space, and resolution as the input.
 
 Usage:
     from sc_crop.crop import run, load_config
-    out = run("t2.nii.gz")
-    out = run("t2.nii.gz", debug=True)
+    
+    # Symmetric padding (same on both faces)
+    result = run("t2.nii.gz", padding_rl_mm=10.0, padding_ap_mm=15.0, padding_si_mm=20.0)
+    
+    # Asymmetric padding per face: (left/ant/sup, right/post/inf)
+    result = run("t2.nii.gz", 
+                 padding_rl_mm=(5.0, 15.0),   # 5mm Left, 15mm Right
+                 padding_ap_mm=(10.0, 20.0),  # 10mm Anterior, 20mm Posterior
+                 padding_si_mm=(15.0, 25.0))  # 15mm Superior, 25mm Inferior
+    
+    output_path = result["output"]
+    corner_mm, sizes_mm = result["bbox_mm"]
+    result = run("t2.nii.gz", debug=True)
     # debug=True → also saves <stem>_debug.png: panel of all slices with
     # max-confidence bbox overlaid (no threshold), green if conf ≥ threshold, orange otherwise.
 """
@@ -175,25 +186,52 @@ def aggregate_bbox_3d(preds: dict,
 # ─── Crop ─────────────────────────────────────────────────────────────────────
 
 def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
-                padding_rl_mm: float,
-                padding_ap_mm: float,
-                padding_si_mm: float) -> tuple:
-    """Crop LAS NIfTI around bbox with per-axis padding.
+                padding_rl_mm: float | tuple = 10.0,
+                padding_ap_mm: float | tuple = 15.0,
+                padding_si_mm: float | tuple = 20.0,
+                original_affine: np.ndarray | None = None) -> tuple:
+    """Crop LAS NIfTI around bbox with per-face padding.
 
-    Returns (cropped_las_nifti, padded_bbox).
+    Returns (cropped_las_nifti, padded_bbox, bbox_mm).
     Affine is updated so the crop sits at the correct world position.
+    
+    padding_*_mm can be:
+      - float: symmetric padding on both sides
+      - (left_mm, right_mm): asymmetric padding
+    
+    For LAS convention:
+      - padding_rl_mm: (Left, Right) padding
+      - padding_ap_mm: (Anterior, Posterior) padding  
+      - padding_si_mm: (Superior, Inferior) padding
+    
+    Padding is clamped to image bounds (no extrapolation).
+    bbox_mm: (corner_mm, sizes_mm) where corner_mm is the min corner in mm (original space)
+             and sizes_mm are the 3D dimensions in mm [RL_size, AP_size, SI_size].
     """
     RL, AP, Z  = img_las.shape
     rl_mm, ap_mm, si_mm = [float(v) for v in img_las.header.get_zooms()[:3]]
     rl1, rl2, ap1, ap2, z1, z2 = bbox
 
-    pad_rl = int(np.ceil(padding_rl_mm / rl_mm))
-    pad_ap = int(np.ceil(padding_ap_mm / ap_mm))
-    pad_z  = int(np.ceil(padding_si_mm / si_mm))
+    # Parse padding: convert float to symmetric tuple
+    pad_rl_left, pad_rl_right = (padding_rl_mm, padding_rl_mm) if isinstance(padding_rl_mm, (int, float)) else padding_rl_mm
+    pad_ap_post, pad_ap_ant = (padding_ap_mm, padding_ap_mm) if isinstance(padding_ap_mm, (int, float)) else padding_ap_mm
+    pad_si_inf, pad_si_sup = (padding_si_mm, padding_si_mm) if isinstance(padding_si_mm, (int, float)) else padding_si_mm
 
-    rl1p = max(0,  rl1 - pad_rl); rl2p = min(RL, rl2 + pad_rl)
-    ap1p = max(0,  ap1 - pad_ap); ap2p = min(AP, ap2 + pad_ap)
-    z1p  = max(0,  z1  - pad_z);  z2p  = min(Z,  z2  + pad_z)
+    # Convert mm to voxels
+    pad_rl_left_vox = int(np.ceil(pad_rl_left / rl_mm))
+    pad_rl_right_vox = int(np.ceil(pad_rl_right / rl_mm))
+    pad_ap_post_vox = int(np.ceil(pad_ap_post / ap_mm))
+    pad_ap_ant_vox = int(np.ceil(pad_ap_ant / ap_mm))
+    pad_si_inf_vox = int(np.ceil(pad_si_inf / si_mm))
+    pad_si_sup_vox = int(np.ceil(pad_si_sup / si_mm))
+
+    # Apply padding, clamped to bounds
+    rl1p = max(0,  rl1 - pad_rl_left_vox)
+    rl2p = min(RL, rl2 + pad_rl_right_vox)
+    ap1p = max(0,  ap1 - pad_ap_post_vox)
+    ap2p = min(AP, ap2 + pad_ap_ant_vox)
+    z1p  = max(0,  z1  - pad_si_inf_vox)
+    z2p  = min(Z,  z2  + pad_si_sup_vox)
 
     data    = img_las.get_fdata(dtype=np.float32)
     cropped = data[rl1p:rl2p, ap1p:ap2p, z1p:z2p]
@@ -202,7 +240,21 @@ def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
     affine[:3, 3] = img_las.affine[:3, :3] @ np.array([rl1p, ap1p, z1p]) \
                     + img_las.affine[:3, 3]
 
-    return nib.Nifti1Image(cropped, affine), (rl1p, rl2p, ap1p, ap2p, z1p, z2p)
+    # Compute bbox in mm: corner and sizes
+    corner_las_mm = img_las.affine[:3, :3] @ np.array([rl1p, ap1p, z1p]) \
+                    + img_las.affine[:3, 3]
+    sizes_mm = np.array([(rl2p - rl1p) * rl_mm,
+                         (ap2p - ap1p) * ap_mm,
+                         (z2p - z1p) * si_mm])
+
+    # If original_affine provided, transform to original space
+    if original_affine is not None:
+        corner_orig_mm = np.linalg.inv(original_affine[:3, :3]) @ (corner_las_mm - original_affine[:3, 3])
+    else:
+        corner_orig_mm = corner_las_mm
+
+    bbox_mm = (corner_orig_mm, sizes_mm)
+    return nib.Nifti1Image(cropped, affine), (rl1p, rl2p, ap1p, ap2p, z1p, z2p), bbox_mm
 
 
 # ─── Debug panel ──────────────────────────────────────────────────────────────
@@ -255,11 +307,11 @@ def run(input_path: str,
         config: dict | None = None,
         output_path: str | None = None,
         model_path: str | None = None,
-        padding_rl_mm: float = 10.0,
-        padding_ap_mm: float = 15.0,
-        padding_si_mm: float = 20.0,
+        padding_rl_mm: float | tuple = 10.0,
+        padding_ap_mm: float | tuple = 15.0,
+        padding_si_mm: float | tuple = 20.0,
         conf: float | None = None,
-        debug: bool = False) -> str:
+        debug: bool = False) -> dict:
     """Full pipeline: load → LAS → resample → infer → bbox 3D → crop → reorient → save.
 
     model_path    : path to model.pt. Default: ~/.sc_crop/sc_crop_models/model.pt
@@ -267,10 +319,15 @@ def run(input_path: str,
     config        : dict (si_res, inplane_res, channels, conf). Default: loaded from
                     config.yaml next to model.pt.
     output_path   : output file. Default: <input>_crop.nii.gz next to input.
-    padding_rl_mm : padding in the Right-Left direction (mm).
-    padding_ap_mm : padding in the Anterior-Posterior direction (mm).
-    padding_si_mm : padding in the Superior-Inferior direction (mm).
-    Returns       : path to the saved cropped volume.
+    padding_rl_mm : padding in Right-Left direction. float or (left_mm, right_mm).
+    padding_ap_mm : padding in Anterior-Posterior direction. float or (anterior_mm, posterior_mm).
+    padding_si_mm : padding in Superior-Inferior direction. float or (superior_mm, inferior_mm).
+    Returns       : dict with:
+      - output: path to the saved cropped volume
+      - bbox_file: path to the bbox txt file
+      - bbox_mm: (corner_mm, sizes_mm) in original image space
+        * corner_mm: (x, y, z) minimum corner in mm
+        * sizes_mm: [RL_size, AP_size, SI_size] dimensions in mm
     """
     from .download import ensure_model
     from ultralytics import YOLO
@@ -285,6 +342,7 @@ def run(input_path: str,
 
     img           = nib.load(input_path)
     original_ornt = nib.io_orientation(img.affine)
+    original_affine = img.affine.copy()
     img_las       = reorient_to_las(img)
     RL_nat, AP_nat, Z_nat = img_las.shape
     si_mm_nat     = float(img_las.header.get_zooms()[2])
@@ -322,9 +380,15 @@ def run(input_path: str,
     rl1, rl2, ap1, ap2, z1, z2 = bbox
     print(f"SC bbox : RL [{rl1}:{rl2}]  AP [{ap1}:{ap2}]  SI [{z1}:{z2}]  (before padding)")
 
-    cropped_las, bbox_pad = crop_volume(img_las, bbox, padding_rl_mm, padding_ap_mm, padding_si_mm)
+    cropped_las, bbox_pad, bbox_mm = crop_volume(img_las, bbox, padding_rl_mm, padding_ap_mm, padding_si_mm,
+                                                   original_affine=original_affine)
     rl1p, rl2p, ap1p, ap2p, z1p, z2p = bbox_pad
-    print(f"Padding : RL={padding_rl_mm}mm  AP={padding_ap_mm}mm  SI={padding_si_mm}mm")
+    
+    # Format padding info for display
+    pad_rl_str = f"{padding_rl_mm}mm" if isinstance(padding_rl_mm, (int, float)) else f"L={padding_rl_mm[0]}mm R={padding_rl_mm[1]}mm"
+    pad_ap_str = f"{padding_ap_mm}mm" if isinstance(padding_ap_mm, (int, float)) else f"A={padding_ap_mm[0]}mm P={padding_ap_mm[1]}mm"
+    pad_si_str = f"{padding_si_mm}mm" if isinstance(padding_si_mm, (int, float)) else f"S={padding_si_mm[0]}mm I={padding_si_mm[1]}mm"
+    print(f"Padding : RL={pad_rl_str}  AP={pad_ap_str}  SI={pad_si_str}")
     print(f"Padded  : RL [{rl1p}:{rl2p}]  AP [{ap1p}:{ap2p}]  SI [{z1p}:{z2p}]  "
           f"→ shape=({rl2p-rl1p},{ap2p-ap1p},{z2p-z1p})")
 
@@ -337,4 +401,24 @@ def run(input_path: str,
 
     nib.save(cropped, output_path)
     print(f"Saved   : {output_path}  shape={cropped.shape}")
-    return output_path
+
+    corner_mm, sizes_mm = bbox_mm
+    print(f"BBox MM : corner=({corner_mm[0]:.1f}, {corner_mm[1]:.1f}, {corner_mm[2]:.1f}) mm  "
+          f"sizes=({sizes_mm[0]:.1f}, {sizes_mm[1]:.1f}, {sizes_mm[2]:.1f}) mm")
+
+    # Save bbox to txt file
+    bbox_path = Path(output_path).parent / (Path(output_path).stem + "_bbox.txt")
+    with open(bbox_path, "w") as f:
+        f.write("# Bounding box: corner (mm) and dimensions (mm)\n")
+        f.write(f"# Format: corner_x corner_y corner_z size_rl size_ap size_si\n")
+        f.write(f"{corner_mm[0]:.2f} {corner_mm[1]:.2f} {corner_mm[2]:.2f} "
+                f"{sizes_mm[0]:.2f} {sizes_mm[1]:.2f} {sizes_mm[2]:.2f}\n")
+    print(f"BBox    : {bbox_path}")
+
+    return {
+        "output": output_path,
+        "bbox_file": str(bbox_path),
+        "bbox_mm": bbox_mm,
+        "corner_mm": corner_mm,
+        "sizes_mm": sizes_mm
+    }

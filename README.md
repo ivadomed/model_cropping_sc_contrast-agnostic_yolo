@@ -29,10 +29,12 @@ sc-crop download
 sc-crop t2.nii.gz
 # → t2_crop.nii.gz next to the input, same orientation / resolution / world space
 
-sc-crop t2.nii.gz -o output.nii.gz   # explicit output path
-sc-crop t2.nii.gz --padding 20        # margin around the bbox in mm (default 10)
-sc-crop t2.nii.gz --conf 0.05         # confidence threshold (default 0.1)
-sc-crop t2.nii.gz --debug             # also saves t2_debug.png (per-slice panel)
+sc-crop t2.nii.gz -o output.nii.gz      # explicit output path
+sc-crop t2.nii.gz --padding-rl 10      # Right-Left padding in mm (default 10)
+sc-crop t2.nii.gz --padding-ap 15      # Anterior-Posterior padding in mm (default 15)
+sc-crop t2.nii.gz --padding-si 20      # Superior-Inferior padding in mm (default 20)
+sc-crop t2.nii.gz --conf 0.05          # confidence threshold (default 0.1)
+sc-crop t2.nii.gz --debug              # also saves t2_debug.png (per-slice panel)
 ```
 
 ### Python API

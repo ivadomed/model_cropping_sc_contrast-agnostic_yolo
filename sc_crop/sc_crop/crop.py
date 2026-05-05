@@ -175,8 +175,10 @@ def aggregate_bbox_3d(preds: dict,
 # ─── Crop ─────────────────────────────────────────────────────────────────────
 
 def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
-                padding_mm: float) -> tuple:
-    """Crop LAS NIfTI around bbox with padding_mm on all sides.
+                padding_rl_mm: float,
+                padding_ap_mm: float,
+                padding_si_mm: float) -> tuple:
+    """Crop LAS NIfTI around bbox with per-axis padding.
 
     Returns (cropped_las_nifti, padded_bbox).
     Affine is updated so the crop sits at the correct world position.
@@ -185,9 +187,9 @@ def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
     rl_mm, ap_mm, si_mm = [float(v) for v in img_las.header.get_zooms()[:3]]
     rl1, rl2, ap1, ap2, z1, z2 = bbox
 
-    pad_rl = int(np.ceil(padding_mm / rl_mm))
-    pad_ap = int(np.ceil(padding_mm / ap_mm))
-    pad_z  = int(np.ceil(padding_mm / si_mm))
+    pad_rl = int(np.ceil(padding_rl_mm / rl_mm))
+    pad_ap = int(np.ceil(padding_ap_mm / ap_mm))
+    pad_z  = int(np.ceil(padding_si_mm / si_mm))
 
     rl1p = max(0,  rl1 - pad_rl); rl2p = min(RL, rl2 + pad_rl)
     ap1p = max(0,  ap1 - pad_ap); ap2p = min(AP, ap2 + pad_ap)
@@ -253,17 +255,22 @@ def run(input_path: str,
         config: dict | None = None,
         output_path: str | None = None,
         model_path: str | None = None,
-        padding_mm: float = 10.0,
+        padding_rl_mm: float = 10.0,
+        padding_ap_mm: float = 15.0,
+        padding_si_mm: float = 20.0,
         conf: float | None = None,
         debug: bool = False) -> str:
     """Full pipeline: load → LAS → resample → infer → bbox 3D → crop → reorient → save.
 
-    model_path  : path to model.pt. Default: ~/.sc_crop/sc_crop_models/model.pt
-                  (auto-downloaded if absent via ensure_model()).
-    config      : dict (si_res, inplane_res, channels, conf). Default: loaded from
-                  config.yaml next to model.pt.
-    output_path : output file. Default: <input>_crop.nii.gz next to input.
-    Returns     : path to the saved cropped volume.
+    model_path    : path to model.pt. Default: ~/.sc_crop/sc_crop_models/model.pt
+                    (auto-downloaded if absent via ensure_model()).
+    config        : dict (si_res, inplane_res, channels, conf). Default: loaded from
+                    config.yaml next to model.pt.
+    output_path   : output file. Default: <input>_crop.nii.gz next to input.
+    padding_rl_mm : padding in the Right-Left direction (mm).
+    padding_ap_mm : padding in the Anterior-Posterior direction (mm).
+    padding_si_mm : padding in the Superior-Inferior direction (mm).
+    Returns       : path to the saved cropped volume.
     """
     from .download import ensure_model
     from ultralytics import YOLO
@@ -315,8 +322,9 @@ def run(input_path: str,
     rl1, rl2, ap1, ap2, z1, z2 = bbox
     print(f"SC bbox : RL [{rl1}:{rl2}]  AP [{ap1}:{ap2}]  SI [{z1}:{z2}]  (before padding)")
 
-    cropped_las, bbox_pad = crop_volume(img_las, bbox, padding_mm)
+    cropped_las, bbox_pad = crop_volume(img_las, bbox, padding_rl_mm, padding_ap_mm, padding_si_mm)
     rl1p, rl2p, ap1p, ap2p, z1p, z2p = bbox_pad
+    print(f"Padding : RL={padding_rl_mm}mm  AP={padding_ap_mm}mm  SI={padding_si_mm}mm")
     print(f"Padded  : RL [{rl1p}:{rl2p}]  AP [{ap1p}:{ap2p}]  SI [{z1p}:{z2p}]  "
           f"→ shape=({rl2p-rl1p},{ap2p-ap1p},{z2p-z1p})")
 

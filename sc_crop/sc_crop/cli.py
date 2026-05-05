@@ -30,8 +30,12 @@ def main():
                         help="Output file. Default: <input>_crop.nii.gz next to input")
     parser.add_argument("--model", default=None,
                         help="Path to model.pt (override ~/.sc_crop/sc_crop_models/)")
-    parser.add_argument("--padding", type=float, default=10.0,
-                        help="Padding around the 3D bbox (mm)")
+    parser.add_argument("--padding-rl", type=float, default=10.0,
+                        help="Padding in Right-Left direction (mm)")
+    parser.add_argument("--padding-ap", type=float, default=15.0,
+                        help="Padding in Anterior-Posterior direction (mm)")
+    parser.add_argument("--padding-si", type=float, default=20.0,
+                        help="Padding in Superior-Inferior direction (mm)")
     parser.add_argument("--conf", type=float, default=None,
                         help="Detection confidence threshold (default: from config.yaml)")
     parser.add_argument("--debug", action="store_true",
@@ -39,12 +43,14 @@ def main():
     args = parser.parse_args()
 
     run(
-        input_path  = args.input,
-        output_path = args.output,
-        model_path  = args.model,
-        padding_mm  = args.padding,
-        conf        = args.conf,
-        debug       = args.debug,
+        input_path    = args.input,
+        output_path   = args.output,
+        model_path    = args.model,
+        padding_rl_mm = args.padding_rl,
+        padding_ap_mm = args.padding_ap,
+        padding_si_mm = args.padding_si,
+        conf          = args.conf,
+        debug         = args.debug,
     )
 
 

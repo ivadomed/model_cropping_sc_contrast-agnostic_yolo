@@ -3,7 +3,7 @@ Core logic for spinal cord detection and volume cropping.
 
 Uses ultralytics YOLO (best.pt) for inference — identical preprocessing to the
 training pipeline (preprocess.py): LAS reorientation, nibabel resample_to_output,
-axial slices as data[:, :, las_idx].T → (AP, RL, C) uint8.
+axial slices as data[:, :, las_idx].T[::-1, ::-1] → (AP, RL, C) uint8.
 
 The output is saved in LAS orientation for visualization (e.g., fsleyes).
 
@@ -35,7 +35,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
+from nibabel.orientations import axcodes2ornt, ornt_transform
 from nibabel.processing import resample_to_output
 from PIL import Image as PILImage
 from PIL import ImageDraw
@@ -60,14 +60,6 @@ def reorient_to_original(img_las: nib.Nifti1Image,
     las_ornt  = axcodes2ornt(("L", "A", "S"))
     transform = ornt_transform(las_ornt, original_ornt)
     return img_las.as_reoriented(transform)
-
-
-def reorient_to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
-    """Reorient image to LAS convention for fsleyes."""
-    current_ornt = io_orientation(img.affine)
-    las_ornt     = axcodes2ornt(("L", "A", "S"))
-    transform    = ornt_transform(current_ornt, las_ornt)
-    return img.as_reoriented(transform)
 
 
 # ─── Resampling ───────────────────────────────────────────────────────────────
@@ -108,14 +100,14 @@ def _get_slice(data: np.ndarray, las_idx: int,
                black: np.ndarray) -> np.ndarray:
     """Extract one axial slice in (AP, RL) uint8, identical to preprocess.py.
 
-        Convention: data[:, :, las_idx].T
+    Convention: data[:, :, las_idx].T[::-1, ::-1]
       rows = AP (row 0 = Anterior), cols = RL (col 0 = Left).
     Out-of-bounds las_idx returns a black frame.
     """
     Z = data.shape[2]
     if las_idx < 0 or las_idx >= Z:
         return black
-        return normalize_to_uint8(data[:, :, las_idx]).T
+    return normalize_to_uint8(data[:, :, las_idx]).T[::-1, ::-1]
 
 
 def build_slices(data: np.ndarray, channels: int) -> tuple:
@@ -219,8 +211,8 @@ def aggregate_bbox_3d(preds: dict,
                       si_zoom: float) -> tuple:
     """Aggregate per-slice detections → (rl1, rl2, ap1, ap2, z1, z2) in native LAS voxels.
 
-    Slices were presented as (AP, RL), so to map back to native LAS indices:
-    rl_c = cx * RL_nat, ap_c = cy * AP_nat.
+    Slices were presented as (AP, RL) with T[::-1, ::-1], so to map back to native LAS indices:
+    rl_c = (1-cx)*RL_nat, ap_c = (1-cy)*AP_nat  (col 0 = Left = LAS max, row 0 = Anterior = LAS max).
     Normalised in-plane coords are FOV-preserving → valid in native space directly.
 
     si_zoom = si_mm_nat / si_res; z_nat = round(las_idx_inf / si_zoom).
@@ -228,8 +220,8 @@ def aggregate_bbox_3d(preds: dict,
     rl1s, rl2s, ap1s, ap2s, zs = [], [], [], [], []
     for las_idx_inf, (cx, cy, w, h) in preds.items():
         z_nat   = min(Z_nat - 1, round(las_idx_inf / si_zoom))
-        rl_c    = cx * RL_nat
-        ap_c    = cy * AP_nat
+        rl_c    = (1.0 - cx) * RL_nat
+        ap_c    = (1.0 - cy) * AP_nat
         rl_half = w / 2 * RL_nat
         ap_half = h / 2 * AP_nat
         rl1s.append(max(0,      int(rl_c - rl_half)))
@@ -333,13 +325,13 @@ def save_debug_panel(model, slices: list, las_idxs: list,
             draw.text((2, CELL - 11), f"{conf:.2f}", fill=color)
 
         # Draw padded bbox 3D region (red)
-        # Slice convention: rows=AP (0=Anterior), cols=RL flipped (0=Right after flip)
+        # Slice convention T[::-1,::-1]: col 0=Left (LAS RL max), row 0=Anterior (LAS AP max).
+        # LAS rl_vox → image_x = (1 - rl_vox/W)*CELL ; LAS ap_vox → image_y = (1 - ap_vox/H)*CELL
         if has_padded and padded_z1 <= las_idx <= padded_z2:
-            # Direct mapping in LAS slice space: row 0 = Anterior, col 0 = Left.
-            y1_pad = (padded_ap1 / H) * CELL
-            y2_pad = (padded_ap2 / H) * CELL
-            x1_pad = (padded_rl1 / W) * CELL
-            x2_pad = (padded_rl2 / W) * CELL
+            x1_pad = (1 - padded_rl2 / W) * CELL
+            x2_pad = (1 - padded_rl1 / W) * CELL
+            y1_pad = (1 - padded_ap2 / H) * CELL
+            y2_pad = (1 - padded_ap1 / H) * CELL
             draw.rectangle([x1_pad, y1_pad, x2_pad, y2_pad], outline=(255, 0, 0), width=2)
 
         draw.text((2, 1), f"z{las_idx}", fill=(200, 200, 200))

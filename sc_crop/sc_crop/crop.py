@@ -244,36 +244,29 @@ def bbox_vox_to_mm(img_las: nib.Nifti1Image,
                    bbox: tuple,
                    rl_mm: float,
                    ap_mm: float,
-                   si_mm: float,
-                   original_affine: np.ndarray | None = None) -> tuple:
-    """Convert a voxel bbox (LAS index space) to (corner_mm, sizes_mm)."""
+                   si_mm: float) -> tuple:
+    """Convert a voxel bbox in LAS index space to LAS mm coordinates."""
     rl1, rl2, ap1, ap2, z1, z2 = bbox
     corner_las_mm = img_las.affine[:3, :3] @ np.array([rl1, ap1, z1]) + img_las.affine[:3, 3]
     sizes_mm = np.array([(rl2 - rl1) * rl_mm,
                          (ap2 - ap1) * ap_mm,
                          (z2 - z1) * si_mm])
-
-    if original_affine is not None:
-        corner_mm = np.linalg.inv(original_affine[:3, :3]) @ (corner_las_mm - original_affine[:3, 3])
-    else:
-        corner_mm = corner_las_mm
-    return corner_mm, sizes_mm
+    return corner_las_mm, sizes_mm
 
 
 # ─── Crop ─────────────────────────────────────────────────────────────────────
 
 def crop_volume(img_las: nib.Nifti1Image, padded_bbox: tuple,
-                original_affine: np.ndarray | None = None,
                 rl_mm: float | None = None,
                 ap_mm: float | None = None,
                 si_mm: float | None = None) -> tuple:
     """Crop LAS NIfTI using a pre-computed padded bbox.
 
     Returns (cropped_las_nifti, padded_bbox, bbox_mm).
-    Affine is updated so the crop sits at the correct world position.
+    Affine is updated so the crop sits at the correct LAS world position.
     
     padded_bbox: (rl1p, rl2p, ap1p, ap2p, z1p, z2p) already padded and clamped.
-    bbox_mm: (corner_mm, sizes_mm) in original image space.
+    bbox_mm: (corner_mm, sizes_mm) in LAS mm space.
     """
     rl1p, rl2p, ap1p, ap2p, z1p, z2p = padded_bbox
     
@@ -292,8 +285,7 @@ def crop_volume(img_las: nib.Nifti1Image, padded_bbox: tuple,
                     + img_las.affine[:3, 3]
 
     bbox_mm = bbox_vox_to_mm(
-        img_las, padded_bbox, rl_mm, ap_mm, si_mm,
-        original_affine=original_affine
+        img_las, padded_bbox, rl_mm, ap_mm, si_mm
     )
     return nib.Nifti1Image(cropped, affine), padded_bbox, bbox_mm
 
@@ -393,10 +385,11 @@ def run(input_path: str,
         Returns       : dict with:
             - output: path to the saved cropped volume after padding
             - output_before_file: path to the saved cropped volume before padding
+            - input_las_file: path to the input volume reoriented to LAS
             - bbox_file: path to the bbox txt file (after padding, backward-compatible)
             - bbox_before_file: path to bbox txt file before padding
             - bbox_after_file: path to bbox txt file after padding
-      - bbox_mm: (corner_mm, sizes_mm) in original image space
+            - bbox_mm: (corner_mm, sizes_mm) in LAS mm space
         * corner_mm: (x, y, z) minimum corner in mm
         * sizes_mm: [RL_size, AP_size, SI_size] dimensions in mm
     """
@@ -412,8 +405,6 @@ def run(input_path: str,
     conf        = conf if conf is not None else config.get("conf", 0.1)
 
     img           = nib.load(input_path)
-    original_ornt = nib.io_orientation(img.affine)
-    original_affine = img.affine.copy()
     img_las       = reorient_to_las(img)
     RL_nat, AP_nat, Z_nat = img_las.shape
     si_mm_nat     = float(img_las.header.get_zooms()[2])
@@ -445,13 +436,6 @@ def run(input_path: str,
     rl1, rl2, ap1, ap2, z1, z2 = bbox
     print(f"SC bbox : RL [{rl1}:{rl2}]  AP [{ap1}:{ap2}]  SI [{z1}:{z2}]  (before padding)")
 
-    cropped_before_las, _, bbox_before_mm = crop_volume(
-        img_las, bbox,
-        original_affine=original_affine,
-        rl_mm=rl_mm_nat, ap_mm=ap_mm_nat, si_mm=si_mm_nat
-    )
-    cropped_before = reorient_to_las(cropped_before_las)
-
     # Compute padded bbox ONCE (single source of truth)
     padded_bbox = compute_padded_bbox_3d(
         bbox, RL_nat, AP_nat, Z_nat, rl_mm_nat, ap_mm_nat, si_mm_nat,
@@ -466,9 +450,14 @@ def run(input_path: str,
         save_debug_panel(model, slices, las_idxs, conf, debug_path,
                         padded_bbox=padded_bbox, H=AP_nat, W=RL_nat)
 
-    cropped_las, bbox_pad, bbox_mm = crop_volume(img_las, padded_bbox,
-                                                   original_affine=original_affine,
-                                                   rl_mm=rl_mm_nat, ap_mm=ap_mm_nat, si_mm=si_mm_nat)
+    cropped_before_las, _, bbox_before_mm = crop_volume(
+        img_las, bbox,
+        rl_mm=rl_mm_nat, ap_mm=ap_mm_nat, si_mm=si_mm_nat
+    )
+    cropped_las, bbox_pad, bbox_mm = crop_volume(
+        img_las, padded_bbox,
+        rl_mm=rl_mm_nat, ap_mm=ap_mm_nat, si_mm=si_mm_nat
+    )
     rl1p, rl2p, ap1p, ap2p, z1p, z2p = bbox_pad
     
     # Format padding info for display
@@ -479,8 +468,6 @@ def run(input_path: str,
     print(f"Padded  : RL [{rl1p}:{rl2p}]  AP [{ap1p}:{ap2p}]  SI [{z1p}:{z2p}]  "
           f"→ shape=({rl2p-rl1p},{ap2p-ap1p},{z2p-z1p})")
 
-    cropped = reorient_to_las(cropped_las)
-
     if output_path is None:
         inp        = Path(input_path)
         stem       = inp.name.replace(".nii.gz", "").replace(".nii", "")
@@ -488,12 +475,16 @@ def run(input_path: str,
 
     out_path = Path(output_path)
     output_before_path = str(out_path.parent / out_path.name.replace(".nii.gz", "_before_padding.nii.gz").replace(".nii", "_before_padding.nii"))
+    input_las_path = str(out_path.parent / out_path.name.replace(".nii.gz", "_input_las.nii.gz").replace(".nii", "_input_las.nii"))
 
-    nib.save(cropped_before, output_before_path)
-    print(f"Saved   : {output_before_path}  shape={cropped_before.shape}")
+    nib.save(img_las, input_las_path)
+    print(f"Saved   : {input_las_path}  shape={img_las.shape}")
 
-    nib.save(cropped, output_path)
-    print(f"Saved   : {output_path}  shape={cropped.shape}")
+    nib.save(cropped_before_las, output_before_path)
+    print(f"Saved   : {output_before_path}  shape={cropped_before_las.shape}")
+
+    nib.save(cropped_las, output_path)
+    print(f"Saved   : {output_path}  shape={cropped_las.shape}")
 
     corner_mm, sizes_mm = bbox_mm
     print(f"BBox MM : corner=({corner_mm[0]:.1f}, {corner_mm[1]:.1f}, {corner_mm[2]:.1f}) mm  "
@@ -532,6 +523,7 @@ def run(input_path: str,
     print(f"BBox post: {bbox_after_path}")
 
     return {
+        "input_las_file": input_las_path,
         "output_before_file": output_before_path,
         "output": output_path,
         "bbox_file": str(bbox_path),

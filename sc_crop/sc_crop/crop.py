@@ -557,7 +557,19 @@ def load_config(model_dir: str | Path) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# ORIENTATION (ONLY LAS)
+# MODEL RESOLUTION
+# ─────────────────────────────────────────────────────────────
+
+def resolve_model(model_path: str | Path | None) -> Path:
+    """Guarantee valid model path."""
+    if model_path is None:
+        from .download import ensure_model
+        return ensure_model()
+    return Path(model_path)
+
+
+# ─────────────────────────────────────────────────────────────
+# ORIENTATION (LAS ONLY)
 # ─────────────────────────────────────────────────────────────
 
 def to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
@@ -567,11 +579,12 @@ def to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
 
 
 # ─────────────────────────────────────────────────────────────
-# RESAMPLE
+# RESAMPLING
 # ─────────────────────────────────────────────────────────────
 
 def resample(img, si_res, inplane):
     rl, ap, si = img.header.get_zooms()[:3]
+
     if inplane is None:
         inplane = rl
 
@@ -582,24 +595,24 @@ def resample(img, si_res, inplane):
 
 
 # ─────────────────────────────────────────────────────────────
-# SLICE (CRITICAL CONVENTION)
+# SLICE CONVENTION (CRITICAL)
 # ─────────────────────────────────────────────────────────────
 
 def get_slice(data, z):
-    # (AP, RL) with correct visual orientation
+    # (AP, RL) after correct orientation flip
     return data[:, :, z].T[::-1, ::-1]
 
 
-def norm_uint8(x):
+def normalize_uint8(x):
     nz = x[x > 0]
     if len(nz) == 0:
-        return np.zeros_like(x, np.uint8)
+        return np.zeros_like(x, dtype=np.uint8)
     lo, hi = np.percentile(nz, [0.5, 99.5])
     return ((np.clip(x, lo, hi) - lo) / (hi - lo) * 255).astype(np.uint8)
 
 
 # ─────────────────────────────────────────────────────────────
-# BUILD SLICES
+# SLICE BUILDING
 # ─────────────────────────────────────────────────────────────
 
 def build_slices(data, channels):
@@ -607,11 +620,11 @@ def build_slices(data, channels):
     slices, idxs = [], []
 
     for z in range(Z - 1, -1, -1):
-        cur = norm_uint8(get_slice(data, z))
+        cur = normalize_uint8(get_slice(data, z))
 
         if channels == 3:
-            sup = norm_uint8(get_slice(data, min(z + 1, Z - 1)))
-            inf = norm_uint8(get_slice(data, max(z - 1, 0)))
+            sup = normalize_uint8(get_slice(data, min(z + 1, Z - 1)))
+            inf = normalize_uint8(get_slice(data, max(z - 1, 0)))
             slices.append(np.stack([sup, cur, inf], axis=-1))
         else:
             slices.append(cur)
@@ -622,7 +635,7 @@ def build_slices(data, channels):
 
 
 # ─────────────────────────────────────────────────────────────
-# YOLO INFERENCE
+# INFERENCE
 # ─────────────────────────────────────────────────────────────
 
 def infer(model, slices, idxs, conf):
@@ -706,7 +719,7 @@ def crop(img, bbox):
 
 
 # ─────────────────────────────────────────────────────────────
-# RUN (CLI STABLE)
+# RUN (CLI SAFE VERSION)
 # ─────────────────────────────────────────────────────────────
 
 def run(input_path: str,
@@ -719,22 +732,27 @@ def run(input_path: str,
         conf=None,
         debug=False):
 
+    # ── load image
     img = nib.load(input_path)
     img = to_las(img)
 
     RL, AP, Z = img.shape
     rl_mm, ap_mm, si_mm = img.header.get_zooms()[:3]
 
-    cfg = config or load_config(Path(model_path).parent)
+    # ── config
+    cfg = config or load_config(resolve_model(model_path).parent)
 
     si_res = cfg["si_res"]
     inplane = cfg.get("inplane_res", rl_mm)
     conf = conf or cfg.get("conf", 0.1)
 
+    # ── model
+    model_path = resolve_model(model_path)
+    model = YOLO(str(model_path))
+
+    # ── inference pipeline
     img_i = resample(img, si_res, inplane)
     data = img_i.get_fdata()
-
-    model = YOLO(str(model_path))
 
     slices, idxs = build_slices(data, cfg.get("channels", 3))
     preds = infer(model, slices, idxs, conf)
@@ -748,7 +766,7 @@ def run(input_path: str,
 
     cropped = crop(img, bbox_p)
 
-    # OUTPUT COMPATIBLE CLI
+    # ── output compatibility CLI
     if output_path is None:
         output_path = str(Path(input_path).with_suffix("").as_posix() + "_crop_las.nii.gz")
 

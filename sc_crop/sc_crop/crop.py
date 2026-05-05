@@ -155,6 +155,53 @@ def infer_slices(model, slices: list, las_idxs: list,
     return preds
 
 
+# ─── 3D bbox computation ───────────────────────────────────────────────────
+
+def compute_padded_bbox_3d(bbox: tuple,
+                           RL: int, AP: int, Z: int,
+                           rl_mm: float, ap_mm: float, si_mm: float,
+                           padding_rl_mm: float | tuple = 10.0,
+                           padding_ap_mm: float | tuple = 15.0,
+                           padding_si_mm: float | tuple = 20.0) -> tuple:
+    """Compute final 3D bbox after applying padding to detected bbox.
+    
+    Returns: (rl1p, rl2p, ap1p, ap2p, z1p, z2p) clamped to image bounds.
+    
+    Padding parameters:
+      - float: symmetric (both sides)
+      - tuple (side1, side2): asymmetric
+    
+    LAS convention: 
+      - RL: Left (0) to Right (max)
+      - AP: Anterior (0) to Posterior (max)
+      - SI: Superior (0) to Inferior (max)
+    """
+    rl1, rl2, ap1, ap2, z1, z2 = bbox
+    
+    # Parse padding tuples
+    pad_rl_left, pad_rl_right = (padding_rl_mm, padding_rl_mm) if isinstance(padding_rl_mm, (int, float)) else padding_rl_mm
+    pad_ap_ant, pad_ap_post = (padding_ap_mm, padding_ap_mm) if isinstance(padding_ap_mm, (int, float)) else padding_ap_mm
+    pad_si_sup, pad_si_inf = (padding_si_mm, padding_si_mm) if isinstance(padding_si_mm, (int, float)) else padding_si_mm
+
+    # Convert mm to voxels
+    pad_rl_left_vox = int(np.ceil(pad_rl_left / rl_mm))
+    pad_rl_right_vox = int(np.ceil(pad_rl_right / rl_mm))
+    pad_ap_ant_vox = int(np.ceil(pad_ap_ant / ap_mm))
+    pad_ap_post_vox = int(np.ceil(pad_ap_post / ap_mm))
+    pad_si_sup_vox = int(np.ceil(pad_si_sup / si_mm))
+    pad_si_inf_vox = int(np.ceil(pad_si_inf / si_mm))
+
+    # Apply padding, clamped to bounds (LAS convention)
+    rl1p = max(0,  rl1 - pad_rl_left_vox)
+    rl2p = min(RL, rl2 + pad_rl_right_vox)
+    ap1p = max(0,  ap1 - pad_ap_ant_vox)
+    ap2p = min(AP, ap2 + pad_ap_post_vox)
+    z1p  = max(0,  z1  - pad_si_sup_vox)
+    z2p  = min(Z,  z2  + pad_si_inf_vox)
+    
+    return rl1p, rl2p, ap1p, ap2p, z1p, z2p
+
+
 # ─── 3D bbox aggregation ──────────────────────────────────────────────────────
 
 def aggregate_bbox_3d(preds: dict,
@@ -185,54 +232,27 @@ def aggregate_bbox_3d(preds: dict,
 
 # ─── Crop ─────────────────────────────────────────────────────────────────────
 
-def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
-                padding_rl_mm: float | tuple = 10.0,
-                padding_ap_mm: float | tuple = 15.0,
-                padding_si_mm: float | tuple = 20.0,
-                original_affine: np.ndarray | None = None) -> tuple:
-    """Crop LAS NIfTI around bbox with per-face padding.
+def crop_volume(img_las: nib.Nifti1Image, padded_bbox: tuple,
+                original_affine: np.ndarray | None = None,
+                rl_mm: float | None = None,
+                ap_mm: float | None = None,
+                si_mm: float | None = None) -> tuple:
+    """Crop LAS NIfTI using a pre-computed padded bbox.
 
     Returns (cropped_las_nifti, padded_bbox, bbox_mm).
     Affine is updated so the crop sits at the correct world position.
     
-    padding_*_mm can be:
-      - float: symmetric padding on both sides
-      - (left_mm, right_mm): asymmetric padding
-    
-    For LAS convention:
-      - padding_rl_mm: (Left, Right) padding
-      - padding_ap_mm: (Anterior, Posterior) padding  
-      - padding_si_mm: (Superior, Inferior) padding
-    
-    Padding is clamped to image bounds (no extrapolation).
-    bbox_mm: (corner_mm, sizes_mm) where corner_mm is the min corner in mm (original space)
-             and sizes_mm are the 3D dimensions in mm [RL_size, AP_size, SI_size].
+    padded_bbox: (rl1p, rl2p, ap1p, ap2p, z1p, z2p) already padded and clamped.
+    bbox_mm: (corner_mm, sizes_mm) in original image space.
     """
-    RL, AP, Z  = img_las.shape
-    rl_mm, ap_mm, si_mm = [float(v) for v in img_las.header.get_zooms()[:3]]
-    rl1, rl2, ap1, ap2, z1, z2 = bbox
-
-    # Parse padding: convert float to symmetric tuple
-    pad_rl_left, pad_rl_right = (padding_rl_mm, padding_rl_mm) if isinstance(padding_rl_mm, (int, float)) else padding_rl_mm
-    pad_ap_ant, pad_ap_post = (padding_ap_mm, padding_ap_mm) if isinstance(padding_ap_mm, (int, float)) else padding_ap_mm
-    pad_si_sup, pad_si_inf = (padding_si_mm, padding_si_mm) if isinstance(padding_si_mm, (int, float)) else padding_si_mm
-
-    # Convert mm to voxels
-    pad_rl_left_vox = int(np.ceil(pad_rl_left / rl_mm))
-    pad_rl_right_vox = int(np.ceil(pad_rl_right / rl_mm))
-    pad_ap_ant_vox = int(np.ceil(pad_ap_ant / ap_mm))
-    pad_ap_post_vox = int(np.ceil(pad_ap_post / ap_mm))
-    pad_si_sup_vox = int(np.ceil(pad_si_sup / si_mm))
-    pad_si_inf_vox = int(np.ceil(pad_si_inf / si_mm))
-
-    # Apply padding, clamped to bounds
-    # LAS convention: L (0→Left), A (0→Anterior), S (0→Superior)
-    rl1p = max(0,  rl1 - pad_rl_left_vox)
-    rl2p = min(RL, rl2 + pad_rl_right_vox)
-    ap1p = max(0,  ap1 - pad_ap_ant_vox)
-    ap2p = min(AP, ap2 + pad_ap_post_vox)
-    z1p  = max(0,  z1  - pad_si_sup_vox)
-    z2p  = min(Z,  z2  + pad_si_inf_vox)
+    rl1p, rl2p, ap1p, ap2p, z1p, z2p = padded_bbox
+    
+    # Use provided resolutions or get from image
+    if rl_mm is None or ap_mm is None or si_mm is None:
+        rl_mm_use, ap_mm_use, si_mm_use = [float(v) for v in img_las.header.get_zooms()[:3]]
+        rl_mm = rl_mm or rl_mm_use
+        ap_mm = ap_mm or ap_mm_use
+        si_mm = si_mm or si_mm_use
 
     data    = img_las.get_fdata(dtype=np.float32)
     cropped = data[rl1p:rl2p, ap1p:ap2p, z1p:z2p]
@@ -255,7 +275,7 @@ def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
         corner_orig_mm = corner_las_mm
 
     bbox_mm = (corner_orig_mm, sizes_mm)
-    return nib.Nifti1Image(cropped, affine), (rl1p, rl2p, ap1p, ap2p, z1p, z2p), bbox_mm
+    return nib.Nifti1Image(cropped, affine), padded_bbox, bbox_mm
 
 
 # ─── Debug panel ──────────────────────────────────────────────────────────────
@@ -402,39 +422,23 @@ def run(input_path: str,
     rl1, rl2, ap1, ap2, z1, z2 = bbox
     print(f"SC bbox : RL [{rl1}:{rl2}]  AP [{ap1}:{ap2}]  SI [{z1}:{z2}]  (before padding)")
 
-    # Compute padded bbox for debug
-    if debug:
-        # Parse padding to compute padded coords (same convention as crop_volume)
-        pad_rl_left, pad_rl_right = (padding_rl_mm, padding_rl_mm) if isinstance(padding_rl_mm, (int, float)) else padding_rl_mm
-        pad_ap_ant, pad_ap_post = (padding_ap_mm, padding_ap_mm) if isinstance(padding_ap_mm, (int, float)) else padding_ap_mm
-        pad_si_sup, pad_si_inf = (padding_si_mm, padding_si_mm) if isinstance(padding_si_mm, (int, float)) else padding_si_mm
-
-        pad_rl_left_vox = int(np.ceil(pad_rl_left / rl_mm_nat))
-        pad_rl_right_vox = int(np.ceil(pad_rl_right / rl_mm_nat))
-        pad_ap_ant_vox = int(np.ceil(pad_ap_ant / ap_mm_nat))
-        pad_ap_post_vox = int(np.ceil(pad_ap_post / ap_mm_nat))
-        pad_si_sup_vox = int(np.ceil(pad_si_sup / si_mm_nat))
-        pad_si_inf_vox = int(np.ceil(pad_si_inf / si_mm_nat))
-
-        rl1p = max(0,  rl1 - pad_rl_left_vox)
-        rl2p = min(RL_nat, rl2 + pad_rl_right_vox)
-        ap1p = max(0,  ap1 - pad_ap_ant_vox)
-        ap2p = min(AP_nat, ap2 + pad_ap_post_vox)
-        z1p  = max(0,  z1  - pad_si_sup_vox)
-        z2p  = min(Z_nat,  z2  + pad_si_inf_vox)
-        padded_bbox_debug = (rl1p, rl2p, ap1p, ap2p, z1p, z2p)
-    else:
-        padded_bbox_debug = None
+    # Compute padded bbox ONCE (single source of truth)
+    padded_bbox = compute_padded_bbox_3d(
+        bbox, RL_nat, AP_nat, Z_nat, rl_mm_nat, ap_mm_nat, si_mm_nat,
+        padding_rl_mm, padding_ap_mm, padding_si_mm
+    )
+    rl1p, rl2p, ap1p, ap2p, z1p, z2p = padded_bbox
 
     if debug:
         inp_p      = Path(input_path)
         stem       = inp_p.name.replace(".nii.gz", "").replace(".nii", "")
         debug_path = str(inp_p.parent / f"{stem}_debug.png")
         save_debug_panel(model, slices, las_idxs, conf, debug_path,
-                        padded_bbox=padded_bbox_debug, H=AP_nat, W=RL_nat)
+                        padded_bbox=padded_bbox, H=AP_nat, W=RL_nat)
 
-    cropped_las, bbox_pad, bbox_mm = crop_volume(img_las, bbox, padding_rl_mm, padding_ap_mm, padding_si_mm,
-                                                   original_affine=original_affine)
+    cropped_las, bbox_pad, bbox_mm = crop_volume(img_las, padded_bbox,
+                                                   original_affine=original_affine,
+                                                   rl_mm=rl_mm_nat, ap_mm=ap_mm_nat, si_mm=si_mm_nat)
     rl1p, rl2p, ap1p, ap2p, z1p, z2p = bbox_pad
     
     # Format padding info for display

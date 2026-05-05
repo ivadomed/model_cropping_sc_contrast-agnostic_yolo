@@ -33,7 +33,7 @@ from pathlib import Path
 
 import nibabel as nib
 import numpy as np
-from nibabel.orientations import axcodes2ornt, ornt_transform
+from nibabel.orientations import axcodes2ornt, io_orientation, ornt_transform
 from nibabel.processing import resample_to_output
 from PIL import Image as PILImage
 from PIL import ImageDraw

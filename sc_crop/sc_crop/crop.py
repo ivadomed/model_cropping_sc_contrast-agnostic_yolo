@@ -557,7 +557,7 @@ def load_config(model_dir: str | Path) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────
-# ORIENTATION (LAS ONLY)
+# ORIENTATION (ONLY LAS)
 # ─────────────────────────────────────────────────────────────
 
 def to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
@@ -570,9 +570,8 @@ def to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
 # RESAMPLE
 # ─────────────────────────────────────────────────────────────
 
-def resample(img: nib.Nifti1Image, si_res: float, inplane: float | None):
+def resample(img, si_res, inplane):
     rl, ap, si = img.header.get_zooms()[:3]
-
     if inplane is None:
         inplane = rl
 
@@ -583,41 +582,36 @@ def resample(img: nib.Nifti1Image, si_res: float, inplane: float | None):
 
 
 # ─────────────────────────────────────────────────────────────
-# SLICE CONVENTION (IMPORTANT PART)
+# SLICE (CRITICAL CONVENTION)
 # ─────────────────────────────────────────────────────────────
 
-def slice_axial(data: np.ndarray, z: int) -> np.ndarray:
-    """(AP, RL) with:
-        row 0 = anterior
-        col 0 = left
-    """
+def get_slice(data, z):
+    # (AP, RL) with correct visual orientation
     return data[:, :, z].T[::-1, ::-1]
 
 
-def normalize(x: np.ndarray) -> np.ndarray:
+def norm_uint8(x):
     nz = x[x > 0]
     if len(nz) == 0:
-        return np.zeros_like(x, dtype=np.uint8)
+        return np.zeros_like(x, np.uint8)
     lo, hi = np.percentile(nz, [0.5, 99.5])
     return ((np.clip(x, lo, hi) - lo) / (hi - lo) * 255).astype(np.uint8)
 
 
 # ─────────────────────────────────────────────────────────────
-# SLICE BUILD
+# BUILD SLICES
 # ─────────────────────────────────────────────────────────────
 
-def build_slices(data: np.ndarray, channels: int):
+def build_slices(data, channels):
     RL, AP, Z = data.shape
-    black = np.zeros((AP, RL), np.uint8)
-
     slices, idxs = [], []
 
     for z in range(Z - 1, -1, -1):
-        cur = slice_axial(data, z)
+        cur = norm_uint8(get_slice(data, z))
 
         if channels == 3:
-            sup = slice_axial(data, min(z + 1, Z - 1))
-            inf = slice_axial(data, max(z - 1, 0))
+            sup = norm_uint8(get_slice(data, min(z + 1, Z - 1)))
+            inf = norm_uint8(get_slice(data, max(z - 1, 0)))
             slices.append(np.stack([sup, cur, inf], axis=-1))
         else:
             slices.append(cur)
@@ -628,23 +622,24 @@ def build_slices(data: np.ndarray, channels: int):
 
 
 # ─────────────────────────────────────────────────────────────
-# INFERENCE
+# YOLO INFERENCE
 # ─────────────────────────────────────────────────────────────
 
 def infer(model, slices, idxs, conf):
-    res = model.predict(slices, conf=conf, verbose=False)
+    results = model.predict(slices, conf=conf, verbose=False)
 
-    out = {}
-    for z, r in zip(idxs, res):
+    preds = {}
+    for z, r in zip(idxs, results):
         if r.boxes is None or len(r.boxes) == 0:
             continue
         i = int(r.boxes.conf.argmax())
-        out[z] = r.boxes.xywhn[i].tolist()
-    return out
+        preds[z] = r.boxes.xywhn[i].tolist()
+
+    return preds
 
 
 # ─────────────────────────────────────────────────────────────
-# BBOX 3D
+# 3D BBOX
 # ─────────────────────────────────────────────────────────────
 
 def bbox_3d(preds, RL, AP, Z, si_zoom):
@@ -672,22 +667,25 @@ def bbox_3d(preds, RL, AP, Z, si_zoom):
 # PADDING
 # ─────────────────────────────────────────────────────────────
 
-def pad(bbox, rl_mm, ap_mm, si_mm, RL, AP, Z,
-        p_rl=10.0, p_ap=15.0, p_si=20.0):
+def pad_bbox(bbox, rl_mm, ap_mm, si_mm, RL, AP, Z,
+             p_rl=10, p_ap=15, p_si=20):
 
     rl1, rl2, ap1, ap2, z1, z2 = bbox
 
-    p_rl_l, p_rl_r = (p_rl, p_rl) if isinstance(p_rl, (int, float)) else p_rl
-    p_ap_a, p_ap_p = (p_ap, p_ap) if isinstance(p_ap, (int, float)) else p_ap
-    p_si_s, p_si_i = (p_si, p_si) if isinstance(p_si, (int, float)) else p_si
+    def split(p):
+        return (p, p) if isinstance(p, (int, float)) else p
+
+    rl_l, rl_r = split(p_rl)
+    ap_a, ap_p = split(p_ap)
+    si_s, si_i = split(p_si)
 
     return (
-        max(0, rl1 - int(p_rl_l / rl_mm)),
-        min(RL, rl2 + int(p_rl_r / rl_mm)),
-        max(0, ap1 - int(p_ap_a / ap_mm)),
-        min(AP, ap2 + int(p_ap_p / ap_mm)),
-        max(0, z1 - int(p_si_s / si_mm)),
-        min(Z, z2 + int(p_si_i / si_mm)),
+        max(0, rl1 - int(rl_l / rl_mm)),
+        min(RL, rl2 + int(rl_r / rl_mm)),
+        max(0, ap1 - int(ap_a / ap_mm)),
+        min(AP, ap2 + int(ap_p / ap_mm)),
+        max(0, z1 - int(si_s / si_mm)),
+        min(Z, z2 + int(si_i / si_mm)),
     )
 
 
@@ -697,8 +695,8 @@ def pad(bbox, rl_mm, ap_mm, si_mm, RL, AP, Z,
 
 def crop(img, bbox):
     r1, r2, a1, a2, z1, z2 = bbox
-    data = img.get_fdata()
 
+    data = img.get_fdata()
     crop = data[r1:r2, a1:a2, z1:z2]
 
     affine = img.affine.copy()
@@ -708,12 +706,13 @@ def crop(img, bbox):
 
 
 # ─────────────────────────────────────────────────────────────
-# RUN PIPELINE
+# RUN (CLI STABLE)
 # ─────────────────────────────────────────────────────────────
 
-def run(input_path,
+def run(input_path: str,
         config=None,
-        model_path=None,
+        output_path: str | None = None,
+        model_path: str | None = None,
         padding_rl_mm=10,
         padding_ap_mm=15,
         padding_si_mm=20,
@@ -744,12 +743,18 @@ def run(input_path,
         raise RuntimeError("No detection")
 
     bbox = bbox_3d(preds, RL, AP, Z, si_mm / si_res)
-    bbox_p = pad(bbox, rl_mm, ap_mm, si_mm, RL, AP, Z,
-                 padding_rl_mm, padding_ap_mm, padding_si_mm)
+    bbox_p = pad_bbox(bbox, rl_mm, ap_mm, si_mm, RL, AP, Z,
+                      padding_rl_mm, padding_ap_mm, padding_si_mm)
 
     cropped = crop(img, bbox_p)
 
+    # OUTPUT COMPATIBLE CLI
+    if output_path is None:
+        output_path = str(Path(input_path).with_suffix("").as_posix() + "_crop_las.nii.gz")
+
+    nib.save(cropped, output_path)
+
     return {
-        "output": cropped,
-        "bbox": bbox_p,
+        "output": output_path,
+        "bbox": bbox_p
     }

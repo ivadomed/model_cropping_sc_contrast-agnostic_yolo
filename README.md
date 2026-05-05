@@ -6,11 +6,25 @@
 
 ### Install
 
+We recommend installing in a dedicated virtual environment to avoid conflicts with your existing packages.
+
 ```bash
-pip install git+https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git#subdirectory=sc_crop
+python -m venv ~/.venvs/sc_crop
+source ~/.venvs/sc_crop/bin/activate        # Linux / Mac
+# ~/.venvs/sc_crop/Scripts/activate         # Windows
 ```
 
-Dependencies (`ultralytics`, `nibabel`, `numpy`, `pillow`, `pyyaml`) are installed automatically.
+Install a CPU-only version of PyTorch first to avoid downloading large CUDA libraries unnecessarily:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+Then install the package:
+
+```bash
+pip install "git+https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git#subdirectory=sc_crop"
+```
 
 ### Download the model
 
@@ -25,11 +39,11 @@ sc-crop download
 sc-crop t2.nii.gz
 # → t2_crop.nii.gz next to the input, same orientation / resolution / world space
 
-sc-crop t2.nii.gz -o output.nii.gz      # explicit output path
+sc-crop t2.nii.gz -o output.nii.gz     # explicit output path
 sc-crop t2.nii.gz --padding-rl 10      # Right-Left padding in mm (default 10)
 sc-crop t2.nii.gz --padding-ap 15      # Anterior-Posterior padding in mm (default 15)
 sc-crop t2.nii.gz --padding-si 20      # Superior-Inferior padding in mm (default 20)
-sc-crop t2.nii.gz --conf 0.05          # confidence threshold (default 0.1)
+sc-crop t2.nii.gz --conf 0.1           # confidence threshold (default 0.1)
 sc-crop t2.nii.gz --debug              # also saves t2_debug.png (per-slice panel)
 ```
 
@@ -38,7 +52,7 @@ sc-crop t2.nii.gz --debug              # also saves t2_debug.png (per-slice pane
 ```python
 from sc_crop.crop import run
 out = run("t2.nii.gz")
-out = run("t2.nii.gz", padding_mm=20, conf=0.05, debug=True)
+out = run("t2.nii.gz", padding_rl_mm=10, padding_ap_mm=15, padding_si_mm=20, conf=0.1, debug=True)
 ```
 
 ### Requirements

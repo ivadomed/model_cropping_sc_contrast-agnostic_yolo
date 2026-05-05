@@ -260,21 +260,35 @@ def crop_volume(img_las: nib.Nifti1Image, bbox: tuple,
 # ─── Debug panel ──────────────────────────────────────────────────────────────
 
 def save_debug_panel(model, slices: list, las_idxs: list,
-                     conf_thresh: float, out_path: str) -> None:
+                     conf_thresh: float, out_path: str,
+                     padded_bbox: tuple | None = None,
+                     H: int | None = None, W: int | None = None) -> None:
     """Save a near-square panel of all axial slices with max-confidence bbox.
-
-    Runs inference at conf=0.001 so every slice shows its best prediction.
-    bbox color: green if conf ≥ conf_thresh, orange otherwise.
+        Runs inference at conf=0.001 so every slice shows its best prediction.
+        bbox colors:
+            - Green/Orange: YOLO detection (green if conf ≥ conf_thresh, orange otherwise)
+            - Red: 3D crop region boundaries (if padded_bbox provided)
+    
+        If padded_bbox provided, also shows the 3D crop region boundaries:
+            - Red rectangle: boundaries of 3D crop region (rl1p:rl2p, ap1p:ap2p)
+            - Shown on slices within crop z-range (z1p:z2p)
+    
+        Slice convention: data[:, :, z].T[::-1, ::-1] gives (AP, RL) with both axes flipped.
     """
     CELL    = 128
     results = model.predict(slices, conf=0.001, verbose=False)
     cells   = []
+
+    # Unpack padded bbox if provided
+    padded_rl1, padded_rl2, padded_ap1, padded_ap2, padded_z1, padded_z2 = padded_bbox if padded_bbox else (None,) * 6
+    has_padded = padded_bbox is not None and H is not None and W is not None
 
     for las_idx, res, sl in zip(las_idxs, results, slices):
         rgb  = sl if sl.ndim == 3 else np.stack([sl] * 3, axis=-1)
         cell = PILImage.fromarray(rgb).resize((CELL, CELL), PILImage.BILINEAR)
         draw = ImageDraw.Draw(cell)
 
+        # Draw YOLO detections
         if res.boxes is not None and len(res.boxes) > 0:
             best         = int(res.boxes.conf.argmax())
             conf         = float(res.boxes.conf[best])
@@ -284,6 +298,18 @@ def save_debug_panel(model, slices: list, las_idxs: list,
             color = (0, 220, 0) if conf >= conf_thresh else (255, 140, 0)
             draw.rectangle([x1, y1, x2, y2], outline=color, width=1)
             draw.text((2, CELL - 11), f"{conf:.2f}", fill=color)
+
+        # Draw padded bbox 3D region (red)
+        # Slice convention: rows=AP (0=Anterior), cols=RL flipped (0=Right after flip)
+        if has_padded and padded_z1 <= las_idx <= padded_z2:
+            # Map voxel coords to pixel coords, accounting for flip
+            # AP: no flip, row increases from anterior to posterior
+            y1_pad = (padded_ap1 / H) * CELL
+            y2_pad = (padded_ap2 / H) * CELL
+            # RL: flipped, col increases from right to left in display
+            x1_pad = (1.0 - padded_rl2 / W) * CELL
+            x2_pad = (1.0 - padded_rl1 / W) * CELL
+            draw.rectangle([x1_pad, y1_pad, x2_pad, y2_pad], outline=(255, 0, 0), width=2)
 
         draw.text((2, 1), f"z{las_idx}", fill=(200, 200, 200))
         cells.append(cell)
@@ -362,12 +388,6 @@ def run(input_path: str,
 
     slices, las_idxs = build_slices(data_inf, channels)
 
-    if debug:
-        inp_p      = Path(input_path)
-        stem       = inp_p.name.replace(".nii.gz", "").replace(".nii", "")
-        debug_path = str(inp_p.parent / f"{stem}_debug.png")
-        save_debug_panel(model, slices, las_idxs, conf, debug_path)
-
     preds = infer_slices(model, slices, las_idxs, conf)
     print(f"Detected: {len(preds)}/{data_inf.shape[2]} slices")
 
@@ -379,6 +399,37 @@ def run(input_path: str,
     bbox = aggregate_bbox_3d(preds, RL_nat, AP_nat, Z_nat, si_zoom)
     rl1, rl2, ap1, ap2, z1, z2 = bbox
     print(f"SC bbox : RL [{rl1}:{rl2}]  AP [{ap1}:{ap2}]  SI [{z1}:{z2}]  (before padding)")
+
+    # Compute padded bbox for debug
+    if debug:
+        # Parse padding to compute padded coords
+        pad_rl_left, pad_rl_right = (padding_rl_mm, padding_rl_mm) if isinstance(padding_rl_mm, (int, float)) else padding_rl_mm
+        pad_ap_post, pad_ap_ant = (padding_ap_mm, padding_ap_mm) if isinstance(padding_ap_mm, (int, float)) else padding_ap_mm
+        pad_si_inf, pad_si_sup = (padding_si_mm, padding_si_mm) if isinstance(padding_si_mm, (int, float)) else padding_si_mm
+
+        pad_rl_left_vox = int(np.ceil(pad_rl_left / rl_mm_nat))
+        pad_rl_right_vox = int(np.ceil(pad_rl_right / rl_mm_nat))
+        pad_ap_post_vox = int(np.ceil(pad_ap_post / ap_mm_nat))
+        pad_ap_ant_vox = int(np.ceil(pad_ap_ant / ap_mm_nat))
+        pad_si_inf_vox = int(np.ceil(pad_si_inf / si_mm_nat))
+        pad_si_sup_vox = int(np.ceil(pad_si_sup / si_mm_nat))
+
+        rl1p = max(0,  rl1 - pad_rl_left_vox)
+        rl2p = min(RL_nat, rl2 + pad_rl_right_vox)
+        ap1p = max(0,  ap1 - pad_ap_post_vox)
+        ap2p = min(AP_nat, ap2 + pad_ap_ant_vox)
+        z1p  = max(0,  z1  - pad_si_inf_vox)
+        z2p  = min(Z_nat,  z2  + pad_si_sup_vox)
+        padded_bbox_debug = (rl1p, rl2p, ap1p, ap2p, z1p, z2p)
+    else:
+        padded_bbox_debug = None
+
+    if debug:
+        inp_p      = Path(input_path)
+        stem       = inp_p.name.replace(".nii.gz", "").replace(".nii", "")
+        debug_path = str(inp_p.parent / f"{stem}_debug.png")
+        save_debug_panel(model, slices, las_idxs, conf, debug_path,
+                        padded_bbox=padded_bbox_debug, H=AP_nat, W=RL_nat)
 
     cropped_las, bbox_pad, bbox_mm = crop_volume(img_las, bbox, padding_rl_mm, padding_ap_mm, padding_si_mm,
                                                    original_affine=original_affine)

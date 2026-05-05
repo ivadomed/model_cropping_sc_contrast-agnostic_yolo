@@ -151,7 +151,9 @@ def infer_slices(session, data: np.ndarray, imgsz: int,
         padded, scale, pad_top, pad_left = letterbox(img_hwc, imgsz)
 
         inp = padded.transpose(2, 0, 1)[None].astype(np.float32) / 255.0
-        out = session.run(None, {input_name: inp})[0][0]  # [5+, num_anchors]
+        out = session.run(None, {input_name: inp})[0][0]
+        if out.shape[0] > out.shape[1]:  # [num_anchors, 5+] → [5+, num_anchors]
+            out = out.T
 
         scores = out[4]
         mask   = scores > conf_thresh
@@ -263,7 +265,9 @@ def save_debug_panel(session, data: np.ndarray, imgsz: int,
 
         padded, _scale, _pt, _pl = letterbox(img_hwc, imgsz)
         inp = padded.transpose(2, 0, 1)[None].astype(np.float32) / 255.0
-        out = session.run(None, {input_name: inp})[0][0]  # [5+, anchors]
+        out = session.run(None, {input_name: inp})[0][0]
+        if out.shape[0] > out.shape[1]:  # [num_anchors, 5+] → [5+, num_anchors]
+            out = out.T
 
         scores   = out[4]
         best_idx = int(np.argmax(scores))

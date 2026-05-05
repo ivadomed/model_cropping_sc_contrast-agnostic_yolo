@@ -534,64 +534,64 @@
 #     }
 """
 Core logic for spinal cord detection and volume cropping.
-
+ 
 Uses ultralytics YOLO (best.pt) for inference — identical preprocessing to the
 training pipeline (preprocess.py): LAS reorientation, nibabel resample_to_output,
 axial slices as data[:, :, las_idx].T[::-1, ::-1] → (AP, RL, C) uint8.
-
+ 
 The output is saved in LAS orientation for visualization (e.g., fsleyes).
-
+ 
 Usage:
     from sc_crop.crop import run, load_config
-
+ 
     # Symmetric padding (same on both faces)
     result = run("t2.nii.gz", padding_rl_mm=10.0, padding_ap_mm=15.0, padding_si_mm=20.0)
-
+ 
     # Asymmetric padding per face: (left/ant/sup, right/post/inf)
     result = run("t2.nii.gz",
                  padding_rl_mm=(5.0, 15.0),   # 5mm Left, 15mm Right
                  padding_ap_mm=(10.0, 20.0),  # 10mm Anterior, 20mm Posterior
                  padding_si_mm=(15.0, 25.0))  # 15mm Superior, 25mm Inferior
-
+ 
     output_path = result["output"]
     corner_mm, sizes_mm = result["bbox_mm"]
     result = run("t2.nii.gz", debug=True)
     # debug=True → also saves <stem>_debug.png: panel of all slices with
     # max-confidence bbox overlaid (no threshold), green if conf ≥ threshold, orange otherwise.
 """
-
+ 
 from __future__ import annotations
-
+ 
 import math
 from dataclasses import dataclass
 from pathlib import Path
-
+ 
 import nibabel as nib
 import numpy as np
 from nibabel.orientations import axcodes2ornt, ornt_transform
 from nibabel.processing import resample_to_output
 from PIL import Image as PILImage
 from PIL import ImageDraw
-
-
+ 
+ 
 # ─── Config ───────────────────────────────────────────────────────────────────
-
+ 
 def load_config(model_dir: str | Path) -> dict:
     """Load config.yaml from the directory containing model.pt."""
     import yaml
     return yaml.safe_load((Path(model_dir) / "config.yaml").read_text())
-
-
+ 
+ 
 # ─── BBox3D: single source of truth for voxel bboxes in LAS index space ──────
-
+ 
 Pair = tuple[float, float]
-
-
+ 
+ 
 def _as_pair(p: float | tuple) -> Pair:
     """Normalize float or (a, b) → (a, b)."""
     return (float(p), float(p)) if isinstance(p, (int, float)) else (float(p[0]), float(p[1]))
-
-
+ 
+ 
 @dataclass(frozen=True)
 class BBox3D:
     """Voxel bbox in LAS index space: (rl1, rl2, ap1, ap2, z1, z2)."""
@@ -601,16 +601,16 @@ class BBox3D:
     ap2: int
     z1: int
     z2: int
-
+ 
     def as_tuple(self) -> tuple[int, int, int, int, int, int]:
         return (self.rl1, self.rl2, self.ap1, self.ap2, self.z1, self.z2)
-
+ 
     def pad(self,
             pad_rl: Pair, pad_ap: Pair, pad_si: Pair,
             zooms: tuple[float, float, float],
             shape: tuple[int, int, int]) -> "BBox3D":
         """Return a new BBox3D padded in mm (per face), clamped to image bounds.
-
+ 
         LAS convention:
           - RL: Left (0) to Right (max)     → pad_rl = (left_mm, right_mm)
           - AP: Anterior (0) to Posterior   → pad_ap = (anterior_mm, posterior_mm)
@@ -626,7 +626,7 @@ class BBox3D:
             z1=max(0,   self.z1  - int(np.ceil(pad_si[0] / si_mm))),
             z2=min(Z,   self.z2  + int(np.ceil(pad_si[1] / si_mm))),
         )
-
+ 
     def to_mm(self, img_las: nib.Nifti1Image) -> tuple[np.ndarray, np.ndarray]:
         """Convert to LAS mm space → (corner_mm, sizes_mm)."""
         rl_mm, ap_mm, si_mm = [float(v) for v in img_las.header.get_zooms()[:3]]
@@ -636,7 +636,7 @@ class BBox3D:
                              (self.ap2 - self.ap1) * ap_mm,
                              (self.z2  - self.z1)  * si_mm])
         return corner_mm, sizes_mm
-
+ 
     def crop(self, img_las: nib.Nifti1Image) -> nib.Nifti1Image:
         """Crop a LAS NIfTI; updates affine so the crop sits at the correct world position."""
         data    = img_las.get_fdata(dtype=np.float32)
@@ -645,25 +645,25 @@ class BBox3D:
         affine[:3, 3] = img_las.affine[:3, :3] @ np.array([self.rl1, self.ap1, self.z1]) \
                        + img_las.affine[:3, 3]
         return nib.Nifti1Image(cropped, affine)
-
-
+ 
+ 
 # ─── Orientation helpers ──────────────────────────────────────────────────────
-
+ 
 def reorient_to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
     current = nib.io_orientation(img.affine)
     target  = axcodes2ornt(("L", "A", "S"))
     return img.as_reoriented(ornt_transform(current, target))
-
-
+ 
+ 
 def reorient_to_original(img_las: nib.Nifti1Image,
                           original_ornt: np.ndarray) -> nib.Nifti1Image:
     las_ornt  = axcodes2ornt(("L", "A", "S"))
     transform = ornt_transform(las_ornt, original_ornt)
     return img_las.as_reoriented(transform)
-
-
+ 
+ 
 # ─── Resampling ───────────────────────────────────────────────────────────────
-
+ 
 def resample_for_inference(img_las: nib.Nifti1Image,
                             si_res: float,
                             inplane_res: float | None) -> nib.Nifti1Image:
@@ -676,10 +676,10 @@ def resample_for_inference(img_las: nib.Nifti1Image,
             and abs(si_res - si_mm) < 0.01):
         return img_las
     return resample_to_output(img_las, voxel_sizes=(target_rl, target_ap, si_res), order=1)
-
-
+ 
+ 
 # ─── Slice extraction ─────────────────────────────────────────────────────────
-
+ 
 def normalize_to_uint8(arr: np.ndarray) -> np.ndarray:
     flat = arr.ravel()
     nz   = flat[flat > 0]
@@ -689,11 +689,11 @@ def normalize_to_uint8(arr: np.ndarray) -> np.ndarray:
     if hi <= lo:
         return np.zeros_like(arr, dtype=np.uint8)
     return ((np.clip(arr, lo, hi) - lo) / (hi - lo) * 255).astype(np.uint8)
-
-
+ 
+ 
 def _get_slice(data: np.ndarray, las_idx: int, black: np.ndarray) -> np.ndarray:
     """Extract one axial slice in (AP, RL) uint8, identical to preprocess.py.
-
+ 
     Convention: data[:, :, las_idx].T[::-1, ::-1]
       rows = AP (row 0 = Anterior), cols = RL (col 0 = Left).
     Out-of-bounds las_idx returns a black frame.
@@ -702,20 +702,20 @@ def _get_slice(data: np.ndarray, las_idx: int, black: np.ndarray) -> np.ndarray:
     if las_idx < 0 or las_idx >= Z:
         return black
     return normalize_to_uint8(data[:, :, las_idx]).T[::-1, ::-1]
-
-
+ 
+ 
 def build_slices(data: np.ndarray, channels: int) -> tuple[list, list]:
     """Build all axial slices Superior→Inferior, matching preprocess.py convention.
-
+ 
     3ch: R=Superior neighbour (las_idx+1), G=current, B=Inferior neighbour (las_idx-1).
     Border channels are black (zeros).
-
+ 
     Returns (slices, las_idxs); las_idx 0 = Inferior, Z-1 = Superior.
     """
     RL, AP, Z = data.shape
     black     = np.zeros((AP, RL), dtype=np.uint8)
     slices, las_idxs = [], []
-
+ 
     for las_idx in range(Z - 1, -1, -1):   # Superior → Inferior
         cur = _get_slice(data, las_idx, black)
         if channels == 3:
@@ -725,15 +725,15 @@ def build_slices(data: np.ndarray, channels: int) -> tuple[list, list]:
         else:
             slices.append(cur)
         las_idxs.append(las_idx)
-
+ 
     return slices, las_idxs
-
-
+ 
+ 
 # ─── YOLO inference ───────────────────────────────────────────────────────────
-
+ 
 def infer_slices(model, slices: list, las_idxs: list, conf_thresh: float) -> dict:
     """Run YOLO inference on pre-built slices.
-
+ 
     Returns {las_idx: (cx, cy, w, h)} in slice-image normalised coords [0,1].
     """
     results = model.predict(slices, conf=conf_thresh, verbose=False)
@@ -745,20 +745,20 @@ def infer_slices(model, slices: list, las_idxs: list, conf_thresh: float) -> dic
         cx, cy, w, h = res.boxes.xywhn[best].tolist()
         preds[las_idx] = (cx, cy, w, h)
     return preds
-
-
+ 
+ 
 # ─── Per-slice → LAS bbox aggregation ─────────────────────────────────────────
-
+ 
 def aggregate_bbox_3d(preds: dict,
                       RL_nat: int, AP_nat: int, Z_nat: int,
                       si_zoom: float) -> BBox3D:
     """Aggregate per-slice detections → BBox3D in native LAS voxels.
-
+ 
     Slices were presented as (AP, RL) with T[::-1, ::-1], so to map back to native LAS:
       rl_c = cx * RL_nat  (no flip — kept as in original logic)
       ap_c = (1 - cy) * AP_nat
     Normalised in-plane coords are FOV-preserving → valid in native space directly.
-
+ 
     si_zoom = si_mm_nat / si_res; z_nat = round(las_idx_inf / si_zoom).
     """
     rl1s, rl2s, ap1s, ap2s, zs = [], [], [], [], []
@@ -774,33 +774,33 @@ def aggregate_bbox_3d(preds: dict,
         ap2s.append(min(AP_nat, int(ap_c + ap_half)))
         zs.append(z_nat)
     return BBox3D(min(rl1s), max(rl2s), min(ap1s), max(ap2s), min(zs), max(zs))
-
-
+ 
+ 
 # ─── Debug panel ──────────────────────────────────────────────────────────────
-
+ 
 def save_debug_panel(model, slices: list, las_idxs: list,
                      conf_thresh: float, out_path: str,
                      padded_bbox: BBox3D | None = None,
                      H: int | None = None, W: int | None = None) -> None:
     """Save a near-square panel of all axial slices with max-confidence bbox.
-
+ 
     Runs inference at conf=0.001 so every slice shows its best prediction.
     bbox colors:
         - Green/Orange: YOLO detection (green if conf ≥ conf_thresh, else orange)
         - Red: 3D crop region boundaries (if padded_bbox provided)
-
+ 
     Slice convention: data[:, :, z].T[::-1,::-1] → row 0 = Anterior, col 0 = Left.
     """
     CELL    = 128
     results = model.predict(slices, conf=0.001, verbose=False)
     has_pad = padded_bbox is not None and H is not None and W is not None
     cells   = []
-
+ 
     for las_idx, res, sl in zip(las_idxs, results, slices):
         rgb  = sl if sl.ndim == 3 else np.stack([sl] * 3, axis=-1)
         cell = PILImage.fromarray(rgb).resize((CELL, CELL), PILImage.BILINEAR)
         draw = ImageDraw.Draw(cell)
-
+ 
         # YOLO detection (green/orange)
         if res.boxes is not None and len(res.boxes) > 0:
             best         = int(res.boxes.conf.argmax())
@@ -811,7 +811,7 @@ def save_debug_panel(model, slices: list, las_idxs: list,
             color = (0, 220, 0) if conf >= conf_thresh else (255, 140, 0)
             draw.rectangle([x1, y1, x2, y2], outline=color, width=1)
             draw.text((2, CELL - 11), f"{conf:.2f}", fill=color)
-
+ 
         # 3D crop region (red), drawn on slices within the padded z-range.
         # T[::-1,::-1]: col 0 = Left (LAS RL max), row 0 = Anterior (LAS AP max).
         # LAS rl_vox → image_x = (rl_vox / W) * CELL  (no flip — matches original)
@@ -823,37 +823,37 @@ def save_debug_panel(model, slices: list, las_idxs: list,
             y1 = (1 - padded_bbox.ap1 / H) * CELL
             draw.rectangle([min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)],
                            outline=(255, 0, 0), width=2)
-
+ 
         draw.text((2, 1), f"z{las_idx}", fill=(200, 200, 200))
         cells.append(cell)
-
+ 
     n    = len(cells)
     cols = math.ceil(math.sqrt(n))
     rows = math.ceil(n / cols)
-
+ 
     canvas = PILImage.new("RGB", (cols * CELL, rows * CELL), (20, 20, 20))
     for i, cell in enumerate(cells):
         r, c = divmod(i, cols)
         canvas.paste(cell, (c * CELL, r * CELL))
-
+ 
     canvas.save(out_path)
     print(f"Debug   : {out_path}")
-
-
+ 
+ 
 # ─── I/O helpers ──────────────────────────────────────────────────────────────
-
+ 
 def _default_output_path(input_path: str) -> Path:
     inp  = Path(input_path)
     stem = inp.name.replace(".nii.gz", "").replace(".nii", "")
     return inp.parent / f"{stem}_crop_las.nii.gz"
-
-
+ 
+ 
 def _derived_paths(output_path: Path) -> dict[str, Path]:
     """All derived output paths from the main output path."""
     name = output_path.name
     parent = output_path.parent
     base = parent / Path(output_path).stem  # used for bbox txt files
-
+ 
     return {
         "output":             output_path,
         "output_before":      parent / name.replace("_crop_las.nii.gz", "_crop_before_padding_las.nii.gz")
@@ -864,8 +864,8 @@ def _derived_paths(output_path: Path) -> dict[str, Path]:
         "bbox_after":         Path(str(base) + "_bbox_after_padding_las.txt"),
         "bbox_alias":         Path(str(base) + "_bbox_las.txt"),
     }
-
-
+ 
+ 
 def _write_bbox_file(path: Path, bbox: BBox3D, corner_mm: np.ndarray, sizes_mm: np.ndarray,
                      header: str, include_vox: bool = True) -> None:
     with open(path, "w") as f:
@@ -876,45 +876,18 @@ def _write_bbox_file(path: Path, bbox: BBox3D, corner_mm: np.ndarray, sizes_mm: 
         f.write("# MM format: corner_x corner_y corner_z size_rl size_ap size_si\n")
         f.write(f"{corner_mm[0]:.2f} {corner_mm[1]:.2f} {corner_mm[2]:.2f} "
                 f"{sizes_mm[0]:.2f} {sizes_mm[1]:.2f} {sizes_mm[2]:.2f}\n")
-
-
+ 
+ 
 def _format_pad(pad: Pair, sym_label: str, asym_labels: tuple[str, str]) -> str:
     if pad[0] == pad[1]:
         return f"{pad[0]}mm"
     return f"{asym_labels[0]}={pad[0]}mm {asym_labels[1]}={pad[1]}mm"
-
-
+ 
+ 
 # ─── Pipeline ─────────────────────────────────────────────────────────────────
-
-def _detect_bbox(img_las: nib.Nifti1Image,
-                 model, channels: int,
-                 si_res: float, inplane_res: float | None,
-                 conf: float) -> BBox3D:
-    """Run inference and return raw (un-padded) bbox in native LAS voxels."""
-    RL_nat, AP_nat, Z_nat = img_las.shape
-    si_mm_nat = float(img_las.header.get_zooms()[2])
-    si_zoom   = si_mm_nat / si_res
-
-    img_inf  = resample_for_inference(img_las, si_res, inplane_res)
-    data_inf = img_inf.get_fdata(dtype=np.float32)
-    print(f"Infer   : shape={data_inf.shape}  si_zoom={si_zoom:.3f}")
-
-    slices, las_idxs = build_slices(data_inf, channels)
-    preds = infer_slices(model, slices, las_idxs, conf)
-    print(f"Detected: {len(preds)}/{data_inf.shape[2]} slices")
-
-    if not preds:
-        raise RuntimeError("No spinal cord detected — check the volume or lower --conf")
-
-    bbox = aggregate_bbox_3d(preds, RL_nat, AP_nat, Z_nat, si_zoom)
-
-    # Stash artifacts for optional debug rendering
-    bbox._inference_artifacts = (slices, las_idxs)  # type: ignore[attr-defined]
-    return bbox
-
-
+ 
 # ─── Main entry point ─────────────────────────────────────────────────────────
-
+ 
 def run(input_path: str,
         config: dict | None = None,
         output_path: str | None = None,
@@ -925,45 +898,57 @@ def run(input_path: str,
         conf: float | None = None,
         debug: bool = False) -> dict:
     """Full pipeline: load → LAS → resample → infer → bbox 3D → crop → save.
-
+ 
     Returns a dict with paths to all outputs and bbox info in mm.
     """
     from .download import ensure_model
     from ultralytics import YOLO
-
+ 
     # ── Setup ────────────────────────────────────────────────────────────────
     model_path = Path(model_path) if model_path else ensure_model()
     config     = config if config is not None else load_config(model_path.parent)
-
+ 
     si_res      = config["si_res"]
     inplane_res = config.get("inplane_res")
     channels    = config.get("channels", 3)
     conf        = conf if conf is not None else config.get("conf", 0.1)
-
+ 
     pad_rl = _as_pair(padding_rl_mm)
     pad_ap = _as_pair(padding_ap_mm)
     pad_si = _as_pair(padding_si_mm)
-
+ 
     # ── Load & reorient ──────────────────────────────────────────────────────
     img     = nib.load(input_path)
     img_las = reorient_to_las(img)
     zooms   = tuple(float(v) for v in img_las.header.get_zooms()[:3])
     shape   = img_las.shape
-
+ 
     print(f"Input   : {Path(input_path).name}  shape={img.shape}  zooms={img.header.get_zooms()[:3]}")
     print(f"LAS     : shape={shape}  res=({zooms[0]:.2f},{zooms[1]:.2f},{zooms[2]:.2f})mm")
-
+ 
     # ── Inference ────────────────────────────────────────────────────────────
     model = YOLO(str(model_path))
     print(f"Model   : {model_path.name}  channels={channels}  conf={conf}")
-
-    bbox = _detect_bbox(img_las, model, channels, si_res, inplane_res, conf)
+ 
+    si_zoom  = zooms[2] / si_res
+    img_inf  = resample_for_inference(img_las, si_res, inplane_res)
+    data_inf = img_inf.get_fdata(dtype=np.float32)
+    print(f"Infer   : shape={data_inf.shape}  si_zoom={si_zoom:.3f}")
+ 
+    slices, las_idxs = build_slices(data_inf, channels)
+    preds = infer_slices(model, slices, las_idxs, conf)
+    print(f"Detected: {len(preds)}/{data_inf.shape[2]} slices")
+ 
+    if not preds:
+        raise RuntimeError("No spinal cord detected — check the volume or lower --conf")
+ 
+    bbox = aggregate_bbox_3d(preds, shape[0], shape[1], shape[2], si_zoom)
     print(f"SC bbox : RL [{bbox.rl1}:{bbox.rl2}]  AP [{bbox.ap1}:{bbox.ap2}]  "
           f"SI [{bbox.z1}:{bbox.z2}]  (before padding)")
-
+ 
     # ── Padding ──────────────────────────────────────────────────────────────
     bbox_pad = bbox.pad(pad_rl, pad_ap, pad_si, zooms, shape)
-
+ 
     print(f"Padding : RL={_format_pad(pad_rl, 'RL', ('L', 'R'))}  "
           f"AP={_format_pad(pad_ap, 'AP', ('A', 'P'))}  "
           f"SI={_format_pad(pad_si, 'SI', ('S', 'I'))}")
@@ -971,50 +956,49 @@ def run(input_path: str,
           f"AP [{bbox_pad.ap1}:{bbox_pad.ap2}]  "
           f"SI [{bbox_pad.z1}:{bbox_pad.z2}]  "
           f"→ shape=({bbox_pad.rl2-bbox_pad.rl1},{bbox_pad.ap2-bbox_pad.ap1},{bbox_pad.z2-bbox_pad.z1})")
-
+ 
     # ── Debug panel (optional) ───────────────────────────────────────────────
     if debug:
-        slices, las_idxs = bbox._inference_artifacts  # type: ignore[attr-defined]
         inp_p     = Path(input_path)
         stem      = inp_p.name.replace(".nii.gz", "").replace(".nii", "")
         debug_png = str(inp_p.parent / f"{stem}_debug.png")
         save_debug_panel(model, slices, las_idxs, conf, debug_png,
                          padded_bbox=bbox_pad, H=shape[1], W=shape[0])
-
+ 
     # ── Crop ─────────────────────────────────────────────────────────────────
     cropped_before = bbox.crop(img_las)
     cropped_after  = bbox_pad.crop(img_las)
-
+ 
     bbox_before_mm = bbox.to_mm(img_las)
     bbox_after_mm  = bbox_pad.to_mm(img_las)
-
+ 
     # ── Save ─────────────────────────────────────────────────────────────────
     out_path = Path(output_path) if output_path else _default_output_path(input_path)
     paths    = _derived_paths(out_path)
-
+ 
     nib.save(img_las,        paths["input_las"])
     print(f"Saved   : {paths['input_las']}  shape={img_las.shape}")
-
+ 
     nib.save(cropped_before, paths["output_before"])
     print(f"Saved   : {paths['output_before']}  shape={cropped_before.shape}")
-
+ 
     nib.save(cropped_after,  paths["output"])
     print(f"Saved   : {paths['output']}  shape={cropped_after.shape}")
-
+ 
     corner_mm, sizes_mm = bbox_after_mm
     print(f"BBox MM : corner=({corner_mm[0]:.1f}, {corner_mm[1]:.1f}, {corner_mm[2]:.1f}) mm  "
           f"sizes=({sizes_mm[0]:.1f}, {sizes_mm[1]:.1f}, {sizes_mm[2]:.1f}) mm")
-
+ 
     _write_bbox_file(paths["bbox_before"], bbox,     *bbox_before_mm,
                      header="Bounding box BEFORE padding")
     _write_bbox_file(paths["bbox_after"],  bbox_pad, *bbox_after_mm,
                      header="Bounding box AFTER padding")
     _write_bbox_file(paths["bbox_alias"],  bbox_pad, *bbox_after_mm,
                      header="Bounding box AFTER padding", include_vox=False)
-
+ 
     print(f"BBox pre: {paths['bbox_before']}")
     print(f"BBox post: {paths['bbox_after']}")
-
+ 
     return {
         "input_las_file":     str(paths["input_las"]),
         "output_before_file": str(paths["output_before"]),
@@ -1026,3 +1010,4 @@ def run(input_path: str,
         "corner_mm":          corner_mm,
         "sizes_mm":           sizes_mm,
     }
+ 

@@ -544,8 +544,6 @@ from nibabel.processing import resample_to_output
 from PIL import Image as PILImage
 from PIL import ImageDraw
 
-from ultralytics import YOLO
-
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG
@@ -553,26 +551,15 @@ from ultralytics import YOLO
 
 def load_config(model_dir: str | Path) -> dict:
     import yaml
-    return yaml.safe_load((Path(model_dir) / "config.yaml").read_text())
+    model_dir = Path(model_dir)
+    return yaml.safe_load((model_dir / "config.yaml").read_text())
 
 
 # ─────────────────────────────────────────────────────────────
-# MODEL RESOLUTION
+# ORIENTATION
 # ─────────────────────────────────────────────────────────────
 
-def resolve_model(model_path: str | Path | None) -> Path:
-    """Guarantee valid model path."""
-    if model_path is None:
-        from .download import ensure_model
-        return ensure_model()
-    return Path(model_path)
-
-
-# ─────────────────────────────────────────────────────────────
-# ORIENTATION (LAS ONLY)
-# ─────────────────────────────────────────────────────────────
-
-def to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
+def reorient_to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
     cur = nib.io_orientation(img.affine)
     tgt = axcodes2ornt(("L", "A", "S"))
     return img.as_reoriented(ornt_transform(cur, tgt))
@@ -582,49 +569,57 @@ def to_las(img: nib.Nifti1Image) -> nib.Nifti1Image:
 # RESAMPLING
 # ─────────────────────────────────────────────────────────────
 
-def resample(img, si_res, inplane):
+def resample_for_inference(img, si_res, inplane_res):
     rl, ap, si = img.header.get_zooms()[:3]
 
-    if inplane is None:
-        inplane = rl
+    if inplane_res is None:
+        inplane_res = rl
 
-    if abs(rl - inplane) < 1e-2 and abs(ap - inplane) < 1e-2 and abs(si - si_res) < 1e-2:
+    if abs(rl - inplane_res) < 1e-2 and abs(ap - inplane_res) < 1e-2 and abs(si - si_res) < 1e-2:
         return img
 
-    return resample_to_output(img, voxel_sizes=(inplane, inplane, si_res), order=1)
+    return resample_to_output(img, voxel_sizes=(inplane_res, inplane_res, si_res), order=1)
 
 
 # ─────────────────────────────────────────────────────────────
-# SLICE CONVENTION (CRITICAL)
+# NORMALISATION
 # ─────────────────────────────────────────────────────────────
 
-def get_slice(data, z):
-    # (AP, RL) after correct orientation flip
-    return data[:, :, z].T[::-1, ::-1]
+def normalize(arr):
+    v = arr[arr > 0]
+    if len(v) == 0:
+        return np.zeros_like(arr, dtype=np.uint8)
 
+    lo, hi = np.percentile(v, (0.5, 99.5))
+    if hi <= lo:
+        return np.zeros_like(arr, dtype=np.uint8)
 
-def normalize_uint8(x):
-    nz = x[x > 0]
-    if len(nz) == 0:
-        return np.zeros_like(x, dtype=np.uint8)
-    lo, hi = np.percentile(nz, [0.5, 99.5])
-    return ((np.clip(x, lo, hi) - lo) / (hi - lo) * 255).astype(np.uint8)
+    return ((np.clip(arr, lo, hi) - lo) / (hi - lo) * 255).astype(np.uint8)
 
 
 # ─────────────────────────────────────────────────────────────
-# SLICE BUILDING
+# SLICE EXTRACTION
 # ─────────────────────────────────────────────────────────────
+
+def get_slice(data, z, black):
+    if z < 0 or z >= data.shape[2]:
+        return black
+    return normalize(data[:, :, z]).T[::-1, ::-1]
+
 
 def build_slices(data, channels):
     RL, AP, Z = data.shape
-    slices, idxs = [], []
+    black = np.zeros((AP, RL), dtype=np.uint8)
+
+    slices = []
+    idxs = []
 
     for z in range(Z - 1, -1, -1):
-        cur = normalize_uint8(get_slice(data, z))
+        cur = get_slice(data, z, black)
 
         if channels == 3:
-            sup = normalize_uint8(get_slice(data, min(z + 1, Z - 1)))
-            inf = normalize_uint8(get_slice(data, max(z - 1, 0)))
+            sup = get_slice(data, z + 1, black)
+            inf = get_slice(data, z - 1, black)
             slices.append(np.stack([sup, cur, inf], axis=-1))
         else:
             slices.append(cur)
@@ -635,16 +630,18 @@ def build_slices(data, channels):
 
 
 # ─────────────────────────────────────────────────────────────
-# INFERENCE
+# YOLO INFERENCE
 # ─────────────────────────────────────────────────────────────
 
 def infer(model, slices, idxs, conf):
+    preds = {}
+
     results = model.predict(slices, conf=conf, verbose=False)
 
-    preds = {}
     for z, r in zip(idxs, results):
         if r.boxes is None or len(r.boxes) == 0:
             continue
+
         i = int(r.boxes.conf.argmax())
         preds[z] = r.boxes.xywhn[i].tolist()
 
@@ -652,127 +649,116 @@ def infer(model, slices, idxs, conf):
 
 
 # ─────────────────────────────────────────────────────────────
-# 3D BBOX
+# BBOX
 # ─────────────────────────────────────────────────────────────
 
-def bbox_3d(preds, RL, AP, Z, si_zoom):
+def aggregate(preds, RL, AP, Z, si_zoom):
     rl1, rl2, ap1, ap2, zs = [], [], [], [], []
 
     for z, (cx, cy, w, h) in preds.items():
         zz = min(Z - 1, round(z / si_zoom))
 
-        cx *= RL
+        cx = cx * RL
         cy = (1 - cy) * AP
 
-        w *= RL / 2
-        h *= AP / 2
+        rw = w * RL / 2
+        ah = h * AP / 2
 
-        rl1.append(int(cx - w))
-        rl2.append(int(cx + w))
-        ap1.append(int(cy - h))
-        ap2.append(int(cy + h))
+        rl1.append(int(cx - rw))
+        rl2.append(int(cx + rw))
+        ap1.append(int(cy - ah))
+        ap2.append(int(cy + ah))
         zs.append(zz)
 
     return min(rl1), max(rl2), min(ap1), max(ap2), min(zs), max(zs)
 
 
-# ─────────────────────────────────────────────────────────────
-# PADDING
-# ─────────────────────────────────────────────────────────────
-
-def pad_bbox(bbox, rl_mm, ap_mm, si_mm, RL, AP, Z,
-             p_rl=10, p_ap=15, p_si=20):
+def apply_padding(bbox, RL, AP, Z, rl_mm, ap_mm, si_mm,
+                  pad_rl, pad_ap, pad_si):
 
     rl1, rl2, ap1, ap2, z1, z2 = bbox
 
     def split(p):
         return (p, p) if isinstance(p, (int, float)) else p
 
-    rl_l, rl_r = split(p_rl)
-    ap_a, ap_p = split(p_ap)
-    si_s, si_i = split(p_si)
+    prl_l, prl_r = split(pad_rl)
+    pap_a, pap_p = split(pad_ap)
+    psi_s, psi_i = split(pad_si)
 
     return (
-        max(0, rl1 - int(rl_l / rl_mm)),
-        min(RL, rl2 + int(rl_r / rl_mm)),
-        max(0, ap1 - int(ap_a / ap_mm)),
-        min(AP, ap2 + int(ap_p / ap_mm)),
-        max(0, z1 - int(si_s / si_mm)),
-        min(Z, z2 + int(si_i / si_mm)),
+        max(0, rl1 - int(prl_l / rl_mm)),
+        min(RL, rl2 + int(prl_r / rl_mm)),
+        max(0, ap1 - int(pap_a / ap_mm)),
+        min(AP, ap2 + int(pap_p / ap_mm)),
+        max(0, z1 - int(psi_s / si_mm)),
+        min(Z, z2 + int(psi_i / si_mm)),
     )
 
 
 # ─────────────────────────────────────────────────────────────
-# CROP
+# MAIN RUN
 # ─────────────────────────────────────────────────────────────
 
-def crop(img, bbox):
-    r1, r2, a1, a2, z1, z2 = bbox
+def run(
+    input_path: str,
+    config: dict | None = None,
+    model_path: str | None = None,
+    padding_rl_mm=10.0,
+    padding_ap_mm=15.0,
+    padding_si_mm=20.0,
+    conf=None,
+    debug=False
+):
+    from ultralytics import YOLO
+    from .download import ensure_model
 
-    data = img.get_fdata()
-    crop = data[r1:r2, a1:a2, z1:z2]
-
-    affine = img.affine.copy()
-    affine[:3, 3] = img.affine[:3, :3] @ np.array([r1, a1, z1]) + img.affine[:3, 3]
-
-    return nib.Nifti1Image(crop, affine)
-
-
-# ─────────────────────────────────────────────────────────────
-# RUN (CLI SAFE VERSION)
-# ─────────────────────────────────────────────────────────────
-
-def run(input_path: str,
-        config=None,
-        output_path: str | None = None,
-        model_path: str | None = None,
-        padding_rl_mm=10,
-        padding_ap_mm=15,
-        padding_si_mm=20,
-        conf=None,
-        debug=False):
-
-    # ── load image
-    img = nib.load(input_path)
-    img = to_las(img)
-
-    RL, AP, Z = img.shape
-    rl_mm, ap_mm, si_mm = img.header.get_zooms()[:3]
-
-    # ── config
-    cfg = config or load_config(resolve_model(model_path).parent)
+    model_path = Path(model_path) if model_path else ensure_model()
+    cfg = config or load_config(model_path.parent)
 
     si_res = cfg["si_res"]
-    inplane = cfg.get("inplane_res", rl_mm)
+    inplane = cfg.get("inplane_res")
     conf = conf or cfg.get("conf", 0.1)
+    channels = cfg.get("channels", 3)
 
-    # ── model
-    model_path = resolve_model(model_path)
+    img = nib.load(input_path)
+    img_las = reorient_to_las(img)
+
+    RL, AP, Z = img_las.shape
+    rl_mm, ap_mm, si_mm = img_las.header.get_zooms()[:3]
+
+    img_inf = resample_for_inference(img_las, si_res, inplane)
+    data = img_inf.get_fdata()
+
     model = YOLO(str(model_path))
 
-    # ── inference pipeline
-    img_i = resample(img, si_res, inplane)
-    data = img_i.get_fdata()
-
-    slices, idxs = build_slices(data, cfg.get("channels", 3))
+    slices, idxs = build_slices(data, channels)
     preds = infer(model, slices, idxs, conf)
 
     if not preds:
         raise RuntimeError("No detection")
 
-    bbox = bbox_3d(preds, RL, AP, Z, si_mm / si_res)
-    bbox_p = pad_bbox(bbox, rl_mm, ap_mm, si_mm, RL, AP, Z,
-                      padding_rl_mm, padding_ap_mm, padding_si_mm)
+    bbox = aggregate(preds, RL, AP, Z, si_mm / si_res)
 
-    cropped = crop(img, bbox_p)
+    padded = apply_padding(
+        bbox, RL, AP, Z, rl_mm, ap_mm, si_mm,
+        padding_rl_mm, padding_ap_mm, padding_si_mm
+    )
 
-    # ── output compatibility CLI
-    if output_path is None:
-        output_path = str(Path(input_path).with_suffix("").as_posix() + "_crop_las.nii.gz")
+    rl1, rl2, ap1, ap2, z1, z2 = padded
 
-    nib.save(cropped, output_path)
+    cropped = img_las.slicer[
+        rl1:rl2,
+        ap1:ap2,
+        z1:z2
+    ]
 
+    out_path = Path(input_path).with_suffix("").as_posix() + "_crop_las.nii.gz"
+    nib.save(cropped, out_path)
+
+    # ── RETURN STRICT API (IMPORTANT)
     return {
-        "output": output_path,
-        "bbox": bbox_p
+        "output": out_path,
+        "bbox_mm": bbox,
+        "bbox_before_file": None,
+        "bbox_after_file": None,
     }

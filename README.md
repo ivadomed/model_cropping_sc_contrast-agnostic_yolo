@@ -10,17 +10,7 @@ Detects the spinal cord on any MRI volume and outputs a tight 3D bounding box. W
 
 ### Install
 
-**Option A — venv**
-
-```bash
-mkdir sc_crop && cd sc_crop
-python3 -m venv venv
-git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
-source venv/bin/activate
-pip install model_cropping_sc_contrast-agnostic_yolo/sc_crop/
-```
-
-**Option B — conda**
+**Option A — conda (recommended)**
 
 ```bash
 mkdir sc_crop && cd sc_crop
@@ -28,6 +18,16 @@ conda create -p venv python=3.12
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
 conda activate ./venv
 pip install -e model_cropping_sc_contrast-agnostic_yolo/sc_crop/
+```
+
+**Option B — venv**
+
+```bash
+mkdir sc_crop && cd sc_crop
+python3.12 -m venv venv
+git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
+source venv/bin/activate
+pip install model_cropping_sc_contrast-agnostic_yolo/sc_crop/
 ```
 
 **Optional — Run these commands to use `sc_crop` without having to activate the virtual environment each time:**

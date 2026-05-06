@@ -19,7 +19,7 @@ mkdir sc_crop && cd sc_crop
 conda create -p venv python=3.12
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
 conda activate ./venv
-pip install -e model_cropping_sc_contrast-agnostic_yolo/sc_crop/
+pip install model_cropping_sc_contrast-agnostic_yolo/sc_crop/
 ```
 
 **Option B — venv**

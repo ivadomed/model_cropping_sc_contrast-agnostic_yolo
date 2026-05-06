@@ -1,6 +1,6 @@
 # Contrast-agnostic spinal cord detection and cropping
 
-Detects the spinal cord on any MRI volume and outputs a tight 3D bounding box. Works across contrasts (T1, T2, MP2RAGE, DWI…), field strengths, and pathologies. Based on a YOLO26n model trained on 18 datasets covering cervical and lumbar spine.
+Detects the spinal cord on any MRI volume and outputs a tight 3D bounding box. Works across contrasts (T1, T2, MP2RAGE, DWI…), field strengths, and pathologies. Based on a YOLO26n model trained on multiple datasets covering cervical and lumbar spine.
 
 ---
 
@@ -17,7 +17,7 @@ mkdir sc_crop && cd sc_crop
 python3 -m venv venv
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
 source venv/bin/activate
-pip install -e model_cropping_sc_contrast-agnostic_yolo/sc_crop/
+pip install model_cropping_sc_contrast-agnostic_yolo/sc_crop/
 ```
 
 **Option B — conda**

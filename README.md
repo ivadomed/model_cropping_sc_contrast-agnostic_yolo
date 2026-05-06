@@ -7,32 +7,25 @@
 ### Install
 
 ```bash
-# Create a dedicated directory and a virtual environment inside it
-mkdir ~/sc_crop_installation
-python -m venv ~/sc_crop_installation/venv
-
-# Clone the repository inside the installation directory
-git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git ~/sc_crop_installation/model_cropping_sc_contrast-agnostic_yolo
-
-# Activate the virtual environment and install
-source ~/sc_crop_installation/venv/bin/activate
-pip install -e ~/sc_crop_installation/model_cropping_sc_contrast-agnostic_yolo/sc_crop/
+mkdir ~/sc_crop && cd ~/sc_crop
+python -m venv venv
+git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
+source venv/bin/activate
+pip install -e model_cropping_sc_contrast-agnostic_yolo/sc_crop/
 ```
 
 The virtual environment must be activated before each use:
 
 ```bash
-source ~/sc_crop_installation/venv/bin/activate
+source ~/sc_crop/venv/bin/activate
 sc-crop t2.nii.gz
 ```
 
 **Optional — use `sc-crop` without activating the environment each time:**
 
-Add a symlink to `~/.local/bin` pointing to the `sc-crop` binary inside the virtual environment:
-
 ```bash
 mkdir -p ~/.local/bin
-ln -s ~/sc_crop_installation/venv/bin/sc-crop ~/.local/bin/sc-crop
+ln -s ~/sc_crop/venv/bin/sc-crop ~/.local/bin/sc-crop
 ```
 
 Make sure `~/.local/bin` is in your `PATH` (add to `~/.bashrc` or `~/.zshrc` if needed):

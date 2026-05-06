@@ -2,11 +2,13 @@
 Command-line interface for sc-crop.
 
 Usage:
-    sc-crop t2.nii.gz                                    # crops, télécharge le modèle si absent
-    sc-crop t2.nii.gz -o t2_crop.nii.gz
-    sc-crop t2.nii.gz --debug                            # produit aussi <stem>_debug.png
-    sc-crop t2.nii.gz --padding-rl 10 15                 # asymmetric: (left, right)
-    sc-crop download                                      # téléchargement explicite du modèle
+    sc-crop t2.nii.gz                        # default: writes <stem>_bbox.txt (native, inclusive)
+    sc-crop t2.nii.gz --crop                 # also saves <stem>_crop.nii.gz (native orientation)
+    sc-crop t2.nii.gz --crop --las           # save crop in LAS orientation
+    sc-crop t2.nii.gz --crop --translate     # update affine for correct FSLeyes overlay
+    sc-crop t2.nii.gz --crop -o output.nii.gz
+    sc-crop t2.nii.gz --debug                # also saves <stem>_debug.png
+    sc-crop download                         # download the model
 """
 
 import argparse
@@ -31,21 +33,27 @@ def main():
         return
 
     parser = argparse.ArgumentParser(
-        description="Crop a NIfTI volume around the spinal cord using YOLO detection.",
+        description="Detect spinal cord and output crop indices. Optionally crop the volume.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("input",
                         help="Input NIfTI volume (.nii or .nii.gz)")
     parser.add_argument("-o", "--output", default=None,
-                        help="Output file. Default: <input>_crop.nii.gz next to input")
+                        help="Output path: crop volume if --crop, else bbox txt")
     parser.add_argument("--model", default=None,
                         help="Path to model.pt (override sc_crop/models/)")
+    parser.add_argument("--crop", action="store_true",
+                        help="Save the cropped volume (default: bbox txt only)")
+    parser.add_argument("--las", action="store_true",
+                        help="Output cropped volume in LAS orientation (requires --crop)")
+    parser.add_argument("--translate", action="store_true",
+                        help="Update affine so crop overlays correctly in FSLeyes (requires --crop)")
     parser.add_argument("--padding-rl", type=str, default="10.0",
-                        help="Padding in Right-Left direction (mm). Single value or 'left right' for asymmetric")
+                        help="Padding in Right-Left direction (mm). Single value or 'left right'")
     parser.add_argument("--padding-ap", type=str, default="15.0",
-                        help="Padding in Anterior-Posterior direction (mm). Single value or 'ant post' for asymmetric")
+                        help="Padding in Anterior-Posterior direction (mm). Single value or 'ant post'")
     parser.add_argument("--padding-si", type=str, default="20.0",
-                        help="Padding in Superior-Inferior direction (mm). Single value or 'sup inf' for asymmetric")
+                        help="Padding in Superior-Inferior direction (mm). Single value or 'sup inf'")
     parser.add_argument("--conf", type=float, default=None,
                         help="Detection confidence threshold (default: from config.yaml)")
     parser.add_argument("--debug", action="store_true",
@@ -61,12 +69,14 @@ def main():
         padding_si_mm = _parse_padding(args.padding_si),
         conf          = args.conf,
         debug         = args.debug,
+        crop          = args.crop,
+        las           = args.las,
+        translate     = args.translate,
     )
 
-    # Print result summary
-    print(f"\n✓ Crop saved to: {result['output']}")
-    print(f"  BBox file: {result['bbox_file']}")
-
+    print(f"\nBBox file : {result['bbox_file']}")
+    if "output" in result:
+        print(f"Crop file : {result['output']}")
 
 
 if __name__ == "__main__":

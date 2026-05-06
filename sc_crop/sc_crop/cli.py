@@ -55,8 +55,10 @@ examples:
   sc-crop t2.nii.gz --crop --las             # LAS crop with correct affine
 """,
     )
-    parser.add_argument("input",
+    parser.add_argument("input", nargs="?",
                         help="Input NIfTI volume (.nii or .nii.gz)")
+    parser.add_argument("-i", dest="input_flag", default=None,
+                        help="Input NIfTI volume (.nii or .nii.gz) — SCT-style alias for positional input")
     parser.add_argument("-o", "--output", default=None,
                         help="Output path: crop volume if --crop, else bbox txt")
     parser.add_argument("--model", default=None,
@@ -81,9 +83,12 @@ examples:
     parser.add_argument("--time", action="store_true",
                         help="Print elapsed time for each pipeline step")
     args = parser.parse_args()
+    input_path = args.input_flag or args.input
+    if not input_path:
+        parser.error("an input file is required (positional or -i)")
 
     result = run(
-        input_path    = args.input,
+        input_path    = input_path,
         output_path   = args.output,
         model_path    = args.model,
         padding_rl_mm = _parse_padding(args.padding_rl),
@@ -103,12 +108,13 @@ examples:
     xmin, xmax = result["xmin"], result["xmax"]
     ymin, ymax = result["ymin"], result["ymax"]
     zmin, zmax = result["zmin"], result["zmax"]
-    inp        = args.input
+    inp        = input_path
 
+    GREEN, RESET = "\033[32m", "\033[0m"
     print(f"\nTo crop with SCT (if installed):")
-    print(f"  sct_crop_image -i {inp} -xmin {xmin} -xmax {xmax} -ymin {ymin} -ymax {ymax} -zmin {zmin} -zmax {zmax}")
+    print(f"  {GREEN}sct_crop_image -i {inp} -xmin {xmin} -xmax {xmax} -ymin {ymin} -ymax {ymax} -zmin {zmin} -zmax {zmax}{RESET}")
     print(f"\nTo crop with sc-crop:")
-    print(f"  sc-crop {inp} --crop")
+    print(f"  {GREEN}sc-crop -i {inp} --crop{RESET}")
 
 
 if __name__ == "__main__":

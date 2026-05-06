@@ -57,7 +57,8 @@ After this, `sc-crop` works directly from any terminal without activation.
 sc-crop t2.nii.gz                          # → t2_bbox.txt (inclusive voxel indices, native space)
 sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (native orientation)
 sc-crop t2.nii.gz --crop --las             # + t2_crop_las.nii.gz (LAS orientation)
-sc-crop t2.nii.gz --crop --translate       # affine updated for correct FSLeyes overlay
+sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (affine updated by default)
+sc-crop t2.nii.gz --crop --no-translate    # affine NOT updated
 sc-crop t2.nii.gz --crop -o output.nii.gz  # explicit output path
 sc-crop t2.nii.gz --padding-rl 10         # Right-Left padding in mm (default 10)
 sc-crop t2.nii.gz --padding-ap 15         # Anterior-Posterior padding in mm (default 15)

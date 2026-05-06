@@ -50,8 +50,9 @@ examples:
   sc-crop t2.nii.gz                          # bbox txt only (native space)
   sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (native)
   sc-crop t2.nii.gz --crop --las             # + t2_crop_las.nii.gz
-  sc-crop t2.nii.gz --crop --translate       # affine updated for FSLeyes overlay
-  sc-crop t2.nii.gz --crop --las --translate # LAS crop with correct affine
+  sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (affine updated by default)
+  sc-crop t2.nii.gz --crop --no-translate    # affine NOT updated
+  sc-crop t2.nii.gz --crop --las             # LAS crop with correct affine
 """,
     )
     parser.add_argument("input",
@@ -64,8 +65,9 @@ examples:
                         help="Save the cropped volume (default: bbox txt only)")
     parser.add_argument("--las", action="store_true",
                         help="Output cropped volume in LAS orientation (requires --crop)")
-    parser.add_argument("--translate", action="store_true",
-                        help="Update affine so crop overlays correctly in FSLeyes (requires --crop)")
+    parser.add_argument("--no-translate", dest="translate", action="store_false",
+                        help="Do not update affine (by default affine is updated for correct FSLeyes overlay)")
+    parser.set_defaults(translate=True)
     parser.add_argument("--padding-rl", type=str, default="10.0",
                         help="Padding in Right-Left direction (mm). Single value or 'left right'")
     parser.add_argument("--padding-ap", type=str, default="15.0",

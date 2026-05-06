@@ -355,16 +355,16 @@ def run(input_path: str,
         debug: bool = False,
         crop: bool = False,
         las: bool = False,
-        translate: bool = False,
+        translate: bool = True,
         time_steps: bool = False) -> dict:
     """Full pipeline: load → LAS → resample → infer → bbox 3D → save.
 
     Default output: <stem>_bbox.txt with inclusive voxel indices in native space,
     compatible with SCT's ImageCropper.get_bbox_from_minmax().
 
-    --crop:      also save the cropped volume (-o sets its path)
-    --las:       output cropped volume in LAS orientation (requires --crop)
-    --translate: update affine so the crop overlays correctly in FSLeyes (requires --crop)
+    --crop:         also save the cropped volume (-o sets its path)
+    --las:          output cropped volume in LAS orientation (requires --crop)
+    --no-translate: do not update affine (by default affine is updated for FSLeyes overlay)
     """
     import time as _time
 

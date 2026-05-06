@@ -32,7 +32,7 @@ source venv/bin/activate
 pip install model_cropping_sc_contrast-agnostic_yolo/sc_crop/
 ```
 
-**Optional — Run these commands to use `sc_crop` without having to activate the virtual environment each time:**
+**`Optional` — Run these commands to use `sc_crop` without having to activate the virtual environment each time:**
 
 ```bash
 mkdir -p ~/.local/bin

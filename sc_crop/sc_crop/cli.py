@@ -34,7 +34,25 @@ def main():
 
     parser = argparse.ArgumentParser(
         description="Detect spinal cord and output crop indices. Optionally crop the volume.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+output (default):
+  <stem>_bbox.txt  — inclusive voxel indices in native image space:
+                     xmin xmax ymin ymax zmin zmax
+                     compatible with SCT's ImageCropper:
+                       from spinalcordtoolbox.cropping import ImageCropper
+                       from spinalcordtoolbox.image import Image
+                       c = ImageCropper(Image("t2.nii.gz"))
+                       c.get_bbox_from_minmax(xmin, xmax, ymin, ymax, zmin, zmax)
+                       img_crop = c.crop()
+
+examples:
+  sc-crop t2.nii.gz                          # bbox txt only (native space)
+  sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (native)
+  sc-crop t2.nii.gz --crop --las             # + t2_crop_las.nii.gz
+  sc-crop t2.nii.gz --crop --translate       # affine updated for FSLeyes overlay
+  sc-crop t2.nii.gz --crop --las --translate # LAS crop with correct affine
+""",
     )
     parser.add_argument("input",
                         help="Input NIfTI volume (.nii or .nii.gz)")
@@ -74,9 +92,8 @@ def main():
         translate     = args.translate,
     )
 
-    print(f"\nBBox file : {result['bbox_file']}")
     if "output" in result:
-        print(f"Crop file : {result['output']}")
+        print(f"Crop    : {result['output']}")
 
 
 if __name__ == "__main__":

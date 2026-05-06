@@ -414,17 +414,18 @@ def run(input_path: str,
     parent, stem = _stem(input_path)
     bbox_txt = parent / f"{stem}_bbox.txt"
     _write_bbox_txt(bbox_txt, bbox_pad_orig)
-    print(f"BBox    : {bbox_txt}")
+    xmin, xmax = bbox_pad_orig.rl1, bbox_pad_orig.rl2 - 1
+    ymin, ymax = bbox_pad_orig.ap1, bbox_pad_orig.ap2 - 1
+    zmin, zmax = bbox_pad_orig.z1,  bbox_pad_orig.z2  - 1
+    print(f"BBox    : xmin={xmin} xmax={xmax}  ymin={ymin} ymax={ymax}  zmin={zmin} zmax={zmax}")
+    print(f"          → {bbox_txt}")
 
     result = {
         "bbox_file":        str(bbox_txt),
         "original_axcodes": original_axcodes,
-        "xmin": bbox_pad_orig.rl1,
-        "xmax": bbox_pad_orig.rl2 - 1,
-        "ymin": bbox_pad_orig.ap1,
-        "ymax": bbox_pad_orig.ap2 - 1,
-        "zmin": bbox_pad_orig.z1,
-        "zmax": bbox_pad_orig.z2 - 1,
+        "xmin": xmin, "xmax": xmax,
+        "ymin": ymin, "ymax": ymax,
+        "zmin": zmin, "zmax": zmax,
     }
 
     if crop:

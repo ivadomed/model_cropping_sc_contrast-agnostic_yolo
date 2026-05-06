@@ -6,18 +6,32 @@
 
 ### Install
 
+**Option A — venv**
+
 ```bash
 mkdir ~/sc_crop && cd ~/sc_crop
-python -m venv venv
+python3.11 -m venv venv
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
 source venv/bin/activate
 pip install -e model_cropping_sc_contrast-agnostic_yolo/sc_crop/
 ```
 
-The virtual environment must be activated before each use:
+**Option B — conda**
 
 ```bash
-source ~/sc_crop/venv/bin/activate
+mkdir ~/sc_crop && cd ~/sc_crop
+conda create -p venv python=3.11
+git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
+conda activate ./venv
+pip install -e model_cropping_sc_contrast-agnostic_yolo/sc_crop/
+```
+
+The environment must be activated before each use:
+
+```bash
+source ~/sc_crop/venv/bin/activate   # venv
+# or
+conda activate ~/sc_crop/venv        # conda
 sc-crop t2.nii.gz
 ```
 

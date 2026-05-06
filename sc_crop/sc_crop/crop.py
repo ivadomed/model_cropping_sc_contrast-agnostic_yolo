@@ -1385,6 +1385,7 @@ def _derived_paths(output_path: Path) -> dict[str, Path]:
         "bbox_before":        Path(str(base) + "_bbox_before_padding_las.txt"),
         "bbox_after":         Path(str(base) + "_bbox_after_padding_las.txt"),
         "bbox_alias":         Path(str(base) + "_bbox_las.txt"),
+        "bbox_sct":           Path(str(base) + "_bbox_sct.txt"),
     }
 
     # Original-orientation outputs: swap _las → _orig in suffixes
@@ -1563,8 +1564,18 @@ def run(input_path: str,
                      header="Bounding box AFTER padding",  ornt_label=original_axcodes,
                      include_vox=False)
 
+    # SCT-compatible bbox: xmin xmax ymin ymax zmin zmax in native voxel space
+    # → ImageCropper().get_bbox_from_minmax(*) with Image(input_path)
+    with open(paths["bbox_sct"], "w") as f:
+        f.write("# SCT-compatible bounding box (native voxel space, after padding)\n")
+        f.write("# xmin xmax ymin ymax zmin zmax\n")
+        f.write(f"{bbox_pad_orig.rl1} {bbox_pad_orig.rl2} "
+                f"{bbox_pad_orig.ap1} {bbox_pad_orig.ap2} "
+                f"{bbox_pad_orig.z1} {bbox_pad_orig.z2}\n")
+
     print(f"BBox pre  : {paths['bbox_before']}  |  {paths['bbox_before_orig']}")
     print(f"BBox post : {paths['bbox_after']}  |  {paths['bbox_after_orig']}")
+    print(f"BBox SCT  : {paths['bbox_sct']}")
 
     return {
         # LAS (existing keys, unchanged)
@@ -1588,6 +1599,15 @@ def run(input_path: str,
         "corner_mm_orig":          corner_mm_o,
         "sizes_mm_orig":           sizes_mm_o,
         "original_axcodes":        original_axcodes,
+        # SCT-compatible bbox in native voxel space (axes 0,1,2 of the input image)
+        # → ImageCropper().get_bbox_from_minmax(xmin, xmax, ymin, ymax, zmin, zmax)
+        "bbox_sct_file": str(paths["bbox_sct"]),
+        "xmin": bbox_pad_orig.rl1,
+        "xmax": bbox_pad_orig.rl2,
+        "ymin": bbox_pad_orig.ap1,
+        "ymax": bbox_pad_orig.ap2,
+        "zmin": bbox_pad_orig.z1,
+        "zmax": bbox_pad_orig.z2,
     }
  
 

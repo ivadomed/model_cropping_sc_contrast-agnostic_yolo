@@ -1,20 +1,19 @@
 """
-Model download for sc_crop (standalone).
+Model download for sc_crop.
 
-Pattern identique à SCT :
-  SCT      : modèle dans $SCT_DIR/data/sc_crop_models/  via sct_dir_local_path()
-  Standalone: modèle dans ~/.sc_crop/sc_crop_models/    via ensure_model()
+Le modèle est stocké dans le package lui-même (sc_crop/models/), à l'intérieur
+du venv d'installation. Supprimer le venv supprime aussi le modèle.
 
-Lors de l'intégration SCT, la seule ligne qui change dans core.py est :
-  - from sc_crop.download import ensure_model; model_path = ensure_model()
-  + from spinalcordtoolbox.utils.sys import sct_dir_local_path
-  + model_path = Path(sct_dir_local_path('data', 'sc_crop_models', 'model.pt'))
+Lors de l'intégration SCT, remplacer ensure_model() par :
+  from spinalcordtoolbox.utils.sys import sct_dir_local_path
+  model_path = Path(sct_dir_local_path('data', 'sc_crop_models', 'model.pt'))
 
 Usage:
     sc-crop download
     from sc_crop.download import ensure_model; model_path = ensure_model()
 """
 
+import importlib.resources
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -25,12 +24,14 @@ _RELEASE_URL = (
     "/releases/download/v0.2.0/sc_crop_models_v0.2.0.zip"
 )
 
-_DATA_DIR = Path.home() / ".sc_crop" / "sc_crop_models"
+
+def _models_dir() -> Path:
+    return Path(importlib.resources.files("sc_crop").joinpath("models"))
 
 
 def ensure_model() -> Path:
     """Retourne le chemin vers model.pt, télécharge depuis la release si absent."""
-    model_path = _DATA_DIR / "model.pt"
+    model_path = _models_dir() / "model.pt"
     if model_path.exists():
         return model_path
     download()
@@ -38,20 +39,21 @@ def ensure_model() -> Path:
 
 
 def download() -> None:
-    """Télécharge et décompresse le zip de release dans ~/.sc_crop/sc_crop_models/."""
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    zip_path = _DATA_DIR / "_download.zip"
+    """Télécharge et décompresse le zip de release dans sc_crop/models/."""
+    models_dir = _models_dir()
+    models_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = models_dir / "_download.zip"
 
-    print(f"Downloading sc_crop model from release …")
+    print("Downloading sc_crop model from release …")
     urllib.request.urlretrieve(_RELEASE_URL, zip_path)
 
     with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(_DATA_DIR)
+        zf.extractall(models_dir)
     zip_path.unlink()
 
-    if not (_DATA_DIR / "model.pt").exists():
+    if not (models_dir / "model.pt").exists():
         raise RuntimeError(
-            f"model.pt absent de {_DATA_DIR} après téléchargement — "
+            f"model.pt absent de {models_dir} après téléchargement — "
             "vérifier la structure du zip de release."
         )
-    print(f"Model saved to {_DATA_DIR}")
+    print(f"Model saved to {models_dir}")

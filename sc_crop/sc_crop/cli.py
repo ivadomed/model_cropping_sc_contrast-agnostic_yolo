@@ -39,7 +39,7 @@ def main():
     parser.add_argument("-o", "--output", default=None,
                         help="Output file. Default: <input>_crop.nii.gz next to input")
     parser.add_argument("--model", default=None,
-                        help="Path to model.pt (override ~/.sc_crop/sc_crop_models/)")
+                        help="Path to model.pt (override sc_crop/models/)")
     parser.add_argument("--padding-rl", type=str, default="10.0",
                         help="Padding in Right-Left direction (mm). Single value or 'left right' for asymmetric")
     parser.add_argument("--padding-ap", type=str, default="15.0",

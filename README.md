@@ -57,7 +57,7 @@ After this, `sc-crop` works directly from any terminal without activation.
 
 ```bash
 sc-crop download
-# downloads to ~/.sc_crop/sc_crop_models/
+# downloads to sc_crop/models/ inside the virtual environment
 ```
 
 ### Crop a volume

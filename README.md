@@ -1,6 +1,8 @@
 # Contrast-agnostic spinal cord detection and cropping
 
-Detects the spinal cord on any MRI volume and outputs a tight 3D bounding box. Works across contrasts (T1, T2, MP2RAGE, DWI…), field strengths, and pathologies. Based on a YOLO26n model trained on multiple datasets covering cervical and lumbar spine.
+Detects the spinal cord on any MRI volume and outputs a tight 3D bounding box (a text file countaining the coordinates of the bounding box by default). Works across contrasts (T1, T2, MP2RAGE, DWI…), field strengths, and pathologies. Based on a YOLO26n model trained on multiple datasets covering cervical and lumbar spine.
+
+<img width="1713" height="727" alt="image" src="https://github.com/user-attachments/assets/d8958227-06b6-4430-9378-4a6f91e9741d" />
 
 ---
 

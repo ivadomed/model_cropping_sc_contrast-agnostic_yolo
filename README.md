@@ -41,6 +41,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 After this, `sc_crop` works directly from any terminal without activation.
 __
+
 ### Usage
 
 Activate the environment (skip if Optional section was followed):

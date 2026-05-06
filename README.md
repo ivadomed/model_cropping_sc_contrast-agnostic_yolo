@@ -48,7 +48,7 @@ ___
 
 ### Usage
 
-Activate the environment (skip if Optional section was followed):
+#### Environment activation (skip if Optional section was followed)
 
 ```bash
 source sc_crop/venv/bin/activate   # venv
@@ -58,13 +58,13 @@ source sc_crop/venv/bin/activate   # venv
 conda activate sc_crop/venv        # conda
 ```
 
-Download the model (first use only):
+#### Download the model (first use only):
 
 ```bash
 sc_crop download
 ```
 
-### Cropping
+#### Crop a volume around the spinal cord
 
 ```bash
 sc_crop -i t2.nii.gz
@@ -72,7 +72,7 @@ sc_crop -i t2.nii.gz
 
 Outputs `t2_bbox.txt` next to the input with the inclusive voxel bounding box in native image space, compatible with SCT's `sct_crop_image`.
 
-### Optional parameters
+##### Optional parameters
 
 | Parameter | Description | Default |
 |---|---|---|
@@ -102,7 +102,7 @@ result = run("t2.nii.gz", crop=True, translate=False) # affine NOT updated
 # + output (if crop=True)
 ```
 
-### Requirements
+### Requirements (automatically downloaded)
 
 Python ≥ 3.8. Pinned versions installed automatically by pip:
 `nibabel==5.3.3`, `numpy==2.0.2`, `pillow==11.3.0`, `pyyaml==6.0.2`, `ultralytics==8.4.33`.

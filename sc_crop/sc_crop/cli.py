@@ -105,16 +105,10 @@ examples:
     zmin, zmax = result["zmin"], result["zmax"]
     inp        = args.input
 
-    try:
-        import shutil
-        if shutil.which("sct_crop_image"):
-            print(f"\nTo crop with SCT:")
-            print(f"  sct_crop_image -i {inp} -xmin {xmin} -xmax {xmax} -ymin {ymin} -ymax {ymax} -zmin {zmin} -zmax {zmax}")
-        else:
-            raise ImportError
-    except ImportError:
-        print(f"\nTo crop the volume:")
-        print(f"  sc-crop {inp} --crop --translate")
+    print(f"\nTo crop with SCT (if installed):")
+    print(f"  sct_crop_image -i {inp} -xmin {xmin} -xmax {xmax} -ymin {ymin} -ymax {ymax} -zmin {zmin} -zmax {zmax}")
+    print(f"\nTo crop with sc-crop:")
+    print(f"  sc-crop {inp} --crop")
 
 
 if __name__ == "__main__":

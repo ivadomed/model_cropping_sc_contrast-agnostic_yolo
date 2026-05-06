@@ -50,7 +50,7 @@ ___
 
 ### Usage
 
-#### Environment activation (skip if the environment is already activated or if **Optional** section was followed)
+#### Environment activation (Skip if the environment is already activated or if _Optional_ section was followed)
 
 ```bash
 source sc_crop/venv/bin/activate   # venv

@@ -54,18 +54,17 @@ After this, `sc-crop` works directly from any terminal without activation.
 ### Crop a volume
 
 ```bash
-sc-crop t2.nii.gz                          # → t2_bbox.txt (inclusive voxel indices, native space)
-sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (native orientation)
-sc-crop t2.nii.gz --crop --las             # + t2_crop_las.nii.gz (LAS orientation)
-sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (affine updated by default)
-sc-crop t2.nii.gz --crop --no-translate    # affine NOT updated
-sc-crop t2.nii.gz --crop -o output.nii.gz  # explicit output path
-sc-crop t2.nii.gz --padding-rl 10         # Right-Left padding in mm (default 10)
-sc-crop t2.nii.gz --padding-ap 15         # Anterior-Posterior padding in mm (default 15)
-sc-crop t2.nii.gz --padding-si 20         # Superior-Inferior padding in mm (default 20)
-sc-crop t2.nii.gz --conf 0.1              # confidence threshold (default 0.1)
-sc-crop t2.nii.gz --debug                 # also saves t2_debug.png (per-slice panel)
-sc-crop t2.nii.gz --time                  # print elapsed time per step
+sc-crop -i t2.nii.gz                          # → t2_bbox.txt (inclusive voxel indices, native space)
+sc-crop -i t2.nii.gz --crop                   # + t2_crop.nii.gz (native, affine updated)
+sc-crop -i t2.nii.gz --crop --las             # + t2_crop_las.nii.gz (LAS orientation)
+sc-crop -i t2.nii.gz --crop --no-translate    # affine NOT updated
+sc-crop -i t2.nii.gz --crop -o output.nii.gz  # explicit output path
+sc-crop -i t2.nii.gz --padding-rl 10          # Right-Left padding in mm (default 10)
+sc-crop -i t2.nii.gz --padding-ap 15          # Anterior-Posterior padding in mm (default 15)
+sc-crop -i t2.nii.gz --padding-si 20          # Superior-Inferior padding in mm (default 20)
+sc-crop -i t2.nii.gz --conf 0.1               # confidence threshold (default 0.1)
+sc-crop -i t2.nii.gz --debug                  # also saves t2_debug.png (per-slice panel)
+sc-crop -i t2.nii.gz --time                   # print elapsed time per step
 ```
 
 ### Download the model
@@ -80,13 +79,20 @@ sc-crop download
 
 ```python
 from sc_crop.crop import run
-out = run("t2.nii.gz")
-out = run("t2.nii.gz", padding_rl_mm=10, padding_ap_mm=15, padding_si_mm=20, conf=0.1, debug=True)
+
+result = run("t2.nii.gz")                             # bbox txt only
+result = run("t2.nii.gz", crop=True)                  # + cropped volume (native)
+result = run("t2.nii.gz", crop=True, las=True)        # + cropped volume (LAS)
+result = run("t2.nii.gz", crop=True, translate=False) # affine NOT updated
+
+# result keys: bbox_file, xmin, xmax, ymin, ymax, zmin, zmax, original_axcodes
+# + output (if crop=True)
 ```
 
 ### Requirements
 
-Python ≥ 3.8, automatically installed by pip: `ultralytics`, `nibabel`, `numpy`, `pillow`, `pyyaml`.
+Python ≥ 3.8. Pinned versions installed automatically by pip:
+`nibabel==5.3.3`, `numpy==2.0.2`, `pillow==11.3.0`, `pyyaml==6.0.2`, `ultralytics==8.4.33`.
 
 ---
 

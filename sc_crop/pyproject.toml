@@ -11,7 +11,7 @@ dependencies = [
     "nibabel==5.3.3",
     "numpy==2.0.2",
     "pillow==11.3.0",
-    "pyyaml==6.0.0",
+    "pyyaml==6.0.2",
     "ultralytics==8.4.33",
 ]
 

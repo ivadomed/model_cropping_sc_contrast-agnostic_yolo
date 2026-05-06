@@ -26,7 +26,7 @@ conda activate ./venv
 pip install -e model_cropping_sc_contrast-agnostic_yolo/sc_crop/
 ```
 
-**Optional — use `sc_crop` without activating the environment each time:**
+**Optional — Run these commands to use `sc_crop` without having to activate the virtual environment each time:**
 
 ```bash
 mkdir -p ~/.local/bin
@@ -40,7 +40,7 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 After this, `sc_crop` works directly from any terminal without activation.
-
+__
 ### Usage
 
 Activate the environment (skip if Optional section was followed):

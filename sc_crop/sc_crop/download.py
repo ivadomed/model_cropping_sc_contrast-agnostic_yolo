@@ -9,7 +9,7 @@ Lors de l'intégration SCT, remplacer ensure_model() par :
   model_path = Path(sct_dir_local_path('data', 'sc_crop_models', 'model.pt'))
 
 Usage:
-    sc-crop download
+    sc_crop download
     from sc_crop.download import ensure_model; model_path = ensure_model()
 """
 

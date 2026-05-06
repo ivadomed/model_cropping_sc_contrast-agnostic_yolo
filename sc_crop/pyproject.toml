@@ -3,7 +3,7 @@ requires      = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name        = "sc-crop"
+name        = "sc_crop"
 version     = "0.2.0"
 description = "Spinal cord detection and volume cropping using ultralytics YOLO"
 requires-python = ">=3.8"
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-sc-crop = "sc_crop.cli:main"
+sc_crop = "sc_crop.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

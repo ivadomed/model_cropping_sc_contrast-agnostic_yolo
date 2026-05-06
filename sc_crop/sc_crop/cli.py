@@ -1,14 +1,14 @@
 """
-Command-line interface for sc-crop.
+Command-line interface for sc_crop.
 
 Usage:
-    sc-crop t2.nii.gz                        # default: writes <stem>_bbox.txt (native, inclusive)
-    sc-crop t2.nii.gz --crop                 # also saves <stem>_crop.nii.gz (native orientation)
-    sc-crop t2.nii.gz --crop --las           # save crop in LAS orientation
-    sc-crop t2.nii.gz --crop --translate     # update affine for correct FSLeyes overlay
-    sc-crop t2.nii.gz --crop -o output.nii.gz
-    sc-crop t2.nii.gz --debug                # also saves <stem>_debug.png
-    sc-crop download                         # download the model
+    sc_crop t2.nii.gz                        # default: writes <stem>_bbox.txt (native, inclusive)
+    sc_crop t2.nii.gz --crop                 # also saves <stem>_crop.nii.gz (native orientation)
+    sc_crop t2.nii.gz --crop --las           # save crop in LAS orientation
+    sc_crop t2.nii.gz --crop --translate     # update affine for correct FSLeyes overlay
+    sc_crop t2.nii.gz --crop -o output.nii.gz
+    sc_crop t2.nii.gz --debug                # also saves <stem>_debug.png
+    sc_crop download                         # download the model
 """
 
 import argparse
@@ -47,12 +47,12 @@ output (default):
                        img_crop = c.crop()
 
 examples:
-  sc-crop t2.nii.gz                          # bbox txt only (native space)
-  sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (native)
-  sc-crop t2.nii.gz --crop --las             # + t2_crop_las.nii.gz
-  sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (affine updated by default)
-  sc-crop t2.nii.gz --crop --no-translate    # affine NOT updated
-  sc-crop t2.nii.gz --crop --las             # LAS crop with correct affine
+  sc_crop t2.nii.gz                          # bbox txt only (native space)
+  sc_crop t2.nii.gz --crop                   # + t2_crop.nii.gz (native)
+  sc_crop t2.nii.gz --crop --las             # + t2_crop_las.nii.gz
+  sc_crop t2.nii.gz --crop                   # + t2_crop.nii.gz (affine updated by default)
+  sc_crop t2.nii.gz --crop --no-translate    # affine NOT updated
+  sc_crop t2.nii.gz --crop --las             # LAS crop with correct affine
 """,
     )
     parser.add_argument("input", nargs="?",
@@ -113,8 +113,8 @@ examples:
     GREEN, RESET = "\033[32m", "\033[0m"
     print(f"\nTo crop with SCT (if installed):")
     print(f"  {GREEN}sct_crop_image -i {inp} -xmin {xmin} -xmax {xmax} -ymin {ymin} -ymax {ymax} -zmin {zmin} -zmax {zmax}{RESET}")
-    print(f"\nTo crop with sc-crop:")
-    print(f"  {GREEN}sc-crop -i {inp} --crop{RESET}")
+    print(f"\nTo crop with sc_crop:")
+    print(f"  {GREEN}sc_crop -i {inp} --crop{RESET}")
 
 
 if __name__ == "__main__":

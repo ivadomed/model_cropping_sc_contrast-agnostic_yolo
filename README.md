@@ -9,7 +9,7 @@
 **Option A — venv**
 
 ```bash
-mkdir ~/sc_crop && cd ~/sc_crop
+mkdir sc_crop && cd sc_crop
 python3 -m venv venv
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
 source venv/bin/activate
@@ -19,28 +19,18 @@ pip install -e model_cropping_sc_contrast-agnostic_yolo/sc_crop/
 **Option B — conda**
 
 ```bash
-mkdir ~/sc_crop && cd ~/sc_crop
+mkdir sc_crop && cd sc_crop
 conda create -p venv python=3.12
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
 conda activate ./venv
 pip install -e model_cropping_sc_contrast-agnostic_yolo/sc_crop/
 ```
 
-The environment must be activated before each use:
-
-```bash
-source ~/sc_crop/venv/bin/activate   # venv
-```
-
-```bash
-conda activate ~/sc_crop/venv        # conda
-```
-
-**Optional — use `sc-crop` without activating the environment each time:**
+**Optional — use `sc_crop` without activating the environment each time:**
 
 ```bash
 mkdir -p ~/.local/bin
-ln -s ~/sc_crop/venv/bin/sc-crop ~/.local/bin/sc-crop
+ln -s sc_crop/venv/bin/sc_crop ~/.local/bin/sc_crop
 ```
 
 Make sure `~/.local/bin` is in your `PATH` (add to `~/.bashrc` or `~/.zshrc` if needed):
@@ -49,12 +39,30 @@ Make sure `~/.local/bin` is in your `PATH` (add to `~/.bashrc` or `~/.zshrc` if 
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-After this, `sc-crop` works directly from any terminal without activation.
+After this, `sc_crop` works directly from any terminal without activation.
+
+### Usage
+
+Activate the environment (skip if Optional section was followed):
+
+```bash
+source sc_crop/venv/bin/activate   # venv
+```
+
+```bash
+conda activate sc_crop/venv        # conda
+```
+
+Download the model (first use only):
+
+```bash
+sc_crop download
+```
 
 ### Cropping
 
 ```bash
-sc-crop -i t2.nii.gz
+sc_crop -i t2.nii.gz
 ```
 
 Outputs `t2_bbox.txt` next to the input with the inclusive voxel bounding box in native image space, compatible with SCT's `sct_crop_image`.
@@ -73,13 +81,6 @@ Outputs `t2_bbox.txt` next to the input with the inclusive voxel bounding box in
 | `--conf FLOAT` | Detection confidence threshold | from config |
 | `--debug` | Save `<stem>_debug.png` (per-slice panel with bbox) | off |
 | `--time` | Print elapsed time per pipeline step | off |
-
-### Download the model
-
-```bash
-sc-crop download
-# downloads to sc_crop/models/ inside the virtual environment
-```
 
 
 ### Python API

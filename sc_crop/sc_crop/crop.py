@@ -432,7 +432,7 @@ def run(input_path: str,
         t0 = _tick("debug panel", t0)
 
     parent, stem = _stem(input_path)
-    bbox_txt = parent / f"{stem}_bbox.txt"
+    bbox_txt = Path(output_path) if (output_path and not crop) else parent / f"{stem}_bbox.txt"
     _write_bbox_txt(bbox_txt, bbox_pad_orig)
     xmin, xmax = bbox_pad_orig.rl1, bbox_pad_orig.rl2 - 1
     ymin, ymax = bbox_pad_orig.ap1, bbox_pad_orig.ap2 - 1

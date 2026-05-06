@@ -334,8 +334,18 @@ def _stem(input_path: str) -> tuple[Path, str]:
     return inp.parent, stem
 
 
+_YELLOW = "\033[33m"
+_RESET  = "\033[0m"
+
+
+def _warn_overwrite(path: Path) -> None:
+    if path.exists():
+        print(f"{_YELLOW}Warning : {path} already exists and will be overwritten{_RESET}")
+
+
 def _write_bbox_txt(path: Path, bbox: BBox3D) -> None:
     """Write inclusive voxel indices compatible with SCT's ImageCropper.get_bbox_from_minmax()."""
+    _warn_overwrite(path)
     with open(path, "w") as f:
         f.write("# Bounding box in native voxel space (inclusive indices)\n")
         f.write("# xmin xmax ymin ymax zmin zmax\n")
@@ -457,6 +467,7 @@ def run(input_path: str,
             cropped   = bbox_pad_orig.crop(img_orig, translate=translate)
             crop_path = Path(output_path) if output_path else parent / f"{stem}_crop.nii.gz"
         t0 = _tick("crop", t0)
+        _warn_overwrite(crop_path)
         nib.save(cropped, crop_path)
         print(f"Crop    : {crop_path}  shape={cropped.shape}")
         t0 = _tick("save", t0)

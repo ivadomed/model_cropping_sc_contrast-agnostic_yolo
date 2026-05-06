@@ -51,21 +51,28 @@ export PATH="$HOME/.local/bin:$PATH"
 
 After this, `sc-crop` works directly from any terminal without activation.
 
-### Crop a volume
+### Cropping
 
 ```bash
-sc-crop -i t2.nii.gz                          # → t2_bbox.txt (inclusive voxel indices, native space)
-sc-crop -i t2.nii.gz --crop                   # + t2_crop.nii.gz (native, affine updated)
-sc-crop -i t2.nii.gz --crop --las             # + t2_crop_las.nii.gz (LAS orientation)
-sc-crop -i t2.nii.gz --crop --no-translate    # affine NOT updated
-sc-crop -i t2.nii.gz --crop -o output.nii.gz  # explicit output path
-sc-crop -i t2.nii.gz --padding-rl 10          # Right-Left padding in mm (default 10)
-sc-crop -i t2.nii.gz --padding-ap 15          # Anterior-Posterior padding in mm (default 15)
-sc-crop -i t2.nii.gz --padding-si 20          # Superior-Inferior padding in mm (default 20)
-sc-crop -i t2.nii.gz --conf 0.1               # confidence threshold (default 0.1)
-sc-crop -i t2.nii.gz --debug                  # also saves t2_debug.png (per-slice panel)
-sc-crop -i t2.nii.gz --time                   # print elapsed time per step
+sc-crop -i t2.nii.gz
 ```
+
+Outputs `t2_bbox.txt` next to the input with the inclusive voxel bounding box in native image space, compatible with SCT's `sct_crop_image`.
+
+### Optional parameters
+
+| Parameter | Description | Default |
+|---|---|---|
+| `-o OUTPUT` | Output path (bbox txt, or crop volume if `--crop`) | `<stem>_bbox.txt` |
+| `--crop` | Also save the cropped volume | off |
+| `--las` | Output cropped volume in LAS orientation (requires `--crop`) | off |
+| `--no-translate` | Do not update affine (by default affine is updated for correct FSLeyes overlay) | off |
+| `--padding-rl MM` | Right-Left padding in mm | 10 |
+| `--padding-ap MM` | Anterior-Posterior padding in mm | 15 |
+| `--padding-si MM` | Superior-Inferior padding in mm | 20 |
+| `--conf FLOAT` | Detection confidence threshold | from config |
+| `--debug` | Save `<stem>_debug.png` (per-slice panel with bbox) | off |
+| `--time` | Print elapsed time per pipeline step | off |
 
 ### Download the model
 

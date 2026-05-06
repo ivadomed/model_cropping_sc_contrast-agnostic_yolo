@@ -39,7 +39,7 @@ Make sure `~/.local/bin` is in your `PATH` (add to `~/.bashrc` or `~/.zshrc` if 
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-After this, `sc_crop` works directly from any terminal without activation.
+After this, `sc_crop` works directly from any terminal without environment activation.
 ___
 
 ### Usage

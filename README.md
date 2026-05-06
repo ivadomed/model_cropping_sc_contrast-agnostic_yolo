@@ -30,7 +30,10 @@ The environment must be activated before each use:
 
 ```bash
 source ~/sc_crop/venv/bin/activate   # venv
-# or
+sc-crop t2.nii.gz
+```
+
+```bash
 conda activate ~/sc_crop/venv        # conda
 sc-crop t2.nii.gz
 ```

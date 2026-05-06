@@ -30,12 +30,10 @@ The environment must be activated before each use:
 
 ```bash
 source ~/sc_crop/venv/bin/activate   # venv
-sc-crop t2.nii.gz
 ```
 
 ```bash
 conda activate ~/sc_crop/venv        # conda
-sc-crop t2.nii.gz
 ```
 
 **Optional — use `sc-crop` without activating the environment each time:**
@@ -53,6 +51,22 @@ export PATH="$HOME/.local/bin:$PATH"
 
 After this, `sc-crop` works directly from any terminal without activation.
 
+### Crop a volume
+
+```bash
+sc-crop t2.nii.gz                          # → t2_bbox.txt (inclusive voxel indices, native space)
+sc-crop t2.nii.gz --crop                   # + t2_crop.nii.gz (native orientation)
+sc-crop t2.nii.gz --crop --las             # + t2_crop_las.nii.gz (LAS orientation)
+sc-crop t2.nii.gz --crop --translate       # affine updated for correct FSLeyes overlay
+sc-crop t2.nii.gz --crop -o output.nii.gz  # explicit output path
+sc-crop t2.nii.gz --padding-rl 10         # Right-Left padding in mm (default 10)
+sc-crop t2.nii.gz --padding-ap 15         # Anterior-Posterior padding in mm (default 15)
+sc-crop t2.nii.gz --padding-si 20         # Superior-Inferior padding in mm (default 20)
+sc-crop t2.nii.gz --conf 0.1              # confidence threshold (default 0.1)
+sc-crop t2.nii.gz --debug                 # also saves t2_debug.png (per-slice panel)
+sc-crop t2.nii.gz --time                  # print elapsed time per step
+```
+
 ### Download the model
 
 ```bash
@@ -60,19 +74,6 @@ sc-crop download
 # downloads to sc_crop/models/ inside the virtual environment
 ```
 
-### Crop a volume
-
-```bash
-sc-crop t2.nii.gz
-# → t2_crop.nii.gz next to the input, same orientation / resolution / world space
-
-sc-crop t2.nii.gz -o output.nii.gz     # explicit output path
-sc-crop t2.nii.gz --padding-rl 10      # Right-Left padding in mm (default 10)
-sc-crop t2.nii.gz --padding-ap 15      # Anterior-Posterior padding in mm (default 15)
-sc-crop t2.nii.gz --padding-si 20      # Superior-Inferior padding in mm (default 20)
-sc-crop t2.nii.gz --conf 0.1           # confidence threshold (default 0.1)
-sc-crop t2.nii.gz --debug              # also saves t2_debug.png (per-slice panel)
-```
 
 ### Python API
 

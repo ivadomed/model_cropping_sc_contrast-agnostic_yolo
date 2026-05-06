@@ -76,6 +76,8 @@ examples:
                         help="Detection confidence threshold (default: from config.yaml)")
     parser.add_argument("--debug", action="store_true",
                         help="Save <stem>_debug.png: all slices with max-confidence bbox")
+    parser.add_argument("--time", action="store_true",
+                        help="Print elapsed time for each pipeline step")
     args = parser.parse_args()
 
     result = run(
@@ -90,10 +92,27 @@ examples:
         crop          = args.crop,
         las           = args.las,
         translate     = args.translate,
+        time_steps    = args.time,
     )
 
     if "output" in result:
         print(f"Crop    : {result['output']}")
+
+    xmin, xmax = result["xmin"], result["xmax"]
+    ymin, ymax = result["ymin"], result["ymax"]
+    zmin, zmax = result["zmin"], result["zmax"]
+    inp        = args.input
+
+    try:
+        import shutil
+        if shutil.which("sct_crop_image"):
+            print(f"\nTo crop with SCT:")
+            print(f"  sct_crop_image -i {inp} -xmin {xmin} -xmax {xmax} -ymin {ymin} -ymax {ymax} -zmin {zmin} -zmax {zmax}")
+        else:
+            raise ImportError
+    except ImportError:
+        print(f"\nTo crop the volume:")
+        print(f"  sc-crop {inp} --crop --translate")
 
 
 if __name__ == "__main__":

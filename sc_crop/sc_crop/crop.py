@@ -355,7 +355,8 @@ def run(input_path: str,
         debug: bool = False,
         crop: bool = False,
         las: bool = False,
-        translate: bool = False) -> dict:
+        translate: bool = False,
+        time_steps: bool = False) -> dict:
     """Full pipeline: load → LAS → resample → infer → bbox 3D → save.
 
     Default output: <stem>_bbox.txt with inclusive voxel indices in native space,
@@ -365,8 +366,18 @@ def run(input_path: str,
     --las:       output cropped volume in LAS orientation (requires --crop)
     --translate: update affine so the crop overlays correctly in FSLeyes (requires --crop)
     """
+    import time as _time
+
+    def _tick(label: str, t0: float) -> float:
+        t1 = _time.perf_counter()
+        if time_steps:
+            print(f"  [{label}] {t1 - t0:.2f}s")
+        return t1
+
     from .download import ensure_model
     from ultralytics import YOLO
+
+    t0 = _time.perf_counter()
 
     model_path = Path(model_path) if model_path else ensure_model()
     config     = config if config is not None else load_config(model_path.parent)
@@ -388,15 +399,22 @@ def run(input_path: str,
     shape            = img_las.shape
 
     print(f"Input   : {Path(input_path).name}  shape={img.shape}  ornt={original_axcodes}")
+    t0 = _tick("load + reorient", t0)
 
     model    = YOLO(str(model_path))
+    t0 = _tick("load model", t0)
+
     si_zoom  = zooms[2] / si_res
     img_inf  = resample_for_inference(img_las, si_res, inplane_res)
     data_inf = img_inf.get_fdata(dtype=np.float32)
+    t0 = _tick("resample", t0)
 
     slices, las_idxs = build_slices(data_inf, channels)
+    t0 = _tick("build slices", t0)
+
     preds = infer_slices(model, slices, las_idxs, conf)
     print(f"Detected: {len(preds)}/{data_inf.shape[2]} slices")
+    t0 = _tick("inference", t0)
 
     if not preds:
         raise RuntimeError("No spinal cord detected — check the volume or lower --conf")
@@ -404,12 +422,14 @@ def run(input_path: str,
     bbox          = aggregate_bbox_3d(preds, shape[0], shape[1], shape[2], si_zoom)
     bbox_pad      = bbox.pad(pad_rl, pad_ap, pad_si, zooms, shape)
     bbox_pad_orig, _ = bbox_pad.reorient(shape, las_ornt, original_ornt)
+    t0 = _tick("bbox aggregation", t0)
 
     if debug:
         parent, stem = _stem(input_path)
         save_debug_panel(model, slices, las_idxs, conf,
                          str(parent / f"{stem}_debug.png"),
                          padded_bbox=bbox_pad, H=shape[1], W=shape[0])
+        t0 = _tick("debug panel", t0)
 
     parent, stem = _stem(input_path)
     bbox_txt = parent / f"{stem}_bbox.txt"
@@ -436,8 +456,10 @@ def run(input_path: str,
             img_orig  = reorient_to_original(img_las, original_ornt)
             cropped   = bbox_pad_orig.crop(img_orig, translate=translate)
             crop_path = Path(output_path) if output_path else parent / f"{stem}_crop.nii.gz"
+        t0 = _tick("crop", t0)
         nib.save(cropped, crop_path)
         print(f"Crop    : {crop_path}  shape={cropped.shape}")
+        t0 = _tick("save", t0)
         result["output"] = str(crop_path)
 
     return result

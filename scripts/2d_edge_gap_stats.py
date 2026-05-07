@@ -136,7 +136,7 @@ def main():
     parser = argparse.ArgumentParser(description="2D edge-gap statistics from GT labels.")
     parser.add_argument("--processed",   required=True)
     parser.add_argument("--splits-dir",  default="data/datasplits")
-    parser.add_argument("--exclude-csv", default=None)
+    parser.add_argument("--exclude-csv", default="/home/quentinr/bad_gt.csv")
     parser.add_argument("--rank",        type=int, required=True,
                         help="compare most extreme edge vs rank-th most extreme (e.g. 2)")
     parser.add_argument("--dpi",         type=int, default=150)
@@ -148,7 +148,7 @@ def main():
 
     splits_map  = load_splits(Path(args.splits_dir)) if Path(args.splits_dir).exists() else {}
     exclude_set = set()
-    if args.exclude_csv:
+    if args.exclude_csv and Path(args.exclude_csv).exists():
         exc = pd.read_csv(args.exclude_csv)
         exclude_set = {(r["dataset"], r["stem"]) for _, r in exc.iterrows()}
         print(f"Excluding {len(exclude_set)} subjects from {args.exclude_csv}")

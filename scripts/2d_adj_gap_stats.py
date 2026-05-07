@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-SI adjacent-gap statistics from GT labels in processed/.
+3D Cartesian adjacent-gap statistics from GT labels in processed/.
 
 For each patient and k=1..max_k:
-  max distance (mm) between any two detected slices up to k hops apart
-  along the SI axis (hops 1..k all included, cumulative).
+  max 3D Cartesian distance (mm) between the centers of detected bounding boxes
+  up to k hops apart along the SI axis (hops 1..k all included, cumulative).
 
-  k=1 : only adjacent slices
+  Center of a detection in mm (LAS space):
+    RL : cx * W_mm   (W_mm = shape_las[0] * rl_res_mm)
+    AP : cy * H_mm   (H_mm = shape_las[1] * ap_res_mm)
+    SI : slice_idx * si_res_mm
+
+  distance = sqrt(dRL² + dAP² + dSI²)
+
+  k=1 : only adjacent slices (hop=1)
   k=2 : pairs 1 and 2 hops apart
   k=3 : pairs 1, 2 and 3 hops apart
   ...
@@ -17,7 +24,7 @@ Outputs (in processed_stats/<variant>/adj_gap/):
 
 Usage:
     python scripts/2d_adj_gap_stats.py --processed processed/10mm_SI_1mm_axial --max-k 3
-    python scripts/2d_adj_gap_stats.py --processed processed/10mm_SI_1mm_axial --max-k 5 --exclude-csv bad_gt.csv
+    python scripts/2d_adj_gap_stats.py --processed processed/10mm_SI_1mm_axial --max-k 5 --exclude-csv /home/quentinr/bad_gt.csv
 """
 
 from __future__ import annotations
@@ -44,34 +51,46 @@ def load_splits(splits_dir: Path) -> dict:
     return mapping
 
 
-def patient_adj_gap(txt_dir: Path, si_res: float, k: int) -> float | None:
-    """Max SI distance (mm) between detected slices up to k hops apart.
+def read_detections(txt_dir: Path, W_mm: float, H_mm: float,
+                    si_res: float) -> list[tuple[float, float, float]]:
+    """Return list of (rl_mm, ap_mm, si_mm) for each detected slice, sorted by SI."""
+    detections = []
+    for txt_file in sorted(txt_dir.glob("slice_*.txt")):
+        lines = [l for l in txt_file.read_text().splitlines() if l.strip()]
+        if not lines:
+            continue
+        m = re.search(r"slice_(\d+)\.txt$", txt_file.name)
+        if not m:
+            continue
+        parts = lines[0].split()
+        cx, cy = float(parts[1]), float(parts[2])
+        si_mm  = int(m.group(1)) * si_res
+        detections.append((cx * W_mm, cy * H_mm, si_mm))
+    detections.sort(key=lambda d: d[2])
+    return detections
+
+
+def patient_adj_gap(detections: list[tuple[float, float, float]], k: int) -> float | None:
+    """Max 3D Cartesian distance between bbox centers up to k hops apart.
 
     Returns None if fewer than 2 detections.
     """
-    indices = []
-    for txt_file in sorted(txt_dir.glob("slice_*.txt")):
-        if any(l.strip() for l in txt_file.read_text().splitlines()):
-            m = re.search(r"slice_(\d+)\.txt$", txt_file.name)
-            if m:
-                indices.append(int(m.group(1)))
-
-    if len(indices) < 2:
+    if len(detections) < 2:
         return None
-
-    indices.sort()
     return max(
-        (indices[i + hop] - indices[i]) * si_res
+        np.sqrt((detections[i + hop][0] - detections[i][0]) ** 2
+              + (detections[i + hop][1] - detections[i][1]) ** 2
+              + (detections[i + hop][2] - detections[i][2]) ** 2)
         for hop in range(1, k + 1)
-        for i in range(len(indices) - hop)
+        for i in range(len(detections) - hop)
     )
 
 
 def plot_violin(df: pd.DataFrame, out_path: Path, k: int, dpi: int) -> None:
-    datasets = sorted(df["dataset"].unique())
-    n        = len(datasets)
-    fig, ax  = plt.subplots(figsize=(max(8, n * 1.4), 6))
-    fig.suptitle(f"Max SI gap between detected slices (hops 1..{k})",
+    datasets         = sorted(df["dataset"].unique())
+    n                = len(datasets)
+    fig, ax          = plt.subplots(figsize=(max(8, n * 1.4), 6))
+    fig.suptitle(f"Max 3D Cartesian gap between bbox centers (hops 1..{k})",
                  fontsize=13, fontweight="bold")
 
     rng              = np.random.default_rng(0)
@@ -99,7 +118,7 @@ def plot_violin(df: pd.DataFrame, out_path: Path, k: int, dpi: int) -> None:
     for i in single_idx:
         ax.scatter([positions[i]], data_per_dataset[i], color="black", zorder=5, s=20)
 
-    ax.set_ylabel("Gap (mm)", fontsize=10)
+    ax.set_ylabel("3D Cartesian distance (mm)", fontsize=10)
     ax.set_xticks(positions)
     ax.set_xticklabels([f"{d}\n(n={len(df[df['dataset']==d]['adj_gap_mm'].dropna())})"
                         for d in datasets], rotation=30, ha="right", fontsize=8)
@@ -116,10 +135,10 @@ def plot_violin(df: pd.DataFrame, out_path: Path, k: int, dpi: int) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="SI adjacent-gap statistics from GT labels.")
+    parser = argparse.ArgumentParser(description="3D Cartesian adjacent-gap statistics from GT labels.")
     parser.add_argument("--processed",   required=True)
     parser.add_argument("--splits-dir",  default="data/datasplits")
-    parser.add_argument("--exclude-csv", default=None)
+    parser.add_argument("--exclude-csv", default="/home/quentinr/bad_gt.csv")
     parser.add_argument("--max-k",       type=int, required=True, dest="max_k",
                         help="compute for k=1..max_k hops")
     parser.add_argument("--dpi",         type=int, default=150)
@@ -131,7 +150,7 @@ def main():
 
     splits_map  = load_splits(Path(args.splits_dir)) if Path(args.splits_dir).exists() else {}
     exclude_set = set()
-    if args.exclude_csv:
+    if args.exclude_csv and Path(args.exclude_csv).exists():
         exc = pd.read_csv(args.exclude_csv)
         exclude_set = {(r["dataset"], r["stem"]) for _, r in exc.iterrows()}
         print(f"Excluding {len(exclude_set)} subjects from {args.exclude_csv}")
@@ -149,20 +168,26 @@ def main():
             stem = patient_dir.name
             if (dataset, stem) in exclude_set:
                 continue
-            meta    = yaml.safe_load(meta_path.read_text())
+            meta       = yaml.safe_load(meta_path.read_text())
+            W_mm       = int(meta["shape_las"][0]) * float(meta["rl_res_mm"])
+            H_mm       = int(meta["shape_las"][1]) * float(meta["ap_res_mm"])
+            si_res     = float(meta["si_res_mm"])
+            detections = read_detections(txt_dir, W_mm, H_mm, si_res)
+            if len(detections) < 2:
+                continue
             subject = re.match(r"(sub-[^_]+)", stem)
             subject = subject.group(1) if subject else stem
             patient_records.append({
-                "dataset": dataset, "stem": stem,
-                "split":   splits_map.get((dataset, subject), "unknown"),
-                "txt_dir": txt_dir,
-                "si_res":  float(meta["si_res_mm"]),
+                "dataset":    dataset,
+                "stem":       stem,
+                "split":      splits_map.get((dataset, subject), "unknown"),
+                "detections": detections,
             })
 
     for k in range(1, args.max_k + 1):
         rows = []
         for rec in patient_records:
-            gap = patient_adj_gap(rec["txt_dir"], rec["si_res"], k)
+            gap = patient_adj_gap(rec["detections"], k)
             if gap is None:
                 continue
             rows.append({"dataset": rec["dataset"], "stem": rec["stem"],

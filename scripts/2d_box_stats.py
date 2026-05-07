@@ -23,6 +23,7 @@ Outputs (in processed_stats/<processed_variant>/):
 Usage:
     python scripts/2d_box_stats.py --processed processed/10mm_SI_1mm_axial
     python scripts/2d_box_stats.py --processed processed/10mm_SI_1mm_axial --splits-dir data/datasplits
+    python scripts/2d_box_stats.py --processed processed/10mm_SI_1mm_axial --exclude-csv bad_gt.csv
 """
 
 from __future__ import annotations
@@ -153,9 +154,10 @@ def plot_violin(df: pd.DataFrame, out_path: Path, dpi: int = 150) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="2D bounding box edge-gap statistics from GT labels.")
-    parser.add_argument("--processed",  required=True, help="processed/<variant>/ directory")
-    parser.add_argument("--splits-dir", default="data/datasplits", help="directory with datasplit_*.yaml files")
-    parser.add_argument("--dpi",        type=int, default=150)
+    parser.add_argument("--processed",    required=True, help="processed/<variant>/ directory")
+    parser.add_argument("--splits-dir",   default="data/datasplits", help="directory with datasplit_*.yaml files")
+    parser.add_argument("--exclude-csv",  default=None, help="CSV with columns dataset,stem to exclude")
+    parser.add_argument("--dpi",          type=int, default=150)
     args = parser.parse_args()
 
     processed = Path(args.processed)
@@ -163,7 +165,12 @@ def main():
     out_dir   = Path("processed_stats") / variant
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    splits_map = load_splits(Path(args.splits_dir)) if Path(args.splits_dir).exists() else {}
+    splits_map   = load_splits(Path(args.splits_dir)) if Path(args.splits_dir).exists() else {}
+    exclude_set  = set()
+    if args.exclude_csv:
+        exc = pd.read_csv(args.exclude_csv)
+        exclude_set = {(r["dataset"], r["stem"]) for _, r in exc.iterrows()}
+        print(f"Excluding {len(exclude_set)} subjects from {args.exclude_csv}")
 
     rows = []
     datasets = sorted(p.name for p in processed.iterdir() if p.is_dir())
@@ -182,11 +189,13 @@ def main():
             ap_res   = float(meta["ap_res_mm"])
             W, H     = int(meta["shape_las"][0]), int(meta["shape_las"][1])
 
+            stem    = patient_dir.name
+            if (dataset, stem) in exclude_set:
+                continue
+
             gaps = patient_gaps(txt_dir, rl_res, ap_res, W, H)
             if gaps is None:
                 continue
-
-            stem    = patient_dir.name
             subject = re.match(r"(sub-[^_]+)", stem)
             subject = subject.group(1) if subject else stem
             split   = splits_map.get((dataset, subject), "unknown")

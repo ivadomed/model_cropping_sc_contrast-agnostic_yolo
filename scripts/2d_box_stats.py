@@ -24,6 +24,8 @@ Usage:
     python scripts/2d_box_stats.py --processed processed/10mm_SI_1mm_axial
     python scripts/2d_box_stats.py --processed processed/10mm_SI_1mm_axial --splits-dir data/datasplits
     python scripts/2d_box_stats.py --processed processed/10mm_SI_1mm_axial --exclude-csv bad_gt.csv
+    python scripts/2d_box_stats.py --processed processed/10mm_SI_1mm_axial --rank 3
+    python scripts/2d_box_stats.py --processed processed/10mm_SI_1mm_axial --rank 4
 """
 
 from __future__ import annotations
@@ -54,16 +56,16 @@ def load_splits(splits_dir: Path) -> dict:
     return mapping
 
 
-def edge_gap(values: list[float], ascending: bool) -> float:
-    """Gap between most extreme and second most extreme value."""
-    if len(values) < 2:
+def edge_gap(values: list[float], ascending: bool, rank: int) -> float:
+    """Gap between most extreme value and the rank-th most extreme (rank=2 → 2nd, rank=3 → 3rd…)."""
+    if len(values) < rank:
         return 0.0
     s = sorted(values, reverse=not ascending)
-    return abs(s[0] - s[1])
+    return abs(s[0] - s[rank - 1])
 
 
-def patient_gaps(txt_dir: Path, rl_res: float, ap_res: float, W: int, H: int) -> dict | None:
-    """Compute the 4 edge gaps for one patient. Returns None if fewer than 2 detections."""
+def patient_gaps(txt_dir: Path, rl_res: float, ap_res: float, W: int, H: int, rank: int) -> dict | None:
+    """Compute the 4 edge gaps for one patient. Returns None if fewer than rank detections."""
     R_vals, L_vals, A_vals, P_vals = [], [], [], []
     W_mm = W * rl_res
     H_mm = H * ap_res
@@ -79,22 +81,24 @@ def patient_gaps(txt_dir: Path, rl_res: float, ap_res: float, W: int, H: int) ->
         A_vals.append((cy - h / 2) * H_mm)
         P_vals.append((cy + h / 2) * H_mm)
 
-    if len(R_vals) < 2:
+    if len(R_vals) < rank:
         return None
 
     return {
-        "R_gap_mm": edge_gap(R_vals, ascending=False),
-        "L_gap_mm": edge_gap(L_vals, ascending=True),
-        "A_gap_mm": edge_gap(A_vals, ascending=True),
-        "P_gap_mm": edge_gap(P_vals, ascending=False),
+        "R_gap_mm": edge_gap(R_vals, ascending=False, rank=rank),
+        "L_gap_mm": edge_gap(L_vals, ascending=True,  rank=rank),
+        "A_gap_mm": edge_gap(A_vals, ascending=True,  rank=rank),
+        "P_gap_mm": edge_gap(P_vals, ascending=False, rank=rank),
     }
 
 
-def plot_violin(df: pd.DataFrame, out_path: Path, dpi: int = 150) -> None:
+def plot_violin(df: pd.DataFrame, out_path: Path, rank: int, dpi: int = 150) -> None:
     datasets = sorted(df["dataset"].unique())
     n        = len(datasets)
     fig, axes = plt.subplots(1, 4, figsize=(max(10, n * 1.2) * 4 / 4 + 2, 6), sharey=False)
-    fig.suptitle("2D bounding box edge gap (|most extreme − 2nd most extreme|)", fontsize=13, fontweight="bold")
+    ordinal  = {2: "2nd", 3: "3rd"}.get(rank, f"{rank}th")
+    fig.suptitle(f"2D bounding box edge gap (|most extreme − {ordinal} most extreme|)",
+                 fontsize=13, fontweight="bold")
 
     rng = np.random.default_rng(0)
 
@@ -157,11 +161,14 @@ def main():
     parser.add_argument("--processed",    required=True, help="processed/<variant>/ directory")
     parser.add_argument("--splits-dir",   default="data/datasplits", help="directory with datasplit_*.yaml files")
     parser.add_argument("--exclude-csv",  default=None, help="CSV with columns dataset,stem to exclude")
+    parser.add_argument("--rank",         type=int, default=2,
+                        help="compare most extreme edge against this rank (2=2nd, 3=3rd, …; default: 2)")
     parser.add_argument("--dpi",          type=int, default=150)
     args = parser.parse_args()
 
     processed = Path(args.processed)
     variant   = processed.name
+    rank      = args.rank
     out_dir   = Path("processed_stats") / variant
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -193,7 +200,7 @@ def main():
             if (dataset, stem) in exclude_set:
                 continue
 
-            gaps = patient_gaps(txt_dir, rl_res, ap_res, W, H)
+            gaps = patient_gaps(txt_dir, rl_res, ap_res, W, H, rank)
             if gaps is None:
                 continue
             subject = re.match(r"(sub-[^_]+)", stem)
@@ -202,12 +209,13 @@ def main():
 
             rows.append({"dataset": dataset, "stem": stem, "split": split, **gaps})
 
-    df = pd.DataFrame(rows)
-    csv_path = out_dir / "2d_box_stats.csv"
+    df       = pd.DataFrame(rows)
+    suffix   = f"_rank{rank}"
+    csv_path = out_dir / f"2d_box_stats{suffix}.csv"
     df.to_csv(csv_path, index=False)
     print(f"Saved {len(df)} patients → {csv_path}")
 
-    plot_violin(df, out_dir / "violin_2d_box_stats.png", dpi=args.dpi)
+    plot_violin(df, out_dir / f"violin_2d_box_stats{suffix}.png", rank=rank, dpi=args.dpi)
 
 
 if __name__ == "__main__":

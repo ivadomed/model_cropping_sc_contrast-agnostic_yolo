@@ -13,16 +13,22 @@ For each (image, mask) pair in each BIDS dataset:
                           slice = img[:, :, z].T[::-1, ::-1]  shape (AP × RL)
                           row 0 = Anterior, col 0 = Left
        --plane sagittal : iterate axis 0 (RL),  slice = img[r, :, ::-1].T shape (SI × AP) — Superior at top
-       2D mode  : grayscale uint8, normalised per slice
+       2D mode  : grayscale uint8, normalised per slice or per volume (--norm-scope)
        2.5D mode: pseudo-RGB uint8 (R=prev, G=current, B=next) along the slice axis
                   border slices use a black frame for missing neighbours
+       --si-stride N (axial only): extract 1 out of every N slices along SI after resampling to
+                  --si-res; si_res_mm in meta = N × si_res (effective spacing between extracted slices).
+                  In 2.5D mode R/G/B are the neighbouring *selected* slices (N apart), not adjacent 1mm.
+                  Adaptive stride: if SI extent < 50 slices → at least 5 slices extracted;
+                                   if SI extent < 5 slices → all slices extracted.
   4. Compute YOLO GT bbox per slice → txt/slice_NNN.txt
        without --with-canal: "0 cx cy w h" (SC only, class 0)
        with --with-canal:    up to 2 lines — "0 cx cy w h" (SC) and/or "1 cx cy w h" (canal)
   5. Compute 3D GT bbox → volume/bbox_3d.txt  ("row1 row2 col1 col2 z1 z2", voxels)
      with --with-canal: also volume/bbox_3d_canal.txt (same format, canal class)
-  6. Write meta.yaml (raw_image, raw_mask, shape_las [H,W,Z], si_res_mm, rl_res_mm, ap_res_mm,
+  6. Write meta.yaml (raw_image, raw_mask, shape_las [RL, AP, n_extracted], si_res_mm, rl_res_mm, ap_res_mm,
                       axial_res_mm if --axial-res, channels=3 if --3ch, plane,
+                      si_voxel_res_mm + si_stride if --si-stride,
                       raw_canal_mask if --with-canal and canal mask found)
   7. Write processed/<variant>/skipped.log (TSV: dataset, subject, reason) for any subject
      skipped due to missing_nifti (git annex not downloaded) or no_sc_voxels (empty mask).
@@ -30,8 +36,8 @@ For each (image, mask) pair in each BIDS dataset:
 Mask discovery: per-dataset explicit suffix tables DATASET_MASK_SUFFIX (SC) and
 DATASET_CANAL_SUFFIX (canal, only for datasets that have it) — crashes on unknown dataset.
 Output dir named automatically:
-  axial   : processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_sc_and_canal]
-  sagittal: processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch]_sagittal[_sc_and_canal][_sc<N>mm]
+  axial   : processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_normvol][_stride<N>][_sc_and_canal]
+  sagittal: processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_normvol]_sagittal[_sc_and_canal][_sc<N>mm]
 
 Sagittal --sc-pad N:
   Only RL slices within [rl_min − N mm, rl_max + N mm] are saved, where rl_min/rl_max are the first
@@ -41,6 +47,9 @@ Sagittal --sc-pad N:
 Usage:
     # Axial 10mm SI + 1mm isotropic, pseudo-RGB (current default)
     python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --3ch
+
+    # Axial 1mm isotropic resampling, extract every 10th slice, pseudo-RGB with 10mm-apart neighbours
+    python scripts/preprocess.py --si-res 1.0 --axial-res 1.0 --si-stride 10 --3ch
 
     # Sagittal: 1mm isotropic, pseudo-RGB, restricted to SC region ±10mm
     python scripts/preprocess.py --si-res 1.0 --axial-res 1.0 --rl-res 1.0 --3ch --plane sagittal --sc-pad 10
@@ -86,6 +95,23 @@ DATASET_CANAL_SUFFIX = {d["name"]: d["canal_suffix"] for d in _REGISTRY if d.get
 
 
 _GZIP_MAGIC = b"\x1f\x8b"
+
+
+def _compute_actual_stride(N_si: int, target_stride: int) -> int:
+    """Compute the effective SI stride given the volume size (in voxels after resampling).
+
+    - target_stride == 1 : always 1 (no subsampling, extract all slices)
+    - N_si <  5          : stride = 1 (extract all slices)
+    - N_si < 50          : stride = max(1, (N_si-1)//4) → exactly 5 slices
+    - N_si >= 50         : stride = target_stride
+    """
+    if target_stride == 1:
+        return 1
+    if N_si < 5:
+        return 1
+    if N_si < 50:
+        return max(1, (N_si - 1) // 4)
+    return target_stride
 
 
 def _is_nifti_downloaded(path: Path) -> bool:
@@ -167,7 +193,7 @@ def _bbox3d_from_mask(mask_data: np.ndarray, H: int, W: int, Z: int,
 
 
 def process_pair(args: tuple):
-    img_path_str, mask_path_str, canal_mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm, rl_res_mm, three_ch, plane, sc_pad_mm = args
+    img_path_str, mask_path_str, canal_mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm, rl_res_mm, three_ch, plane, sc_pad_mm, si_stride, norm_scope = args
     img_path    = Path(img_path_str)
     patient_dir = Path(processed_str) / dataset_name / nifti_stem(img_path)
 
@@ -191,6 +217,13 @@ def process_pair(args: tuple):
 
     img_data  = img_r.get_fdata(dtype=np.float32)
     mask_data = np.round(mask_r.get_fdata()).astype(np.uint8)
+
+    # Volume-level percentiles (used when norm_scope == "volume")
+    if norm_scope == "volume":
+        nz = img_data[img_data > 0]
+        vol_lo, vol_hi = (np.percentile(nz, [0.5, 99.5]) if len(nz) else (0.0, 1.0))
+    else:
+        vol_lo = vol_hi = None
 
     canal_data = None
     if canal_mask_path_str is not None:
@@ -222,7 +255,7 @@ def process_pair(args: tuple):
     def get_slice(i: int) -> np.ndarray:
         if i < 0 or i >= N:
             return blank
-        arr = normalize_to_uint8(get_img_slice(img_data, i))
+        arr = normalize_to_uint8(get_img_slice(img_data, i), vol_lo, vol_hi)
         if H_out != H or W_out != W:
             padded = blank.copy()
             padded[:H, :W] = arr
@@ -243,12 +276,26 @@ def process_pair(args: tuple):
     else:
         win_start, win_end, sc_rl_set = 0, N - 1, None
 
-    # Axial: iterate Superior→Inferior (slice_idx=0 = Superior, las_idx=N-1 in LAS).
-    # Sagittal: iterate RL axis directly (slice_idx = las_idx = RL index).
-    if plane == "axial":
-        slice_iter = [(c, N - 1 - c) for c in range(N)]
+    # Build slice iteration list and RGB offset.
+    # Axial with stride: extract every actual_stride-th LAS slice, Superior→Inferior.
+    #   si_res_mm in meta = actual_stride × si_res_mm (effective spacing between extracted slices).
+    #   shape_las[2] = number of extracted slices (not full resampled SI dimension).
+    #   RGB neighbours are the adjacent *selected* slices (actual_stride LAS voxels apart).
+    # Without stride: extract all slices (current behaviour).
+    if plane == "axial" and si_stride is not None:
+        actual_stride    = _compute_actual_stride(N, si_stride)
+        selected_las     = list(range(N - 1, -1, -actual_stride))
+        slice_iter       = list(enumerate(selected_las))
+        actual_si_res_mm = actual_stride * si_res_mm
+        rgb_offset       = actual_stride
+    elif plane == "axial":
+        slice_iter       = [(c, N - 1 - c) for c in range(N)]
+        actual_si_res_mm = si_res_mm
+        rgb_offset       = 1
     else:
-        slice_iter = [(i, i) for i in range(N)]
+        slice_iter       = [(i, i) for i in range(N)]
+        actual_si_res_mm = si_res_mm
+        rgb_offset       = 1
 
     for slice_idx, las_idx in slice_iter:
         if sc_rl_set is not None:
@@ -259,10 +306,10 @@ def process_pair(args: tuple):
         arr = get_slice(las_idx)
         if three_ch:
             if plane == "axial":
-                # R=Superior neighbour, G=current, B=Inferior neighbour
-                rgb = np.stack([get_slice(las_idx + 1), arr, get_slice(las_idx - 1)], axis=2)
+                # R=Superior neighbour, G=current, B=Inferior neighbour (rgb_offset apart)
+                rgb = np.stack([get_slice(las_idx + rgb_offset), arr, get_slice(las_idx - rgb_offset)], axis=2)
             else:
-                rgb = np.stack([get_slice(las_idx - 1), arr, get_slice(las_idx + 1)], axis=2)
+                rgb = np.stack([get_slice(las_idx - rgb_offset), arr, get_slice(las_idx + rgb_offset)], axis=2)
             PILImage.fromarray(rgb).save(str(patient_dir / "png" / f"slice_{slice_idx:03d}.png"))
         else:
             PILImage.fromarray(arr).save(str(patient_dir / "png" / f"slice_{slice_idx:03d}.png"))
@@ -285,20 +332,26 @@ def process_pair(args: tuple):
         write_bbox_3d(patient_dir / "volume" / "bbox_3d.txt", **box)
 
     if canal_data is not None:
-        n_canal = canal_data.shape[2] if plane == "axial" else canal_data.shape[0]
-        canal_box = _bbox3d_from_mask(
-            canal_data if plane == "axial" else np.transpose(canal_data, (2, 1, 0)),
-            H, W, min(N, n_canal), H_out, W_out, plane
-        )
+        if si_stride is not None and plane == "axial":
+            canal_box = bbox_3d_from_txts(patient_dir / "txt", H_out, W_out, class_id=1)
+        else:
+            n_canal   = canal_data.shape[2] if plane == "axial" else canal_data.shape[0]
+            canal_box = _bbox3d_from_mask(
+                canal_data if plane == "axial" else np.transpose(canal_data, (2, 1, 0)),
+                H, W, min(N, n_canal), H_out, W_out, plane
+            )
         if canal_box is not None:
             write_bbox_3d(patient_dir / "volume" / "bbox_3d_canal.txt", **canal_box)
 
-    shape_las = list(img_data.shape[:3])
+    # shape_las[2] = number of extracted slices (consistent with slice_idx × si_res_mm = physical pos)
+    n_extracted = len(slice_iter)
+    shape_las   = [img_data.shape[0], img_data.shape[1],
+                   n_extracted if (plane == "axial" and si_stride is not None) else img_data.shape[2]]
     meta = {
         "raw_image": str(img_path),
         "raw_mask":  str(mask_path_str),
         "shape_las": shape_las,
-        "si_res_mm": si_res_mm,
+        "si_res_mm": round(actual_si_res_mm, 4),
         "rl_res_mm": round(eff_rl, 4),
         "ap_res_mm": round(eff_ap, 4),
         "plane":     plane,
@@ -309,6 +362,9 @@ def process_pair(args: tuple):
         meta["rl_res_mm_explicit"] = rl_res_mm
     if three_ch:
         meta["channels"] = 3
+    if si_stride is not None and plane == "axial":
+        meta["si_voxel_res_mm"] = round(si_res_mm, 4)
+        meta["si_stride"]       = actual_stride
     if canal_mask_path_str is not None:
         meta["raw_canal_mask"] = str(canal_mask_path_str)
     (patient_dir / "meta.yaml").write_text(yaml.dump(meta))
@@ -350,7 +406,9 @@ def run(config: str | Path | None = None,
         rl_res: float | None = None,
         three_ch: bool = False,
         with_canal: bool = False,
-        sc_pad_mm: float | None = None) -> Path:
+        sc_pad_mm: float | None = None,
+        si_stride: int | None = None,
+        norm_scope: str = "slice") -> Path:
     """Preprocess raw BIDS data to processed slices. Returns the output directory path."""
     if config:
         cfg = yaml.safe_load(Path(config).read_text())
@@ -362,18 +420,23 @@ def run(config: str | Path | None = None,
         if not three_ch:      three_ch  = cfg.get("three_ch", False)
         if not with_canal:    with_canal = cfg.get("with_canal", False)
         if sc_pad_mm is None: sc_pad_mm = plane_cfg.get("sc_pad")
-        if out is None:       out       = cfg.get("out")
+        if si_stride is None:          si_stride  = cfg.get("si_stride")
+        if norm_scope == "slice":      norm_scope = cfg.get("norm_scope", "slice")
+        if out is None:                out        = cfg.get("out")
     if plane is None:
         plane = "axial"
 
     assert si_res is not None, "si_res is required (set in config or via --si-res)"
     assert sc_pad_mm is None or plane == "sagittal", "--sc-pad is only valid with sagittal plane"
+    assert si_stride is None or plane == "axial",    "--si-stride is only valid with axial plane"
 
     if out is None:
         name = f"{si_res:g}mm_SI"
         if axial_res  is not None: name += f"_{axial_res:g}mm_axial"
         if rl_res     is not None: name += f"_{rl_res:g}mm_RL"
         if three_ch:               name += "_3ch"
+        if norm_scope == "volume": name += "_normvol"
+        if si_stride is not None:  name += f"_stride{si_stride}"
         if plane == "sagittal":    name += "_sagittal"
         if sc_pad_mm is not None:  name += f"_sc{sc_pad_mm:g}mm"
         if with_canal:             name += "_sc_and_canal"
@@ -396,7 +459,7 @@ def run(config: str | Path | None = None,
                                      "reason":  "missing_nifti"})
         worker_args.extend(
             (str(img), str(mask), str(canal) if canal else None,
-             dataset_dir.name, processed_dir, si_res, axial_res, rl_res, three_ch, plane, sc_pad_mm)
+             dataset_dir.name, processed_dir, si_res, axial_res, rl_res, three_ch, plane, sc_pad_mm, si_stride, norm_scope)
             for img, mask, canal in pairs
         )
 
@@ -446,6 +509,13 @@ def main():
     parser.add_argument("--3ch",         action="store_true", dest="three_ch")
     parser.add_argument("--with-canal",  action="store_true", dest="with_canal")
     parser.add_argument("--sc-pad",      type=float, default=None, dest="sc_pad_mm")
+    parser.add_argument("--si-stride",   type=int,   default=None, dest="si_stride",
+                        help="Extract 1 out of every N SI slices after resampling (axial only). "
+                             "si_res_mm in meta = N × si_res. RGB neighbours are selected slices N apart.")
+    parser.add_argument("--norm-scope",  default=None, choices=["slice", "volume"], dest="norm_scope",
+                        help="Normalisation scope: 'slice' (per-slice percentile, default) or "
+                             "'volume' (percentile computed on all non-zero voxels of the volume — "
+                             "dark slices stay dark instead of having their noise amplified).")
     parser.add_argument("--update-meta", action="store_true")
     args = parser.parse_args()
 
@@ -457,7 +527,8 @@ def main():
     run(config=args.config, raw=args.raw, out=args.out, datasets=args.datasets,
         plane=args.plane, si_res=args.si_res, axial_res=args.axial_res,
         rl_res=args.rl_res, three_ch=args.three_ch, with_canal=args.with_canal,
-        sc_pad_mm=args.sc_pad_mm)
+        sc_pad_mm=args.sc_pad_mm, si_stride=args.si_stride,
+        norm_scope=args.norm_scope or "slice")
 
 
 if __name__ == "__main__":

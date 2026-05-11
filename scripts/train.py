@@ -7,7 +7,7 @@ Dataset par défaut : datasets/10mm_SI_1mm_axial_3ch_sc_only_region_balanced_all
 
 Augmentations (désactivables via --no-augment) issues du papier contrast-agnostic :
   - Affine (rotation + scaling)           → YOLO: degrees=15, scale=0.2
-  - Gaussian noise                        → albumentations: GaussNoise       (p=0.1)
+  - Gaussian noise                        → albumentations: GaussNoise       (p=0.3)
   - Gaussian smoothing                    → albumentations: GaussianBlur     (p=0.2)
   - Brightness augmentation               → YOLO: hsv_v=0.15
   - Low-resolution simulation [0.25, 1.0] → albumentations: Downscale       (p=0.25)
@@ -65,14 +65,32 @@ def make_focal_bce(gamma: float):
     return focal_bce
 
 
-def inject_focal_loss(trainer) -> None:
-    """Replace the BCE cls loss in the detection head with focal-weighted BCE."""
-    gamma = trainer.args.fl_gamma if hasattr(trainer.args, "fl_gamma") else 2.0
-    if hasattr(trainer, "compute_loss") and hasattr(trainer.compute_loss, "bce"):
-        trainer.compute_loss.bce = make_focal_bce(gamma)
+def inject_focal_loss(trainer, gamma: float) -> None:
+    """Patch model.init_criterion so that when the loss is lazy-initialized on the first
+    batch, the BCE cls loss is replaced with focal-weighted BCE.
+
+    The criterion lives on model.criterion (lazy-init in model.loss()), not on the trainer.
+    Patching init_criterion at on_train_start is the correct interception point.
+    """
+    from ultralytics.utils.torch_utils import unwrap_model
+    model = unwrap_model(trainer.model)
+    orig_init = model.init_criterion
+
+    def _patched_init():
+        criterion = orig_init()
+        focal_bce = make_focal_bce(gamma)
+        # v8DetectionLoss direct (modèles non-E2E)
+        if hasattr(criterion, "bce"):
+            criterion.bce = focal_bce
+        # E2ELoss (YOLO26) : la loss réelle est dans one2many et one2one
+        if hasattr(criterion, "one2many") and hasattr(criterion.one2many, "bce"):
+            criterion.one2many.bce = focal_bce
+        if hasattr(criterion, "one2one") and hasattr(criterion.one2one, "bce"):
+            criterion.one2one.bce = focal_bce
         print(f"\n[FOCAL LOSS] Injected focal BCE (gamma={gamma}) on cls loss\n")
-        return
-    print("\n[FOCAL LOSS] WARNING: compute_loss.bce not found — focal loss not injected\n")
+        return criterion
+
+    model.init_criterion = _patched_init
 
 
 class BiasField(A.ImageOnlyTransform):
@@ -120,7 +138,7 @@ def patch_albumentations_mri() -> None:
 
     extra = [
         A.Affine(scale=(0.25, 4.0), translate_percent=(-0.3, 0.3), p=0.2),
-        A.GaussNoise(std_range=(0.01, 0.03), p=0.1),
+        A.GaussNoise(std_range=(0.05, 0.15), p=0.3),
         A.GaussianBlur(blur_limit=(3, 7), p=0.2),
         A.Downscale(scale_range=(0.25, 1.0),
                     interpolation_pair={"downscale": cv2.INTER_AREA, "upscale": cv2.INTER_LINEAR},
@@ -227,7 +245,7 @@ def run(config: str | Path | None = None,
                     "affine_p":                 0.0 if no_augment else 0.2,
                     "affine_scale_range":       [0.25, 4.0],
                     "affine_translate_range":   [-0.3, 0.3],
-                    "gauss_noise_p":            0.0 if no_augment else 0.1,
+                    "gauss_noise_p":            0.0 if no_augment else 0.3,
                     "gauss_noise_std_range":    [0.01, 0.03],
                     "gaussian_blur_p":          0.0 if no_augment else 0.2,
                     "gaussian_blur_limit":      [3, 7],
@@ -261,7 +279,7 @@ def run(config: str | Path | None = None,
 
     model = YOLO(model_name)
     if fl_gamma > 0.0:
-        model.add_callback("on_train_start", inject_focal_loss)
+        model.add_callback("on_train_start", lambda trainer: inject_focal_loss(trainer, fl_gamma))
 
     aug = dict(
         hsv_h=0.0, hsv_s=0.0, hsv_v=0.0,

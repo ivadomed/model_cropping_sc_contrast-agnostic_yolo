@@ -261,4 +261,5 @@ datasets:
     url_ssh: null
     commit: 72075f6
     mask_suffix: spinalcordmask.nii.gz
+    labels_dir: label
     region: mixed

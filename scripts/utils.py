@@ -14,12 +14,15 @@ def nifti_stem(path: Path) -> str:
     return path.stem
 
 
-def normalize_to_uint8(arr: np.ndarray) -> np.ndarray:
-    flat = arr.ravel()
-    nz = flat[flat > 0]
-    if not len(nz):
-        return np.zeros_like(arr, dtype=np.uint8)
-    lo, hi = np.percentile(nz, [0.5, 99.5])
+def normalize_to_uint8(arr: np.ndarray, lo=None, hi=None) -> np.ndarray:
+    """Normalise arr to uint8. If lo/hi are None, compute from non-zero pixels (slice-level).
+    Pass pre-computed lo/hi for volume-level normalisation."""
+    if lo is None or hi is None:
+        nz = arr.ravel()
+        nz = nz[nz > 0]
+        if not len(nz):
+            return np.zeros_like(arr, dtype=np.uint8)
+        lo, hi = np.percentile(nz, [0.5, 99.5])
     if hi <= lo:
         return np.zeros_like(arr, dtype=np.uint8)
     return ((np.clip(arr, lo, hi) - lo) / (hi - lo) * 255).astype(np.uint8)

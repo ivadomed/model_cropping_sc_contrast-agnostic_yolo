@@ -9,11 +9,11 @@ Output structure:
       txt/slice_NNN.txt   ← predicted bbox: "0 cx cy w h conf" per line (empty if no detection)
       volume/bbox_3d.txt  ← 3D bbox union from predicted slices
 
-conf=0.1 by default: boxes below threshold are discarded.
-Sagittal plane saves all boxes above threshold; axial saves only the best per class.
+conf=0.1 by default: boxes below threshold are discarded for txt/volume.
+PNG overlays always show the max-confidence box per class regardless of threshold.
 
-Axial plane  : one box per class saved (best confidence).
-Sagittal plane: all boxes above conf threshold saved (multiple lines per class allowed).
+Axial plane  : one box per class saved in txt (best confidence above threshold).
+Sagittal plane: all boxes above conf threshold saved in txt.
 
 Run metrics.py afterwards to compute aggregated performance metrics from saved predictions.
 Patients that fail (e.g. missing files, GPU OOM) are caught individually, logged to
@@ -31,11 +31,18 @@ Usage:
         --run-id yolo26_1mm_axial_conf25 \
         --processed processed/10mm_SI_1mm_axial
 
-    # Regenerate overlay images from existing predictions (no inference):
+    # Regenerate overlay images from existing predictions (no inference, reads from txt):
     python scripts/evaluate.py \
         --viz-only \
         --run-id yolo26_1mm_axial \
         --processed processed/10mm_SI_1mm_axial
+
+    # Regenerate overlay images by re-running inference (max-conf box always drawn):
+    python scripts/evaluate.py \
+        --viz-only-infer \
+        --checkpoint runs/20260504_135903/checkpoints/weights/best.pt \
+        --run-id 20260504_135903 \
+        --out runs
 """
 
 from __future__ import annotations
@@ -182,40 +189,44 @@ def infer_patient(model: YOLO, patient_dir: Path, pred_dir: Path,
             inputs = [np.array(Image.open(p).convert("RGB"))[:, ::-1, ::-1].copy() for p in chunk]
         else:
             inputs = [str(p) for p in chunk]
-        results = model.predict(inputs, conf=conf, verbose=False)
+        # Infer at conf=0.0 so NMS always returns at least the max-score box for PNG
+        results = model.predict(inputs, conf=0.0, verbose=False)
         for png, res in zip(chunk, results):
-            # Sagittal: keep all boxes above conf threshold.
-            # Axial: keep best box per class.
-            pred_boxes: list = []
+            all_boxes: list = []
             if res.boxes is not None and len(res.boxes) > 0:
-                if sagittal:
-                    for i_box in range(len(res.boxes)):
-                        cls_id = int(res.boxes.cls[i_box].item())
-                        cx, cy, w, h = res.boxes.xywhn[i_box].tolist()
-                        if flip_x:
-                            cx = 1.0 - cx
-                        pred_boxes.append((cls_id, cx, cy, w, h, float(res.boxes.conf[i_box])))
-                else:
-                    for cls_id in res.boxes.cls.unique().tolist():
-                        cls_id = int(cls_id)
-                        mask   = res.boxes.cls == cls_id
-                        best   = int(res.boxes.conf[mask].argmax())
-                        idxs   = mask.nonzero(as_tuple=True)[0]
-                        idx    = idxs[best].item()
-                        cx, cy, w, h = res.boxes.xywhn[idx].tolist()
-                        if flip_x:
-                            cx = 1.0 - cx
-                        pred_boxes.append((cls_id, cx, cy, w, h, float(res.boxes.conf[idx])))
+                for i_box in range(len(res.boxes)):
+                    cls_id = int(res.boxes.cls[i_box].item())
+                    cx, cy, w, h = res.boxes.xywhn[i_box].tolist()
+                    if flip_x:
+                        cx = 1.0 - cx
+                    all_boxes.append((cls_id, cx, cy, w, h, float(res.boxes.conf[i_box])))
+
+            # txt: sagittal keeps all above conf; axial keeps best per class above conf
+            if sagittal:
+                pred_boxes_txt = [b for b in all_boxes if b[5] >= conf]
+            else:
+                pred_boxes_txt = []
+                for cls_id in {b[0] for b in all_boxes if b[5] >= conf}:
+                    pred_boxes_txt.append(max(
+                        (b for b in all_boxes if b[0] == cls_id and b[5] >= conf),
+                        key=lambda b: b[5],
+                    ))
+
+            # viz: max-conf per class regardless of threshold
+            pred_boxes_viz = [
+                max((b for b in all_boxes if b[0] == cls_id), key=lambda b: b[5])
+                for cls_id in {b[0] for b in all_boxes}
+            ]
 
             txt_out = pred_txt_dir / (png.stem + ".txt")
             txt_out.write_text("".join(
                 f"{cls_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f} {c:.6f}\n"
-                for cls_id, cx, cy, w, h, c in pred_boxes
+                for cls_id, cx, cy, w, h, c in pred_boxes_txt
             ))
 
             if save_viz:
                 gt_boxes = read_gt_boxes(gt_txt_dir / (png.stem + ".txt"))
-                draw_boxes(str(png), gt_boxes, pred_boxes).save(
+                draw_boxes(str(png), gt_boxes, pred_boxes_viz).save(
                     str(pred_dir / "png" / png.name))
 
     s = meta["shape_las"]
@@ -270,6 +281,50 @@ def render_overlays(pred_root: Path, processed_dir: Path = None) -> None:
             gt_boxes = read_gt_boxes(gt_txt_dir / pred_txt.name)
             draw_boxes(str(png_src), gt_boxes, pred_boxes).save(
                 str(out_png_dir / png_src.name))
+
+
+def render_overlays_infer(pred_root: Path, model: YOLO, batch_size: int,
+                          flip_x: bool = False) -> None:
+    """Regenerate overlay PNGs by re-running inference at conf=0.0 (max-score box always drawn).
+
+    Reads source images from gt/ symlinks; does not overwrite txt or volume.
+    """
+    patients = [
+        (d.name, p)
+        for d in sorted((pred_root / "predictions").iterdir()) if d.is_dir()
+        for p in sorted(d.iterdir())
+        if (p / "gt").exists() and (p / "txt").is_dir()
+    ]
+    print(f"Re-inferring overlays for {len(patients)} patients → {pred_root}")
+    for _dataset, pred_patient_dir in tqdm(patients, desc="Patients", unit="pat"):
+        gt_src      = pred_patient_dir / "gt"
+        gt_txt_dir  = gt_src / "txt"
+        src_png_dir = gt_src / "png"
+        out_png_dir = pred_patient_dir / "png"
+        out_png_dir.mkdir(exist_ok=True)
+        pngs = sorted(src_png_dir.glob("slice_*.png"))
+        for i in range(0, len(pngs), batch_size):
+            chunk = pngs[i:i + batch_size]
+            if flip_x:
+                inputs = [np.array(Image.open(p).convert("RGB"))[:, ::-1, ::-1].copy() for p in chunk]
+            else:
+                inputs = [str(p) for p in chunk]
+            results = model.predict(inputs, conf=0.0, verbose=False)
+            for png, res in zip(chunk, results):
+                all_boxes: list = []
+                if res.boxes is not None and len(res.boxes) > 0:
+                    for i_box in range(len(res.boxes)):
+                        cls_id = int(res.boxes.cls[i_box].item())
+                        cx, cy, w, h = res.boxes.xywhn[i_box].tolist()
+                        if flip_x:
+                            cx = 1.0 - cx
+                        all_boxes.append((cls_id, cx, cy, w, h, float(res.boxes.conf[i_box])))
+                pred_boxes_viz = [
+                    max((b for b in all_boxes if b[0] == cls_id), key=lambda b: b[5])
+                    for cls_id in {b[0] for b in all_boxes}
+                ]
+                gt_boxes = read_gt_boxes(gt_txt_dir / (png.stem + ".txt"))
+                draw_boxes(str(png), gt_boxes, pred_boxes_viz).save(str(out_png_dir / png.name))
 
 
 def run(checkpoint: str | Path, processed: str | Path, out: str | Path,
@@ -337,9 +392,12 @@ def main():
                         help="Restrict to these dataset names (default: all)")
     parser.add_argument("--flip-x",      action="store_true",
                         help="Flip each slice horizontally before inference, unflip cx in predictions")
-    parser.add_argument("--no-viz",      action="store_true", help="Skip saving overlay images")
-    parser.add_argument("--viz-only",    action="store_true",
-                        help="Regenerate overlay PNGs from existing predictions (no inference)")
+    parser.add_argument("--no-viz",          action="store_true", help="Skip saving overlay images")
+    parser.add_argument("--viz-only",         action="store_true",
+                        help="Regenerate overlay PNGs from existing txt predictions (no inference)")
+    parser.add_argument("--viz-only-infer",   action="store_true",
+                        help="Regenerate overlay PNGs by re-running inference at conf=0.001 "
+                             "(max-conf box always drawn; requires --checkpoint and --run-id)")
     args = parser.parse_args()
 
     processed_dir = Path(args.processed)
@@ -347,6 +405,14 @@ def main():
     if args.viz_only:
         assert args.run_id is not None, "--run-id is required with --viz-only"
         render_overlays(Path(args.out) / args.run_id, processed_dir)
+        return
+
+    if args.viz_only_infer:
+        assert args.run_id    is not None, "--run-id is required with --viz-only-infer"
+        assert args.checkpoint is not None, "--checkpoint is required with --viz-only-infer"
+        _model      = YOLO(args.checkpoint)
+        _batch_size = auto_batch(_model, 0.001) if args.batch == -1 else args.batch
+        render_overlays_infer(Path(args.out) / args.run_id, _model, _batch_size, args.flip_x)
         return
 
     assert args.checkpoint is not None, "--checkpoint is required unless --viz-only is set"

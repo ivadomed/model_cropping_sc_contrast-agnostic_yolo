@@ -287,6 +287,9 @@ SCRIPTS — un script, une responsabilité
   │                         z_dist_to_ref_gt, ref_gt_slice, is_fp, is_fn
   │                       seuil CONF_THRESH=0.5 (injectable via --conf) pour precision/recall/f1
   │                       SOURCE DE VÉRITÉ : slices.csv et patients.csv sont la base de tous les scripts aval
+  │                       --cls-inference <run_cls>/predictions : active les métriques _clsfilt
+  │                         filtre les pred_boxes du run de détection au z-range du run de classification
+  │                         (z_min/z_max déterminés par les txts non-vides du run cls) sans ré-inférence
   ├── find_failures.py  ← --inference predictions/<run_id>/  (requiert patients.csv de metrics.py)
   │                       → predictions/<run_id>/metrics/per_split/<split>/<metric>/<conf>/failures/<dataset>/
   │                       score_fail = (fp_rate + fn_rate) / 2 ; --top-k (défaut 20) ; --split optionnel

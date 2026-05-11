@@ -1,12 +1,11 @@
 # Preprocessing config — passed to scripts/preprocess.py via --config
 
 plane: axial   # axial | sagittal
-seed: 50
-out: processed/10mm_SI_1mm_axial_3ch   # output directory (shared across runs)
+out: processed/10mm_SI_1mm_axial_3ch_normvol   # output directory (shared across runs)
 
 # ── Axial ─────────────────────────────────────────────────────────────────────
 axial:
-  si_res: 10.0       # SI resampling resolution (mm)
+  si_res: 10.0        # SI resampling resolution (mm)
   inplane_res: 1.0   # in-plane (RL, AP) resampling resolution (mm)
 
 # ── Sagittal ──────────────────────────────────────────────────────────────────
@@ -16,5 +15,9 @@ sagittal:
   sc_pad: 10         # slices kept = SC extent ± this value (mm)
 
 # ── Shared ────────────────────────────────────────────────────────────────────
-channels: 3          # 1 = grayscale, 3 = pseudo-RGB (superior/current/inferior slices)
+three_ch: true       # pseudo-RGB: R=Superior neighbour, G=current, B=Inferior neighbour
+si_stride: 1        # axial only: no stride (1 slice every si_res mm)
 with_canal: false    # true = also extract spinal canal (class 1)
+norm_scope: volume   # slice = per-slice percentile (0.5–99.5% of non-zero px, ancien comportement)
+                     # volume = percentile calculé sur tous les voxels non-nuls du volume
+                     #          → les slices sombres restent sombres au lieu d'amplifier le bruit

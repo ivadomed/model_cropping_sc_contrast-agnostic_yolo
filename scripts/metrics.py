@@ -28,6 +28,17 @@ Per-patient outputs saved to predictions/<run_id>/<dataset>/<patient>/metrics/:
                  gap_mm_*/iou_3d_mm with _trim50 suffix: same but pred boundary slices isolated by
                                       >50mm in Z from their neighbor are removed before computing
                                       (analogous to reg30mm but in the Z axis instead of x-y plane)
+                 gap_mm_*/iou_3d_mm with _graphreg suffix: same but predictions are first filtered
+                                      by graph-based regularization: a path graph of SI-ordered
+                                      detections is built and edges are broken when face displacements
+                                      exceed per-hop thresholds (R/L: 15mm×hop, A/P: 25mm×hop) or
+                                      SI distance ≥ 40mm; only the connected component with the
+                                      highest mean confidence is kept
+                 gap_mm_*/iou_3d_mm with _facetrim suffix: same but filtered per in-plane face
+                                      (A/P/R/L): detections sorted by face limit (most extreme first),
+                                      only the 2 most extreme edges inspected, edge cut if gap exceeds
+                                      face threshold (A=30mm, P=40mm, R=L=10mm), keep component with
+                                      highest confidence sum; result = intersection across 4 faces
 
 Run-level outputs:
   patients.csv — index of all patients: dataset, stem (no metrics, no split)
@@ -47,6 +58,14 @@ Usage:
     python scripts/metrics.py \\
         --inference predictions/yolo26_1mm_axial \\
         --processed processed/10mm_SI_1mm_axial --split val --metrics iou_3d_mm iou_3d
+
+    # Compute _clsfilt metrics (filter det pred_boxes to cls z-range, recompute all gaps):
+    python scripts/metrics.py \\
+        --inference runs/20260510_192902 \\
+        --processed processed/10mm_SI_1mm_axial_3ch \\
+        --metrics gap_mm_R_clsfilt gap_mm_L_clsfilt gap_mm_P_clsfilt \\
+                  gap_mm_A_clsfilt gap_mm_I_clsfilt gap_mm_S_clsfilt iou_3d_mm_clsfilt \\
+        --cls-inference runs/20260510_192902_cls/predictions
 """
 
 from __future__ import annotations
@@ -68,14 +87,36 @@ CONF_STEPS        = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(
 SPLITS            = ["test", "val", "train", "unknown"]
 REG_DIST_MM       = 30.0   # distance threshold for _reg30mm spatial outlier filter
 REG_SUFFIX        = "_reg30mm"
+GRAPHREG_SUFFIX   = "_graphreg"
+GRAPHTRIM_SUFFIX  = "_graphtrim"
+FACETRIM_SUFFIX   = "_facetrim"
+# Face-trim thresholds (mm) per face: only the 2 most extreme edges inspected
+_FACETRIM_THRESHOLDS = {"A": 30.0, "P": 40.0, "R": 10.0, "L": 10.0}
 # _trim<N> suffix: N is the 3D Euclidean distance threshold in mm encoded in the metric name
 TRIM_DISTANCES   = [30, 40, 50]   # supported values; add more here to expose them
+CLSFILT_SUFFIX   = "_clsfilt"
 # Metrics that depend only on pred bbox + GT bbox + meta (no slices.csv needed → fast patch)
 _TRIM_METRICS    = [f"{pfx}_trim{d}"
                      for d in TRIM_DISTANCES
                      for pfx in ("iou_3d_mm",
                                  "gap_mm_R", "gap_mm_L", "gap_mm_P",
                                  "gap_mm_A", "gap_mm_I", "gap_mm_S")]
+_GRAPHREG_METRICS = [f"{pfx}_graphreg"
+                      for pfx in ("iou_3d_mm",
+                                  "gap_mm_R", "gap_mm_L", "gap_mm_P",
+                                  "gap_mm_A", "gap_mm_I", "gap_mm_S")]
+_GRAPHTRIM_METRICS = [f"{pfx}_graphtrim"
+                       for pfx in ("iou_3d_mm",
+                                   "gap_mm_R", "gap_mm_L", "gap_mm_P",
+                                   "gap_mm_A", "gap_mm_I", "gap_mm_S")]
+_FACETRIM_METRICS  = [f"{pfx}_facetrim"
+                       for pfx in ("iou_3d_mm",
+                                   "gap_mm_R", "gap_mm_L", "gap_mm_P",
+                                   "gap_mm_A", "gap_mm_I", "gap_mm_S")]
+_CLSFILT_METRICS   = [f"{pfx}{CLSFILT_SUFFIX}"
+                       for pfx in ("iou_3d_mm",
+                                   "gap_mm_R", "gap_mm_L", "gap_mm_P",
+                                   "gap_mm_A", "gap_mm_I", "gap_mm_S")]
 BBOX_ONLY_METRICS = {"iou_3d", "iou_3d_mm", "iou_3d_mm_filt", "iou_3d_mm_ransac",
                      "iou_3d_mm_pad10", "gt_in_pad10",
                      "iou_3d_mm_padz20", "gt_in_padz20",
@@ -86,7 +127,8 @@ BBOX_ONLY_METRICS = {"iou_3d", "iou_3d_mm", "iou_3d_mm_filt", "iou_3d_mm_ransac"
                      "iou_3d_mm_reg30mm",
                      "gap_mm_R_reg30mm", "gap_mm_L_reg30mm", "gap_mm_P_reg30mm",
                      "gap_mm_A_reg30mm", "gap_mm_I_reg30mm", "gap_mm_S_reg30mm",
-                     *_TRIM_METRICS}
+                     *_TRIM_METRICS, *_GRAPHREG_METRICS, *_GRAPHTRIM_METRICS,
+                     *_FACETRIM_METRICS, *_CLSFILT_METRICS}
 
 
 
@@ -140,6 +182,14 @@ def read_pred_boxes(pred_txt_dir: Path, class_id: int = 0) -> dict:
                             class_id)
                 break
     return boxes
+
+
+def cls_z_range(cls_txt_dir: Path) -> tuple[int, int] | None:
+    """Return (z_min, z_max) from non-empty cls prediction txts, or None."""
+    zs = [int(t.stem.split("_")[1])
+          for t in sorted(cls_txt_dir.glob("slice_*.txt"))
+          if t.stat().st_size > 0]
+    return (min(zs), max(zs)) if zs else None
 
 
 def read_gt_boxes(gt_txt_dir: Path, class_id: int = 0) -> dict:
@@ -408,6 +458,145 @@ def trim_z_boundary(boxes: dict, trim_mm: float, z_res: float, H: int, W: int,
     return trimmed
 
 
+def _graphreg_edge_broken(boxes: dict, z_i: int, z_j: int,
+                           H: int, W: int,
+                           row_res: float, col_res: float, z_res: float) -> bool:
+    """Return True if the graphreg break condition is met between two consecutive detections."""
+    hop = z_j - z_i
+    if hop * z_res >= 40.0:
+        return True
+    cx_i, cy_i, w_i, h_i = boxes[z_i][0], boxes[z_i][1], boxes[z_i][2], boxes[z_i][3]
+    cx_j, cy_j, w_j, h_j = boxes[z_j][0], boxes[z_j][1], boxes[z_j][2], boxes[z_j][3]
+    return (abs((cx_j + w_j / 2) - (cx_i + w_i / 2)) * W * col_res > 15.0 * hop or
+            abs((cx_j - w_j / 2) - (cx_i - w_i / 2)) * W * col_res > 15.0 * hop or
+            abs((cy_j - h_j / 2) - (cy_i - h_i / 2)) * H * row_res > 25.0 * hop or
+            abs((cy_j + h_j / 2) - (cy_i + h_i / 2)) * H * row_res > 25.0 * hop)
+
+
+def graph_reg_filter_slices(boxes: dict, H: int, W: int,
+                             row_res: float, col_res: float, z_res: float) -> dict:
+    """Keep the connected component with highest summed confidence from a path graph of detections.
+
+    Detections are nodes ordered by SI position (ascending z). An edge between two consecutive
+    detections is broken if SI distance >= 40mm or any face shift exceeds its per-hop threshold
+    (R/L: 15mm×hop, A/P: 25mm×hop). The component with the highest sum of detection confidences
+    is returned (sum favours both high confidence and more detections over a single FP).
+    """
+    if len(boxes) <= 1:
+        return boxes
+
+    zs = sorted(boxes)
+    edges_kept = [
+        not _graphreg_edge_broken(boxes, zs[i], zs[i + 1], H, W, row_res, col_res, z_res)
+        for i in range(len(zs) - 1)
+    ]
+
+    components = []
+    comp = [zs[0]]
+    for i, keep in enumerate(edges_kept):
+        if keep:
+            comp.append(zs[i + 1])
+        else:
+            components.append(comp)
+            comp = [zs[i + 1]]
+    components.append(comp)
+
+    best = max(components, key=lambda c: sum(boxes[z][4] for z in c))
+    return {z: boxes[z] for z in best}
+
+
+def graph_trim_filter_slices(boxes: dict, H: int, W: int,
+                              row_res: float, col_res: float, z_res: float) -> dict:
+    """Like graph_reg_filter_slices but only the 2 boundary edges (Superior / Inferior) can be broken.
+
+    Internal edges are always kept. The component with the highest sum of confidences is returned.
+    Works for any number of detections including 1 or 2.
+    """
+    if len(boxes) <= 1:
+        return boxes
+
+    zs = sorted(boxes)
+    edges_kept = [
+        not _graphreg_edge_broken(boxes, zs[i], zs[i + 1], H, W, row_res, col_res, z_res)
+        if i <= 1 or i >= len(zs) - 3
+        else True
+        for i in range(len(zs) - 1)
+    ]
+
+    components = []
+    comp = [zs[0]]
+    for i, keep in enumerate(edges_kept):
+        if keep:
+            comp.append(zs[i + 1])
+        else:
+            components.append(comp)
+            comp = [zs[i + 1]]
+    components.append(comp)
+
+    best = max(components, key=lambda c: sum(boxes[z][4] for z in c))
+    return {z: boxes[z] for z in best}
+
+
+def _face_trim_one(boxes: dict, face: str, H: int, W: int,
+                    row_res: float, col_res: float) -> set:
+    """Return z-indices to keep after trimming the 2 most extreme detections on one face.
+
+    Detections are sorted by their face limit (most extreme first). Only the 2 most extreme
+    edges are inspected. An edge is cut when its gap exceeds the face threshold. The connected
+    component with the highest sum of confidences is returned.
+    """
+    if face == "A":
+        key = lambda z: (boxes[z][1] - boxes[z][3] / 2) * H * row_res  # cy - h/2, ascending
+        reverse = False
+    elif face == "P":
+        key = lambda z: (boxes[z][1] + boxes[z][3] / 2) * H * row_res  # cy + h/2, descending
+        reverse = True
+    elif face == "R":
+        key = lambda z: (boxes[z][0] + boxes[z][2] / 2) * W * col_res  # cx + w/2, descending
+        reverse = True
+    else:  # L
+        key = lambda z: (boxes[z][0] - boxes[z][2] / 2) * W * col_res  # cx - w/2, ascending
+        reverse = False
+
+    sorted_zs = sorted(boxes, key=key, reverse=reverse)
+    limits    = [key(z) for z in sorted_zs]
+    threshold = _FACETRIM_THRESHOLDS[face]
+
+    cut = [False] * (len(sorted_zs) - 1)
+    for i in range(min(2, len(sorted_zs) - 1)):
+        if abs(limits[i] - limits[i + 1]) > threshold:
+            cut[i] = True
+
+    components, comp = [], [sorted_zs[0]]
+    for i, is_cut in enumerate(cut):
+        if is_cut:
+            components.append(comp)
+            comp = [sorted_zs[i + 1]]
+        else:
+            comp.append(sorted_zs[i + 1])
+    components.append(comp)
+
+    best = max(components, key=lambda c: sum(boxes[z][4] for z in c))
+    return set(best)
+
+
+def face_trim_filter_slices(boxes: dict, H: int, W: int,
+                             row_res: float, col_res: float) -> dict:
+    """Remove per-face outlier detections, keeping intersection of all 4 face trims.
+
+    For each face (A/P/R/L): sort detections by face limit (most extreme first), inspect
+    only the 2 most extreme edges, cut any edge exceeding the face threshold (A=30mm,
+    P=40mm, R=L=10mm), keep the connected component with the highest confidence sum.
+    Final result = detections kept by all 4 faces. Falls back to full set if intersection is empty.
+    """
+    if len(boxes) <= 1:
+        return boxes
+    kept = set(boxes)
+    for face in ("A", "P", "R", "L"):
+        kept &= _face_trim_one(boxes, face, H, W, row_res, col_res)
+    return {z: boxes[z] for z in kept} if kept else boxes
+
+
 def get_slice_dims(meta: dict) -> tuple[int, int, int]:
     """Return (H, W, Z) of the slice space from meta.yaml, plane-aware.
 
@@ -436,7 +625,8 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
     """Compute one bbox-only metric at one conf threshold (no slices_df needed).
 
     Metrics with suffix _reg30mm apply a spatial outlier filter (30mm) before computing
-    the base metric: predictions isolated > 30mm from all others are removed (requires >= 3 preds).
+    the base metric. _clsfilt metrics are handled upstream (bbox-only loop pre-filters
+    pred_boxes to the cls run z-range and recurses with the base metric).
     """
     row_res, col_res, z_res = plane_res(meta)
     trim_m = re.search(r"_trim(\d+)$", metric)
@@ -450,6 +640,21 @@ def compute_bbox_column(metric: str, pred_boxes: dict, conf_thresh: float,
         active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
         filtered = reg_dist_filter_slices(active, H, W, row_res, col_res, REG_DIST_MM)
         return compute_bbox_column(metric[:-len(REG_SUFFIX)], filtered, 0.0,
+                                   gt_bbox, gt_boxes, H, W, meta)
+    if metric.endswith(GRAPHREG_SUFFIX):
+        active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
+        filtered = graph_reg_filter_slices(active, H, W, row_res, col_res, z_res)
+        return compute_bbox_column(metric[:-len(GRAPHREG_SUFFIX)], filtered, 0.0,
+                                   gt_bbox, gt_boxes, H, W, meta)
+    if metric.endswith(GRAPHTRIM_SUFFIX):
+        active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
+        filtered = graph_trim_filter_slices(active, H, W, row_res, col_res, z_res)
+        return compute_bbox_column(metric[:-len(GRAPHTRIM_SUFFIX)], filtered, 0.0,
+                                   gt_bbox, gt_boxes, H, W, meta)
+    if metric.endswith(FACETRIM_SUFFIX):
+        active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
+        filtered = face_trim_filter_slices(active, H, W, row_res, col_res)
+        return compute_bbox_column(metric[:-len(FACETRIM_SUFFIX)], filtered, 0.0,
                                    gt_bbox, gt_boxes, H, W, meta)
     active = {z: b for z, b in pred_boxes.items() if b[4] >= conf_thresh}
     if metric == "iou_3d":
@@ -674,11 +879,15 @@ def main(argv=None):
                         help="Patch only these bbox metrics in existing patient.csv (skips slices.csv)")
     parser.add_argument("--datasets",      nargs="+", default=None,
                         help="Restrict to these dataset names (default: all)")
+    parser.add_argument("--cls-inference", default=None,
+                        help="Path to classification run predictions dir (e.g. runs/<id>/predictions). "
+                             "Required for _clsfilt metrics: filters det pred_boxes to [z_cls_min, z_cls_max].")
     args = parser.parse_args(argv)
 
-    pred_root  = Path(args.inference)
-    splits_map = load_splits(Path(args.splits_dir))
+    pred_root     = Path(args.inference)
+    splits_map    = load_splits(Path(args.splits_dir))
     processed_dir = Path(args.processed) if args.processed else None
+    cls_pred_root = Path(args.cls_inference) if args.cls_inference else None
 
     def gt_dirs(pred_patient_dir: Path):
         """Return (meta_path, gt_dir): from --processed if given, else from gt/ symlink."""
@@ -711,6 +920,8 @@ def main(argv=None):
 
     # --- bbox-only mode: compute only the requested metrics, no slices.csv needed ---
     if args.metrics:
+        clsfilt_metrics = [m for m in args.metrics if m.endswith(CLSFILT_SUFFIX)]
+        base_metrics    = [m for m in args.metrics if not m.endswith(CLSFILT_SUFFIX)]
         for dataset, stem in tqdm(patients, desc="Metrics", unit="pat"):
             pred_txt_dir         = pred_root / "predictions" / dataset / stem / "txt"
             meta_path, proc_dir  = gt_dirs(pred_root / "predictions" / dataset / stem)
@@ -726,11 +937,28 @@ def main(argv=None):
             patient_csv  = metrics_dir / "patient.csv"
             df = pd.read_csv(patient_csv) if patient_csv.exists() \
                  else pd.DataFrame({"conf_thresh": [round(float(c), 3) for c in CONF_STEPS]})
-            for metric in args.metrics:
+            for metric in base_metrics:
                 df[metric] = [
                     compute_bbox_column(metric, pred_boxes, conf, gt_bbox, gt_boxes, H, W, meta)
                     for conf in CONF_STEPS
                 ]
+            if clsfilt_metrics:
+                cls_filtered: dict | None = None
+                if cls_pred_root is not None:
+                    cls_txt_dir = cls_pred_root / dataset / stem / "txt"
+                    zr = cls_z_range(cls_txt_dir)
+                    if zr is not None:
+                        z_min, z_max = zr
+                        cls_filtered = {z: b for z, b in pred_boxes.items() if z_min <= z <= z_max}
+                for metric in clsfilt_metrics:
+                    base = metric[:-len(CLSFILT_SUFFIX)]
+                    if cls_filtered is not None:
+                        df[metric] = [
+                            compute_bbox_column(base, cls_filtered, conf, gt_bbox, gt_boxes, H, W, meta)
+                            for conf in CONF_STEPS
+                        ]
+                    else:
+                        df[metric] = float("nan")
             metrics_dir.mkdir(parents=True, exist_ok=True)
             df.to_csv(patient_csv, index=False)
         print(f"Done — {args.metrics}")

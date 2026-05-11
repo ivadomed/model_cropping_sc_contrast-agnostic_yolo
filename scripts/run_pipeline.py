@@ -81,7 +81,7 @@ def main():
     checkpoint      = run_dir / "checkpoints" / "weights" / "best.pt"
     predictions_dir = run_dir / "predictions"
 
-    shutil.copytree("configs", run_dir / "configs")
+    shutil.copytree("configs", run_dir / "configs", dirs_exist_ok=True)
 
     print("══════════════════════════════════════════════════════════════")
     print("  Spine detection pipeline")

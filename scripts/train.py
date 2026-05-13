@@ -15,7 +15,9 @@ Detection (mode: detection)
 
 Classification (mode: classification)
   Model  : yolo26n-cls.pt
-  Aug    : YOLO built-in + albumentations (GaussNoise, GaussianBlur, Downscale, RandomGamma, Contrast)
+  Aug    : YOLO built-in geometric (scale=0.2, flip) + HSV (hsv_v=0.15). RandAugment and
+             erasing disabled (RandAugment includes Grayscale which destroys pseudo-RGB channels).
+             Ultralytics albumentations (ToGray) also disabled for same reason.
   Output : <run-dir>/checkpoints_cls/weights/{best,last,loss_best}.pt
              best.pt      = highest val accuracy_top1
              loss_best.pt = lowest val/loss
@@ -326,8 +328,8 @@ def _train_classification(cfg: dict, dataset: str | Path, run_dir: Path,
         save=True,
         val=True,
         hsv_h=0.0, hsv_s=0.0, hsv_v=0.15,
-        degrees=15.0, scale=0.2, translate=0.1,
-        fliplr=0.5, flipud=0.5,
+        scale=0.2, fliplr=0.5, flipud=0.5,
+        auto_augment="", erasing=0.0,
         mosaic=0.0,
     )
 

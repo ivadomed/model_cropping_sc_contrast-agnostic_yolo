@@ -48,6 +48,37 @@ from ultralytics.utils import SETTINGS
 
 # ── Augmentation helpers ───────────────────────────────────────────────────────
 
+def patch_albumentations_classification() -> None:
+    """Inject extra MRI augmentations for classification (no bbox_params).
+
+    Not used by default — ultralytics defaults are sufficient.
+    Call before YOLO() to activate.
+    """
+    from ultralytics.data.augment import Albumentations
+
+    extra = [
+        A.GaussNoise(std_range=(0.05, 0.15), p=0.3),
+        A.GaussianBlur(blur_limit=(3, 7), p=0.2),
+        A.Downscale(scale_range=(0.25, 1.0),
+                    interpolation_pair={"downscale": cv2.INTER_AREA, "upscale": cv2.INTER_LINEAR},
+                    p=0.25),
+        A.RandomGamma(gamma_limit=(80, 120), p=0.1),
+        A.RandomBrightnessContrast(brightness_limit=0, contrast_limit=(-0.3, 0.3), p=0.15),
+    ]
+
+    _orig = Albumentations.__init__
+
+    def _patched(self, *args, **kwargs):
+        _orig(self, *args, **kwargs)
+        existing = list(self.transform.transforms) if self.transform is not None else []
+        self.transform = A.Compose(existing + extra)
+        names = [type(e).__name__ for e in self.transform.transforms]
+        print(f"\n[CLS AUG] Pipeline ({len(names)} transforms): {names}\n")
+
+    Albumentations.__init__ = _patched
+
+
+
 class BiasField(A.ImageOnlyTransform):
     """Polynomial multiplicative bias field simulating MRI B1 inhomogeneity."""
 
@@ -116,31 +147,6 @@ def patch_albumentations_detection() -> None:
 
     Albumentations.__init__ = _patched
 
-
-def patch_albumentations_classification() -> None:
-    """Monkeypatch ultralytics Albumentations for classification (no bbox_params)."""
-    from ultralytics.data.augment import Albumentations
-
-    extra = [
-        A.GaussNoise(std_range=(0.05, 0.15), p=0.3),
-        A.GaussianBlur(blur_limit=(3, 7), p=0.2),
-        A.Downscale(scale_range=(0.25, 1.0),
-                    interpolation_pair={"downscale": cv2.INTER_AREA, "upscale": cv2.INTER_LINEAR},
-                    p=0.25),
-        A.RandomGamma(gamma_limit=(80, 120), p=0.1),
-        A.RandomBrightnessContrast(brightness_limit=0, contrast_limit=(-0.3, 0.3), p=0.15),
-    ]
-
-    _orig = Albumentations.__init__
-
-    def _patched(self, *args, **kwargs):
-        _orig(self, *args, **kwargs)
-        existing = list(self.transform.transforms) if self.transform is not None else []
-        self.transform = A.Compose(existing + extra)
-        names = [type(e).__name__ for e in self.transform.transforms]
-        print(f"\n[CLS AUG] Pipeline ({len(names)} transforms): {names}\n")
-
-    Albumentations.__init__ = _patched
 
 
 # ── Config loading ─────────────────────────────────────────────────────────────
@@ -302,7 +308,6 @@ def _train_classification(cfg: dict, dataset: str | Path, run_dir: Path,
             },
         )
 
-    patch_albumentations_classification()
     model = YOLO(model_name)
 
     best_val_loss = [float("inf")]
@@ -331,9 +336,6 @@ def _train_classification(cfg: dict, dataset: str | Path, run_dir: Path,
         seed=seed,
         save=True,
         val=True,
-        hsv_h=0.0, hsv_s=0.0, hsv_v=0.15,
-        degrees=15.0, scale=0.2, translate=0.1,
-        fliplr=0.5, flipud=0.5,
     )
 
     save_dir = Path(results.save_dir) if results is not None else Path(model.trainer.save_dir)

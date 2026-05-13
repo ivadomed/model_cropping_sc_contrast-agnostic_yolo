@@ -48,32 +48,20 @@ from ultralytics.utils import SETTINGS
 
 # ── Augmentation helpers ───────────────────────────────────────────────────────
 
-def patch_albumentations_classification() -> None:
-    """Inject extra MRI augmentations for classification (no bbox_params).
+def disable_albumentations_cls() -> None:
+    """Replace ultralytics default albumentations pipeline with empty for classification.
 
-    Not used by default — ultralytics defaults are sufficient.
-    Call before YOLO() to activate.
+    Ultralytics injects ToGray by default which destroys pseudo-RGB 3-channel information
+    (R=superior neighbour, G=current, B=inferior neighbour). Must be called before YOLO().
     """
     from ultralytics.data.augment import Albumentations
-
-    extra = [
-        A.GaussNoise(std_range=(0.05, 0.15), p=0.3),
-        A.GaussianBlur(blur_limit=(3, 7), p=0.2),
-        A.Downscale(scale_range=(0.25, 1.0),
-                    interpolation_pair={"downscale": cv2.INTER_AREA, "upscale": cv2.INTER_LINEAR},
-                    p=0.25),
-        A.RandomGamma(gamma_limit=(80, 120), p=0.1),
-        A.RandomBrightnessContrast(brightness_limit=0, contrast_limit=(-0.3, 0.3), p=0.15),
-    ]
 
     _orig = Albumentations.__init__
 
     def _patched(self, *args, **kwargs):
         _orig(self, *args, **kwargs)
-        existing = list(self.transform.transforms) if self.transform is not None else []
-        self.transform = A.Compose(existing + extra)
-        names = [type(e).__name__ for e in self.transform.transforms]
-        print(f"\n[CLS AUG] Pipeline ({len(names)} transforms): {names}\n")
+        self.transform = A.Compose([])
+        print("\n[CLS AUG] Albumentations disabled (ToGray would destroy pseudo-RGB channels)\n")
 
     Albumentations.__init__ = _patched
 
@@ -308,6 +296,7 @@ def _train_classification(cfg: dict, dataset: str | Path, run_dir: Path,
             },
         )
 
+    disable_albumentations_cls()
     model = YOLO(model_name)
 
     best_val_loss = [float("inf")]
@@ -336,6 +325,10 @@ def _train_classification(cfg: dict, dataset: str | Path, run_dir: Path,
         seed=seed,
         save=True,
         val=True,
+        hsv_h=0.0, hsv_s=0.0, hsv_v=0.15,
+        degrees=15.0, scale=0.2, translate=0.1,
+        fliplr=0.5, flipud=0.5,
+        mosaic=0.0,
     )
 
     save_dir = Path(results.save_dir) if results is not None else Path(model.trainer.save_dir)

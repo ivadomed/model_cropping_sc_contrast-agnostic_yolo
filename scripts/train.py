@@ -3,21 +3,22 @@
 Train a YOLO model for spinal cord detection or classification on axial MRI slices.
 
 Reads configs/training.yaml. Selects detection or classification via --mode (or mode override in config).
-Saves a resolved_config.yaml (all values + git hash) to the run directory at startup.
 
 Detection (mode: detection)
   Model  : yolo26{n,s,m,l,x}.pt
   Loss   : standard BCE (no focal)
-  Aug    : YOLO built-in (rotation, flip, brightness) + optional extra MRI albumentations
+  Aug    : YOLO built-in (hsv_v=0.15, degrees=15, scale=0.2, translate=0.1, fliplr=0.5, flipud=0.5)
+             + optional extra MRI albumentations when extra_augment=true
              (GaussNoise, GaussianBlur, Downscale, RandomGamma, BiasField, RandomInvert, Contrast)
   Output : <run-dir>/checkpoints/weights/{best,last}.pt
              best.pt = highest fitness = 0.1·mAP50 + 0.9·mAP50-95 on val
 
 Classification (mode: classification)
   Model  : yolo26n-cls.pt
-  Aug    : YOLO built-in geometric (scale=0.2, flip) + HSV (hsv_v=0.15). RandAugment and
-             erasing disabled (RandAugment includes Grayscale which destroys pseudo-RGB channels).
-             Ultralytics albumentations (ToGray) also disabled for same reason.
+  Aug    : Same pipeline as detection — letterbox (pad to imgsz, no crop) + affine (scale=0.2,
+             degrees=15, translate=0.1) + HSV brightness (hsv_v=0.15) + fliplr=0.5 + flipud=0.5.
+             ClassificationDataset is patched to replace torchvision RandomResizedCrop+RandAugment
+             (which crop content and include Grayscale, destroying pseudo-RGB channel encoding).
   Output : <run-dir>/checkpoints_cls/weights/{best,last,loss_best}.pt
              best.pt      = highest val accuracy_top1
              loss_best.pt = lowest val/loss
@@ -49,25 +50,6 @@ from ultralytics.utils import SETTINGS
 
 
 # ── Augmentation helpers ───────────────────────────────────────────────────────
-
-def disable_albumentations_cls() -> None:
-    """Replace ultralytics default albumentations pipeline with empty for classification.
-
-    Ultralytics injects ToGray by default which destroys pseudo-RGB 3-channel information
-    (R=superior neighbour, G=current, B=inferior neighbour). Must be called before YOLO().
-    """
-    from ultralytics.data.augment import Albumentations
-
-    _orig = Albumentations.__init__
-
-    def _patched(self, *args, **kwargs):
-        _orig(self, *args, **kwargs)
-        self.transform = A.Compose([])
-        print("\n[CLS AUG] Albumentations disabled (ToGray would destroy pseudo-RGB channels)\n")
-
-    Albumentations.__init__ = _patched
-
-
 
 class BiasField(A.ImageOnlyTransform):
     """Polynomial multiplicative bias field simulating MRI B1 inhomogeneity."""
@@ -136,6 +118,73 @@ def patch_albumentations_detection() -> None:
         print(f"\n[DET AUG] Pipeline ({len(names)} transforms): {names}\n")
 
     Albumentations.__init__ = _patched
+
+
+def patch_classification_letterbox(imgsz: int, hsv_v: float = 0.15, scale: float = 0.2,
+                                    degrees: float = 15.0, translate: float = 0.1,
+                                    fliplr: float = 0.5, flipud: float = 0.5) -> None:
+    """Patch ClassificationDataset to use letterbox + detection-style augmentations.
+
+    Replaces torchvision RandomResizedCrop + RandAugment with:
+      - Letterbox: resize maintaining aspect ratio, pad to imgsz×imgsz with grey (114)
+      - Affine (train only): random scale/rotation/translation matching detection RandomPerspective
+      - HSV-V brightness (train only)
+      - Random flips (train only)
+
+    Must be called BEFORE YOLO() so workers inherit the patch at fork time.
+    """
+    import torch as _torch
+    from ultralytics.data import ClassificationDataset
+
+    class _LBTransform:
+        def __init__(self, augment: bool):
+            self.augment = augment
+
+        def __call__(self, pil_img):
+            img = np.array(pil_img, dtype=np.uint8)  # RGB HWC
+            # Letterbox: maintain aspect ratio, pad with grey (114)
+            h, w = img.shape[:2]
+            r = imgsz / max(h, w)
+            nh, nw = round(h * r), round(w * r)
+            if nh != h or nw != w:
+                img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+            ph, pw = imgsz - nh, imgsz - nw
+            img = cv2.copyMakeBorder(img, ph // 2, ph - ph // 2, pw // 2, pw - pw // 2,
+                                     cv2.BORDER_CONSTANT, value=(114, 114, 114))
+            if self.augment:
+                # Affine: scale + rotation + translation (mirrors detection RandomPerspective)
+                s  = np.random.uniform(1 - scale, 1 + scale)
+                a  = np.random.uniform(-degrees, degrees)
+                tx = np.random.uniform(-translate, translate) * imgsz
+                ty = np.random.uniform(-translate, translate) * imgsz
+                M  = cv2.getRotationMatrix2D((imgsz / 2, imgsz / 2), a, s)
+                M[0, 2] += tx
+                M[1, 2] += ty
+                img = cv2.warpAffine(img, M, (imgsz, imgsz),
+                                     borderMode=cv2.BORDER_CONSTANT, borderValue=(114, 114, 114))
+                # HSV-V brightness (matches detection RandomHSV with hgain=sgain=0)
+                if hsv_v > 0:
+                    gain = np.random.uniform(-hsv_v, hsv_v)
+                    lut  = np.clip(np.arange(256, dtype=np.float32) * (1 + gain), 0, 255).astype(np.uint8)
+                    img  = cv2.LUT(img, lut)
+                if flipud > 0 and np.random.random() < flipud:
+                    img = img[::-1]
+                if fliplr > 0 and np.random.random() < fliplr:
+                    img = img[:, ::-1]
+            # CHW float32 [0, 1]
+            return _torch.from_numpy(np.ascontiguousarray(img.transpose(2, 0, 1))).float() / 255.0
+
+    _orig = ClassificationDataset.__init__
+
+    def _patched(self, root, args, augment=False, prefix=""):
+        _orig(self, root, args, augment=augment, prefix=prefix)
+        self.torch_transforms = _LBTransform(augment=augment)
+        mode = "train" if augment else "val"
+        aug_desc = (f"affine(s={scale},d={degrees},t={translate}) + hsv_v={hsv_v} + "
+                    f"flip(lr={fliplr},ud={flipud})") if augment else "none"
+        print(f"\n[CLS LB] {mode}: letterbox({imgsz}) + {aug_desc}\n")
+
+    ClassificationDataset.__init__ = _patched
 
 
 
@@ -298,7 +347,11 @@ def _train_classification(cfg: dict, dataset: str | Path, run_dir: Path,
             },
         )
 
-    disable_albumentations_cls()
+    # Patch ClassificationDataset before YOLO() so workers inherit it at fork time.
+    # Replaces torchvision RandomResizedCrop + RandAugment with letterbox + detection-style aug.
+    patch_classification_letterbox(
+        imgsz=imgsz, hsv_v=0.15, scale=0.2, degrees=15.0, translate=0.1, fliplr=0.5, flipud=0.5,
+    )
     model = YOLO(model_name)
 
     best_val_loss = [float("inf")]
@@ -327,9 +380,6 @@ def _train_classification(cfg: dict, dataset: str | Path, run_dir: Path,
         seed=seed,
         save=True,
         val=True,
-        hsv_h=0.0, hsv_s=0.0, hsv_v=0.15,
-        scale=0.2, fliplr=0.5, flipud=0.5,
-        auto_augment="", erasing=0.0,
         mosaic=0.0,
     )
 

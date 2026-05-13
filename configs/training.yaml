@@ -2,7 +2,7 @@
 # mode selects which section (detection|classification) to run.
 # Common keys (seed, device, workers, wandb_*) apply to both modes.
 
-mode: classification  # detection | classification
+mode: detection  # detection | classification
 
 seed: 50
 device: "0"

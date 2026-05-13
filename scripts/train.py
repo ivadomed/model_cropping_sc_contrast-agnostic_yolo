@@ -1,39 +1,30 @@
 #!/usr/bin/env python3
 """
-Train a YOLO 2D model for spinal cord / spinal canal detection on axial MRI slices.
+Train a YOLO model for spinal cord detection or classification on axial MRI slices.
 
-Defaults: yolo26n, imgsz=320, batch=-1 (auto), device=0, epochs=100, patience=20.
-Dataset par défaut : datasets/10mm_SI_1mm_axial_3ch_sc_only_region_balanced_all_datasets/dataset.yaml
+Reads configs/training.yaml. Selects detection or classification via --mode (or mode override in config).
+Saves a resolved_config.yaml (all values + git hash) to the run directory at startup.
 
-Augmentations (désactivables via --no-augment) issues du papier contrast-agnostic :
-  - Affine (rotation + scaling)           → YOLO: degrees=15, scale=0.2
-  - Gaussian noise                        → albumentations: GaussNoise       (p=0.3)
-  - Gaussian smoothing                    → albumentations: GaussianBlur     (p=0.2)
-  - Brightness augmentation               → YOLO: hsv_v=0.15
-  - Low-resolution simulation [0.25, 1.0] → albumentations: Downscale       (p=0.25)
-  - Gamma correction                      → albumentations: RandomGamma      (p=0.1)
-  - Mirroring across all axes             → YOLO: fliplr=0.5, flipud=0.5
+Detection (mode: detection)
+  Model  : yolo26{n,s,m,l,x}.pt
+  Loss   : standard BCE (no focal)
+  Aug    : YOLO built-in (rotation, flip, brightness) + optional extra MRI albumentations
+             (GaussNoise, GaussianBlur, Downscale, RandomGamma, BiasField, RandomInvert, Contrast)
+  Output : <run-dir>/checkpoints/weights/{best,last}.pt
+             best.pt = highest fitness = 0.1·mAP50 + 0.9·mAP50-95 on val
 
-Augmentations MRI supplémentaires (albumentations) :
-  - Affine zoom+translation : scale [0.25, 4.0], translate ±30%                            (p=0.2)
-  - BiasField       : inhomogénéité multiplicative polynomiale (simulation B1 IRM)          (p=0.2)
-  - RandomInvert    : inversion pixel-à-pixel 255-img (simulation T1↔T2)                   (p=0.25)
-  - Contrast        : RandomBrightnessContrast contrast uniquement                          (p=0.15)
-
-Seed : lit la variable d'environnement SEED (défaut 50) — initialisée dans run_pipeline.sh.
-       Propagée à random, numpy et ultralytics (model.train seed=).
-W&B : wandb.init() avant model.train() pour contrôler projet/run.
-Sauvegarde : checkpoints/<run-id>/weights/{best,last}.pt
-             best.pt = meilleur fitness = 0.1·mAP50 + 0.9·mAP50-95 sur val
+Classification (mode: classification)
+  Model  : yolo26n-cls.pt
+  Aug    : YOLO built-in + albumentations (GaussNoise, GaussianBlur, Downscale, RandomGamma, Contrast)
+  Output : <run-dir>/checkpoints_cls/weights/{best,last,loss_best}.pt
+             best.pt      = highest val accuracy_top1
+             loss_best.pt = lowest val/loss
 
 Usage:
-    python scripts/train.py --run-id yolo26n_sc_only
-    python scripts/train.py --run-id yolo26n_sc_only --no-augment
-    python scripts/train.py --run-id yolo26s_sc_only --model yolo26s.pt --epochs 150
-    python scripts/train.py --run-id yolo26n_sc_only_all_datasets \
-        --dataset-yaml datasets/10mm_SI_1mm_axial_3ch_sc_only_region_balanced_all_datasets/dataset.yaml
-    python scripts/train.py --run-id yolo26n_sc_and_canal \
-        --dataset-yaml datasets/10mm_SI_1mm_axial_3ch_sc_and_canal/dataset.yaml
+    python scripts/train.py --mode detection  --dataset runs/20260504/dataset/dataset.yaml --run-dir runs/20260601_120000
+    python scripts/train.py --mode classification --dataset runs/20260601_120000/dataset_cls --run-dir runs/20260601_120000
+    python scripts/train.py --mode detection  --dataset ... --run-dir ... --no-augment
+    python scripts/train.py --mode detection  --dataset ... --run-dir ... --no-wandb
 """
 
 from __future__ import annotations
@@ -41,57 +32,21 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import shutil
 from pathlib import Path
 
+import cv2
+import albumentations as A
+import numpy as np
 import yaml
 
-import albumentations as A
-import cv2
-import numpy as np
-
 from ultralytics import YOLO
-from ultralytics.utils import LOGGER, SETTINGS
+from ultralytics.utils import SETTINGS
 
 
-def make_focal_bce(gamma: float):
-    """Return a focal-weighted BCE function with reduction='none' (compatible with detection loss .sum())."""
-    import torch.nn.functional as F
-
-    def focal_bce(pred, target):
-        loss  = F.binary_cross_entropy_with_logits(pred, target, reduction="none")
-        p_t   = target * pred.sigmoid() + (1 - target) * (1 - pred.sigmoid())
-        return loss * (1.0 - p_t) ** gamma
-
-    return focal_bce
 
 
-def inject_focal_loss(trainer, gamma: float) -> None:
-    """Patch model.init_criterion so that when the loss is lazy-initialized on the first
-    batch, the BCE cls loss is replaced with focal-weighted BCE.
-
-    The criterion lives on model.criterion (lazy-init in model.loss()), not on the trainer.
-    Patching init_criterion at on_train_start is the correct interception point.
-    """
-    from ultralytics.utils.torch_utils import unwrap_model
-    model = unwrap_model(trainer.model)
-    orig_init = model.init_criterion
-
-    def _patched_init():
-        criterion = orig_init()
-        focal_bce = make_focal_bce(gamma)
-        # v8DetectionLoss direct (modèles non-E2E)
-        if hasattr(criterion, "bce"):
-            criterion.bce = focal_bce
-        # E2ELoss (YOLO26) : la loss réelle est dans one2many et one2one
-        if hasattr(criterion, "one2many") and hasattr(criterion.one2many, "bce"):
-            criterion.one2many.bce = focal_bce
-        if hasattr(criterion, "one2one") and hasattr(criterion.one2one, "bce"):
-            criterion.one2one.bce = focal_bce
-        print(f"\n[FOCAL LOSS] Injected focal BCE (gamma={gamma}) on cls loss\n")
-        return criterion
-
-    model.init_criterion = _patched_init
-
+# ── Augmentation helpers ───────────────────────────────────────────────────────
 
 class BiasField(A.ImageOnlyTransform):
     """Polynomial multiplicative bias field simulating MRI B1 inhomogeneity."""
@@ -127,12 +82,11 @@ class RandomInvert(A.ImageOnlyTransform):
         return {}
 
 
+def patch_albumentations_detection() -> None:
+    """Monkeypatch ultralytics Albumentations to inject extra MRI transforms for detection.
 
-def patch_albumentations_mri() -> None:
-    """Monkeypatch ultralytics Albumentations.__init__ to inject MRI transforms.
-
-    Must be called BEFORE YOLO() so the patch is active when the dataset is built
-    and workers are forked — a callback on_train_start fires too late (after fork).
+    Must be called BEFORE YOLO() so workers inherit the patch at fork time.
+    Only call when extra_augment=True.
     """
     from ultralytics.data.augment import Albumentations
 
@@ -150,66 +104,86 @@ def patch_albumentations_mri() -> None:
     ]
     bbox_params = A.BboxParams(format="yolo", label_fields=["class_labels"])
 
-    _original_init = Albumentations.__init__
+    _orig = Albumentations.__init__
 
-    def _patched_init(self, *args, **kwargs):
-        _original_init(self, *args, **kwargs)
+    def _patched(self, *args, **kwargs):
+        _orig(self, *args, **kwargs)
         existing = list(self.transform.transforms) if self.transform is not None else []
         self.transform = A.Compose(existing + extra, bbox_params=bbox_params)
-        self.contains_spatial = True  # force la branche bbox dans __call__
+        self.contains_spatial = True
         names = [type(e).__name__ for e in self.transform.transforms]
-        print(f"\n[MRI AUG] Pipeline patché ({len(names)} transforms): {names}\n")
+        print(f"\n[DET AUG] Pipeline ({len(names)} transforms): {names}\n")
 
-    Albumentations.__init__ = _patched_init
+    Albumentations.__init__ = _patched
 
 
-def run(config: str | Path | None = None,
-        dataset_yaml: str | Path | None = None,
-        run_dir: str | Path | None = None,
-        no_wandb: bool = False,
-        no_augment: bool = False,
-        no_extra_augment: bool = False) -> None:
-    """Train YOLO model. All hyper-parameters read from config file."""
-    model_name    = "yolo26n.pt"
-    epochs        = 100
-    imgsz         = 320
-    batch         = -1
-    device        = "0"
-    patience      = 100
-    workers       = 8
-    fraction      = 1.0
-    fl_gamma      = 0.0
-    wandb_project = "spine_detection"
-    wandb_entity  = None
+def patch_albumentations_classification() -> None:
+    """Monkeypatch ultralytics Albumentations for classification (no bbox_params)."""
+    from ultralytics.data.augment import Albumentations
 
-    if config:
-        cfg = yaml.safe_load(Path(config).read_text())
-        model_name    = cfg.get("model",          model_name)
-        epochs        = cfg.get("epochs",         epochs)
-        imgsz         = cfg.get("imgsz",          imgsz)
-        batch         = cfg.get("batch",          batch)
-        device        = str(cfg.get("device",     device))
-        patience      = cfg.get("patience",       patience)
-        workers       = cfg.get("workers",        workers)
-        fraction      = cfg.get("fraction",       fraction)
-        fl_gamma      = cfg.get("fl_gamma",       fl_gamma)
-        wandb_project = cfg.get("wandb_project",  wandb_project)
-        wandb_entity  = cfg.get("wandb_entity",   wandb_entity)
-        if not no_extra_augment:
-            no_extra_augment = not cfg.get("extra_augment", True)
+    extra = [
+        A.GaussNoise(std_range=(0.05, 0.15), p=0.3),
+        A.GaussianBlur(blur_limit=(3, 7), p=0.2),
+        A.Downscale(scale_range=(0.25, 1.0),
+                    interpolation_pair={"downscale": cv2.INTER_AREA, "upscale": cv2.INTER_LINEAR},
+                    p=0.25),
+        A.RandomGamma(gamma_limit=(80, 120), p=0.1),
+        A.RandomBrightnessContrast(brightness_limit=0, contrast_limit=(-0.3, 0.3), p=0.15),
+    ]
 
-    seed = int(os.environ.get("SEED", 50))
-    random.seed(seed)
-    np.random.seed(seed)
+    _orig = Albumentations.__init__
 
-    dataset_dir = Path(dataset_yaml).parent
+    def _patched(self, *args, **kwargs):
+        _orig(self, *args, **kwargs)
+        existing = list(self.transform.transforms) if self.transform is not None else []
+        self.transform = A.Compose(existing + extra)
+        names = [type(e).__name__ for e in self.transform.transforms]
+        print(f"\n[CLS AUG] Pipeline ({len(names)} transforms): {names}\n")
+
+    Albumentations.__init__ = _patched
+
+
+# ── Config loading ─────────────────────────────────────────────────────────────
+
+def _load_config(config_path: str | Path, mode_override: str | None = None) -> tuple[str, dict]:
+    """Load config, return (mode, flat_dict) merging common keys + mode-specific section.
+
+    mode_override (CLI --mode) takes precedence over the mode key in the file.
+    """
+    raw  = yaml.safe_load(Path(config_path).read_text())
+    mode = mode_override or raw.get("mode")
+    assert mode in ("detection", "classification"), \
+        f"mode must be detection|classification — set in config or via --mode, got {mode!r}"
+    common  = {k: v for k, v in raw.items() if k not in ("detection", "classification", "mode")}
+    section = raw.get(mode, {})
+    return mode, {**common, **section}
+
+
+
+# ── Detection training ─────────────────────────────────────────────────────────
+
+def _train_detection(cfg: dict, dataset: str | Path, run_dir: Path,
+                     no_wandb: bool, no_augment: bool) -> None:
+    model_name    = cfg.get("model",         "yolo26n.pt")
+    epochs        = cfg.get("epochs",        200)
+    imgsz         = cfg.get("imgsz",         320)
+    batch         = cfg.get("batch",         -1)
+    device        = str(cfg.get("device",    "0"))
+    patience      = cfg.get("patience",      100)
+    workers       = cfg.get("workers",       2)
+    fraction      = cfg.get("fraction",      1.0)
+    extra_augment = cfg.get("extra_augment", False)
+    wandb_project = cfg.get("wandb_project", "spine_detection")
+    wandb_entity  = cfg.get("wandb_entity",  None)
+    seed          = cfg.get("seed",          50)
+
+    dataset_dir = Path(dataset).parent
     pipeline_config, build_stats = {}, {}
     for fname, target in [("pipeline_config.yaml", pipeline_config),
                            ("build_stats.yaml",     build_stats)]:
         p = dataset_dir / fname
         if p.exists():
-            import yaml as _yaml
-            target.update(_yaml.safe_load(p.read_text()) or {})
+            target.update(yaml.safe_load(p.read_text()) or {})
 
     if no_wandb:
         SETTINGS["wandb"] = False
@@ -223,43 +197,19 @@ def run(config: str | Path | None = None,
         wb_run = wandb.init(
             project=wandb_project,
             entity=wandb_entity,
-            name=Path(run_dir).name,
-            tags=["yolo", "spine", "mri"],
+            name=run_dir.name,
+            tags=["yolo", "spine", "mri", "detection"],
             config={
-                "model":    model_name,
-                "dataset":  str(dataset_yaml),
-                "imgsz":    imgsz,
-                "batch":    batch,
-                "epochs":   epochs,
-                "patience": patience,
-                "seed":     seed,
-                "augment":  not no_augment,
-                "fl_gamma": fl_gamma,
-                "aug": {
-                    "yolo_brightness":          0.0 if no_augment else 0.15,
-                    "yolo_rotation_deg":        0.0 if no_augment else 15.0,
-                    "yolo_scale":               0.0 if no_augment else 0.2,
-                    "yolo_translate":           0.0 if no_augment else 0.1,
-                    "yolo_flip_lr":             0.0 if no_augment else 0.5,
-                    "yolo_flip_ud":             0.0 if no_augment else 0.5,
-                    "affine_p":                 0.0 if no_augment else 0.2,
-                    "affine_scale_range":       [0.25, 4.0],
-                    "affine_translate_range":   [-0.3, 0.3],
-                    "gauss_noise_p":            0.0 if no_augment else 0.3,
-                    "gauss_noise_std_range":    [0.01, 0.03],
-                    "gaussian_blur_p":          0.0 if no_augment else 0.2,
-                    "gaussian_blur_limit":      [3, 7],
-                    "downscale_p":              0.0 if no_augment else 0.25,
-                    "downscale_scale_range":    [0.25, 1.0],
-                    "random_gamma_p":           0.0 if no_augment else 0.1,
-                    "random_gamma_limit":       [80, 120],
-                    "bias_field_p":             0.0 if no_augment else 0.2,
-                    "bias_field_coef_range":    [-0.4, 0.4],
-                    "pixel_invert_p":           0.0 if no_augment else 0.25,
-                    "contrast_p":               0.0 if no_augment else 0.15,
-                    "contrast_limit":           [-0.3, 0.3],
-                },
-                "pipeline": pipeline_config,
+                "model":          model_name,
+                "dataset":        str(dataset),
+                "imgsz":          imgsz,
+                "batch":          batch,
+                "epochs":         epochs,
+                "patience":       patience,
+                "seed":           seed,
+                "augment":        not no_augment,
+                "extra_augment":  extra_augment and not no_augment,
+                "pipeline":       pipeline_config,
                 "data": {
                     **{k: v for k, v in build_stats.items() if not isinstance(v, dict)},
                     "factor":       build_stats.get("dataset_factors", {}),
@@ -269,17 +219,12 @@ def run(config: str | Path | None = None,
                 },
             },
         )
+        (run_dir / "wandb_run_id.txt").write_text(wb_run.id)
 
-    if not no_wandb:
-        wandb_id_file = Path(run_dir) / "wandb_run_id.txt"
-        wandb_id_file.write_text(wb_run.id)
-
-    if not no_augment and not no_extra_augment:
-        patch_albumentations_mri()
+    if not no_augment and extra_augment:
+        patch_albumentations_detection()
 
     model = YOLO(model_name)
-    if fl_gamma > 0.0:
-        model.add_callback("on_train_start", lambda trainer: inject_focal_loss(trainer, fl_gamma))
 
     aug = dict(
         hsv_h=0.0, hsv_s=0.0, hsv_v=0.0,
@@ -295,12 +240,12 @@ def run(config: str | Path | None = None,
 
     results = model.train(
         resume=False,
-        data=str(dataset_yaml),
+        data=str(dataset),
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
         device=device,
-        project=str(Path(run_dir).resolve()),
+        project=str(run_dir.resolve()),
         name="checkpoints",
         patience=patience,
         workers=workers,
@@ -316,22 +261,133 @@ def run(config: str | Path | None = None,
     print(f"\nBest weights: {save_dir / 'weights' / 'best.pt'}")
 
 
+# ── Classification training ────────────────────────────────────────────────────
+
+def _train_classification(cfg: dict, dataset: str | Path, run_dir: Path,
+                           no_wandb: bool) -> None:
+    model_name    = cfg.get("model",         "yolo26n-cls.pt")
+    epochs        = cfg.get("epochs",        200)
+    imgsz         = cfg.get("imgsz",         320)
+    batch         = cfg.get("batch",         -1)
+    device        = str(cfg.get("device",    "0"))
+    patience      = cfg.get("patience",      100)
+    workers       = cfg.get("workers",       2)
+    wandb_project = cfg.get("wandb_project", "spine_detection")
+    wandb_entity  = cfg.get("wandb_entity",  None)
+    seed          = cfg.get("seed",          50)
+
+    if no_wandb:
+        SETTINGS["wandb"] = False
+        os.environ["WANDB_MODE"] = "disabled"
+    else:
+        SETTINGS["wandb"] = True
+        import importlib
+        import ultralytics.utils.callbacks.wb as _wb_mod
+        importlib.reload(_wb_mod)
+        import wandb
+        wandb.init(
+            project=wandb_project,
+            entity=wandb_entity,
+            name=run_dir.name + "_cls",
+            tags=["yolo", "spine", "mri", "classification"],
+            config={
+                "model":    model_name,
+                "dataset":  str(dataset),
+                "imgsz":    imgsz,
+                "batch":    batch,
+                "epochs":   epochs,
+                "patience": patience,
+                "seed":     seed,
+                "task":     "classify",
+            },
+        )
+
+    patch_albumentations_classification()
+    model = YOLO(model_name)
+
+    best_val_loss = [float("inf")]
+
+    def _save_loss_best(trainer) -> None:
+        loss = trainer.metrics.get("val/loss")
+        if loss is None or loss >= best_val_loss[0]:
+            return
+        best_val_loss[0] = loss
+        last = Path(trainer.save_dir) / "weights" / "last.pt"
+        if last.exists():
+            shutil.copy2(str(last), str(last.parent / "loss_best.pt"))
+
+    model.add_callback("on_fit_epoch_end", _save_loss_best)
+
+    results = model.train(
+        data=str(Path(dataset).resolve()),
+        epochs=epochs,
+        imgsz=imgsz,
+        batch=batch,
+        device=device,
+        project=str(run_dir.resolve()),
+        name="checkpoints_cls",
+        patience=patience,
+        workers=workers,
+        seed=seed,
+        save=True,
+        val=True,
+        hsv_h=0.0, hsv_s=0.0, hsv_v=0.15,
+        degrees=15.0, scale=0.2, translate=0.1,
+        fliplr=0.5, flipud=0.5,
+    )
+
+    save_dir = Path(results.save_dir) if results is not None else Path(model.trainer.save_dir)
+    weights  = save_dir / "weights"
+    print(f"\nBest weights (accuracy): {weights / 'best.pt'}")
+    print(f"Best weights (val loss):  {weights / 'loss_best.pt'}  (val/loss={best_val_loss[0]:.4f})")
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def run(config: str | Path,
+        dataset: str | Path,
+        run_dir: str | Path,
+        mode: str | None = None,
+        no_wandb: bool = False,
+        no_augment: bool = False) -> None:
+    """Train detection or classification model. All hyper-parameters read from config.
+
+    mode: override the mode key in the config file (optional).
+    """
+    mode, cfg = _load_config(config, mode)
+    run_dir   = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    seed = cfg.get("seed", 50)
+    random.seed(seed)
+    np.random.seed(seed)
+
+    if mode == "detection":
+        _train_detection(cfg, dataset, run_dir, no_wandb, no_augment)
+    else:
+        _train_classification(cfg, dataset, run_dir, no_wandb)
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Train YOLO for spinal cord detection on axial MRI slices",
+        description="Train YOLO for spinal cord detection or classification on axial MRI slices",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--config",        default=None, help="YAML config file (configs/training.yaml). CLI flags override config values.")
-    parser.add_argument("--dataset-yaml",  default=None)
-    parser.add_argument("--run-dir",       required=True, help="Run directory (runs/<TS>). Checkpoints saved to <run-dir>/checkpoints/.")
-    parser.add_argument("--no-augment",    action="store_true")
-    parser.add_argument("--no-extra-augment", action="store_true")
-    parser.add_argument("--no-wandb",      action="store_true")
+    parser.add_argument("--config",     default="configs/training.yaml",
+                        help="YAML config file")
+    parser.add_argument("--mode",       default=None, choices=["detection", "classification"],
+                        help="Override mode from config (default: read from config file)")
+    parser.add_argument("--dataset",    required=True,
+                        help="Detection: path to dataset.yaml. Classification: path to dataset directory.")
+    parser.add_argument("--run-dir",    required=True,
+                        help="Run directory; checkpoints saved to <run-dir>/checkpoints[_cls]/")
+    parser.add_argument("--no-augment", action="store_true",
+                        help="Disable all augmentation (detection only)")
+    parser.add_argument("--no-wandb",   action="store_true")
     args = parser.parse_args()
 
-    run(config=args.config, dataset_yaml=args.dataset_yaml, run_dir=args.run_dir,
-        no_wandb=args.no_wandb, no_augment=args.no_augment,
-        no_extra_augment=args.no_extra_augment)
+    run(config=args.config, dataset=args.dataset, run_dir=args.run_dir,
+        mode=args.mode, no_wandb=args.no_wandb, no_augment=args.no_augment)
 
 
 if __name__ == "__main__":

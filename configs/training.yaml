@@ -1,19 +1,28 @@
 # Training config — passed to scripts/train.py via --config
+# mode selects which section (detection|classification) to run.
+# Common keys (seed, device, workers, wandb_*) apply to both modes.
+
+mode: classification  # detection | classification
 
 seed: 50
-
-model: yolo26n.pt   # yolo26{n,s,m,l,x}.pt | yolo12*.pt | yolo11*.pt | yolov8*.pt
-epochs: 200
-imgsz: 320
-batch: -1           # -1 = auto-detect optimal for GPU memory
 device: "0"
-patience: 100
 workers: 2
-fraction: 1.0       # fraction of dataset to use (e.g. 0.01 for a quick test)
-
-fl_gamma: 0.0        # focal loss gamma (0.0 = standard BCE)
-
-extra_augment: false # true = MRI albumentations (bias field, invert, affine zoom…)
-
-wandb_entity: quentin-revillon-neuropoly  # "" = W&B default account
+wandb_entity: quentin-revillon-neuropoly
 wandb_project: spine_detection
+
+detection:
+  model: yolo26n.pt   # yolo26{n,s,m,l,x}.pt | yolo12*.pt | yolo11*.pt
+  epochs: 200
+  imgsz: 320
+  batch: -1           # -1 = auto-detect optimal for GPU memory
+  patience: 100
+  extra_augment: false  # extra MRI albumentations: bias field, invert, affine zoom
+  fraction: 1.0         # fraction of dataset to use (1.0 = full)
+
+classification:
+  model: yolo26n-cls.pt
+  epochs: 200
+  imgsz: 320
+  batch: -1
+  patience: 100
+  superior_only: true   # restrict training to slices [0, z2_GT] (superior boundary)

@@ -18,8 +18,8 @@ PRINCIPE DE SIMPLIFICATION
   la reorientation est virtuelle (permutation d'axes via ornt_transform, aucun voxel chargé)
 
 ENVIRONNEMENT
-- conda environment : contrast_agnostic
-- toujours activer avant d'exécuter du code : conda activate contrast_agnostic
+- conda environment : sc_crop_training
+- toujours activer avant d'exécuter du code : conda activate sc_crop_training
 - ultralytics 8.4.23 (YOLO26 = modèle le plus récent, défaut : yolo26n.pt)
 - albumentations v2 installé (API : std_range=, scale_range= au lieu de var_limit=, scale_min/max=)
 - wandb installé, compte : quentin-revillon (neuropoly), project : spine_detection
@@ -116,8 +116,9 @@ DÉCOUVERTE DES MASQUES — tables explicites par dataset dans preprocess.py
     "whole-spine":           "_label-canal_seg.nii.gz",
   }
   - plante sur dataset inconnu (pas de fallback)
-  - cherche toujours dans derivatives/labels/<sub>/[ses-*/]anat/
-  - DWI exclu (pas de sous-dossier dwi/)
+  - cherche dans derivatives/<labels_dir>/<sub>/[ses-*/]{anat,func,dwi}/
+  - img_glob (datasets.yaml) : si défini, l'image est trouvée par glob dans le dossier du sujet
+    plutôt que par dérivation depuis le nom du masque (utilisé pour ds005143 : "*_bold.nii.gz")
   - --with-canal : active l'extraction canal ; si canal mask absent pour un patient, seul SC est écrit
 
 DATA SOURCES — structure par source dans data/raw/
@@ -126,7 +127,7 @@ DATA SOURCES — structure par source dans data/raw/
     derivatives/
       labels/<subject>/
         anat/  ← *_label-SC_seg.nii.gz — utilisé
-        dwi/   ← ignoré
+        dwi/   ← *_rec-average_dwi_label-SC_seg.nii.gz — utilisé
       labels_softseg/                     ← ignoré
 
 DATA/PROCESSED — hiérarchie exacte
@@ -270,8 +271,10 @@ SCRIPTS — un script, une responsabilité
   │                       --update-meta --out <dir> : patche les meta.yaml existants sans re-préprocesser
   ├── build_dataset.py  ← processed/ + data/datasplits/*.yaml → datasets/
   │                       --processed processed_10mm_SI --out datasets_10mm_SI
-  ├── train.py          ← datasets/ → checkpoints/<run_id>/weights/{best,last}.pt
-  │                       --model yolo26n.pt --epochs 100 --imgsz 640
+  ├── train.py          ← datasets/ → checkpoints[_cls]/<run_id>/weights/{best,last}.pt
+  │                       --mode detection|classification --dataset <yaml|dir> --run-dir <dir>
+  │                       dispatche sur mode, lit configs/training.yaml (sections detection/classification)
+  │                       sauvegarde resolved_config.yaml (toutes valeurs + git hash) dans run-dir
   ├── infer.py          ← processed/ + checkpoint → predictions/<run_id>/ (structure slices/)
   │                       filtré par split yaml + partition, txt sans conf (5 champs)
   ├── reconstruct.py    ← predictions/<run_id>/ + data/raw/ → reconstructions/<run_id>/

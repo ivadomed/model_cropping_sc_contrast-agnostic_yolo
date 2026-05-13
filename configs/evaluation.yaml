@@ -1,0 +1,6 @@
+# Evaluation config — used by run_pipeline_class.py and evaluate_cls.py
+
+# Classification evaluation thresholds
+cls_conf: 0.5        # min SC probability to count a slice as SC-positive
+det_conf: 0.1        # detector confidence threshold on SC-positive slices
+eval_superior_only: false  # false = evaluate on all slices (not just superior half)

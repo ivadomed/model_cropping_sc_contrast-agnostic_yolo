@@ -66,6 +66,17 @@ Usage:
         --metrics gap_mm_R_clsfilt gap_mm_L_clsfilt gap_mm_P_clsfilt \\
                   gap_mm_A_clsfilt gap_mm_I_clsfilt gap_mm_S_clsfilt iou_3d_mm_clsfilt \\
         --cls-inference runs/20260510_192902_cls/predictions
+
+    # Compute _clscomp metrics (connected-component regularisation with cls validation):
+    #   finds the first (most superior) detection component with ≥1 cls-positive slice,
+    #   keeps that component AND all detection slices below it (z >= min_z of component);
+    #   fallback: first component if none validated.
+    python scripts/metrics.py \\
+        --inference runs/20260504_135903 \\
+        --processed processed/10mm_SI_1mm_axial_3ch \\
+        --metrics gap_mm_R_clscomp gap_mm_L_clscomp gap_mm_P_clscomp \\
+                  gap_mm_A_clscomp gap_mm_I_clscomp gap_mm_S_clscomp iou_3d_mm_clscomp \\
+        --cls-inference runs/20260511_175740/predictions
 """
 
 from __future__ import annotations
@@ -95,6 +106,7 @@ _FACETRIM_THRESHOLDS = {"A": 30.0, "P": 40.0, "R": 10.0, "L": 10.0}
 # _trim<N> suffix: N is the 3D Euclidean distance threshold in mm encoded in the metric name
 TRIM_DISTANCES   = [30, 40, 50]   # supported values; add more here to expose them
 CLSFILT_SUFFIX   = "_clsfilt"
+CLSCOMP_SUFFIX   = "_clscomp"
 # Metrics that depend only on pred bbox + GT bbox + meta (no slices.csv needed → fast patch)
 _TRIM_METRICS    = [f"{pfx}_trim{d}"
                      for d in TRIM_DISTANCES
@@ -117,6 +129,10 @@ _CLSFILT_METRICS   = [f"{pfx}{CLSFILT_SUFFIX}"
                        for pfx in ("iou_3d_mm",
                                    "gap_mm_R", "gap_mm_L", "gap_mm_P",
                                    "gap_mm_A", "gap_mm_I", "gap_mm_S")]
+_CLSCOMP_METRICS   = [f"{pfx}{CLSCOMP_SUFFIX}"
+                       for pfx in ("iou_3d_mm",
+                                   "gap_mm_R", "gap_mm_L", "gap_mm_P",
+                                   "gap_mm_A", "gap_mm_I", "gap_mm_S")]
 BBOX_ONLY_METRICS = {"iou_3d", "iou_3d_mm", "iou_3d_mm_filt", "iou_3d_mm_ransac",
                      "iou_3d_mm_pad10", "gt_in_pad10",
                      "iou_3d_mm_padz20", "gt_in_padz20",
@@ -128,7 +144,7 @@ BBOX_ONLY_METRICS = {"iou_3d", "iou_3d_mm", "iou_3d_mm_filt", "iou_3d_mm_ransac"
                      "gap_mm_R_reg30mm", "gap_mm_L_reg30mm", "gap_mm_P_reg30mm",
                      "gap_mm_A_reg30mm", "gap_mm_I_reg30mm", "gap_mm_S_reg30mm",
                      *_TRIM_METRICS, *_GRAPHREG_METRICS, *_GRAPHTRIM_METRICS,
-                     *_FACETRIM_METRICS, *_CLSFILT_METRICS}
+                     *_FACETRIM_METRICS, *_CLSFILT_METRICS, *_CLSCOMP_METRICS}
 
 
 
@@ -184,12 +200,60 @@ def read_pred_boxes(pred_txt_dir: Path, class_id: int = 0) -> dict:
     return boxes
 
 
-def cls_z_range(cls_txt_dir: Path) -> tuple[int, int] | None:
-    """Return (z_min, z_max) from non-empty cls prediction txts, or None."""
+def _cls_conf(txt_path: Path) -> float:
+    """Return cls confidence from a slice txt (last field), or 0.0 if missing/empty."""
+    content = txt_path.read_text().strip()
+    if not content:
+        return 0.0
+    parts = content.split()
+    return float(parts[5]) if len(parts) >= 6 else 0.0
+
+
+def cls_z_range(cls_txt_dir: Path, conf_thresh: float = 0.5) -> tuple[int, int] | None:
+    """Return (z_min, z_max) of slices with cls conf >= conf_thresh, or None."""
     zs = [int(t.stem.split("_")[1])
           for t in sorted(cls_txt_dir.glob("slice_*.txt"))
-          if t.stat().st_size > 0]
+          if _cls_conf(t) >= conf_thresh]
     return (min(zs), max(zs)) if zs else None
+
+
+def cls_positive_zs(cls_txt_dir: Path, conf_thresh: float = 0.5) -> set:
+    """Return set of z where cls conf >= conf_thresh."""
+    return {int(t.stem.split("_")[1])
+            for t in cls_txt_dir.glob("slice_*.txt")
+            if _cls_conf(t) >= conf_thresh}
+
+
+def si_connected_components(boxes: dict) -> list:
+    """Group sorted z-indices of boxes into consecutive connected components."""
+    if not boxes:
+        return []
+    zs   = sorted(boxes)
+    comp = [zs[0]]
+    comps: list = []
+    for z in zs[1:]:
+        if z == comp[-1] + 1:
+            comp.append(z)
+        else:
+            comps.append(comp)
+            comp = [z]
+    comps.append(comp)
+    return comps
+
+
+def cls_comp_filter_slices(boxes: dict, pos_zs: set) -> dict:
+    """Keep first cls-validated SI component and all detection slices below it.
+
+    Finds the first (most superior = lowest z) connected component that contains
+    at least one z in pos_zs. Returns all boxes with z >= min_z of that component.
+    Falls back to the first component if none is validated by cls.
+    """
+    if not boxes:
+        return boxes
+    comps     = si_connected_components(boxes)
+    validated = next((c for c in comps if any(z in pos_zs for z in c)), comps[0])
+    min_z     = min(validated)
+    return {z: b for z, b in boxes.items() if z >= min_z}
 
 
 def read_gt_boxes(gt_txt_dir: Path, class_id: int = 0) -> dict:
@@ -921,7 +985,9 @@ def main(argv=None):
     # --- bbox-only mode: compute only the requested metrics, no slices.csv needed ---
     if args.metrics:
         clsfilt_metrics = [m for m in args.metrics if m.endswith(CLSFILT_SUFFIX)]
-        base_metrics    = [m for m in args.metrics if not m.endswith(CLSFILT_SUFFIX)]
+        clscomp_metrics = [m for m in args.metrics if m.endswith(CLSCOMP_SUFFIX)]
+        base_metrics    = [m for m in args.metrics
+                           if not m.endswith(CLSFILT_SUFFIX) and not m.endswith(CLSCOMP_SUFFIX)]
         for dataset, stem in tqdm(patients, desc="Metrics", unit="pat"):
             pred_txt_dir         = pred_root / "predictions" / dataset / stem / "txt"
             meta_path, proc_dir  = gt_dirs(pred_root / "predictions" / dataset / stem)
@@ -955,6 +1021,22 @@ def main(argv=None):
                     if cls_filtered is not None:
                         df[metric] = [
                             compute_bbox_column(base, cls_filtered, conf, gt_bbox, gt_boxes, H, W, meta)
+                            for conf in CONF_STEPS
+                        ]
+                    else:
+                        df[metric] = float("nan")
+            if clscomp_metrics:
+                cls_comp_filtered: dict | None = None
+                if cls_pred_root is not None:
+                    cls_txt_dir = cls_pred_root / dataset / stem / "txt"
+                    pos_zs = cls_positive_zs(cls_txt_dir)
+                    if pos_zs:
+                        cls_comp_filtered = cls_comp_filter_slices(pred_boxes, pos_zs)
+                for metric in clscomp_metrics:
+                    base = metric[:-len(CLSCOMP_SUFFIX)]
+                    if cls_comp_filtered is not None:
+                        df[metric] = [
+                            compute_bbox_column(base, cls_comp_filtered, conf, gt_bbox, gt_boxes, H, W, meta)
                             for conf in CONF_STEPS
                         ]
                     else:

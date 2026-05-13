@@ -124,6 +124,13 @@ METRIC_LABELS = {
     "gap_mm_A_clsfilt":    "Gap Anterior face clsfilt — det preds filtered to cls z-range",
     "gap_mm_I_clsfilt":    "Gap Inferior face clsfilt — det preds filtered to cls z-range",
     "gap_mm_S_clsfilt":    "Gap Superior face clsfilt — det preds filtered to cls z-range",
+    "iou_3d_mm_clscomp":   "3D IoU mm³ (clscomp: first cls-validated SI component + all below)",
+    "gap_mm_R_clscomp":    "Gap Right face clscomp — first cls-validated component kept",
+    "gap_mm_L_clscomp":    "Gap Left face clscomp — first cls-validated component kept",
+    "gap_mm_P_clscomp":    "Gap Posterior face clscomp — first cls-validated component kept",
+    "gap_mm_A_clscomp":    "Gap Anterior face clscomp — first cls-validated component kept",
+    "gap_mm_I_clscomp":    "Gap Inferior face clscomp — first cls-validated component kept",
+    "gap_mm_S_clscomp":    "Gap Superior face clscomp — first cls-validated component kept",
 }
 
 SWEEP_METRICS      = ["iou_3d_mm",
@@ -143,7 +150,9 @@ FREE_SCALE_METRICS = {"pred_vol_ratio",
                       "gap_mm_R_facetrim", "gap_mm_L_facetrim", "gap_mm_P_facetrim",
                       "gap_mm_A_facetrim", "gap_mm_I_facetrim", "gap_mm_S_facetrim",
                       "gap_mm_R_clsfilt",  "gap_mm_L_clsfilt",  "gap_mm_P_clsfilt",
-                      "gap_mm_A_clsfilt",  "gap_mm_I_clsfilt",  "gap_mm_S_clsfilt"}
+                      "gap_mm_A_clsfilt",  "gap_mm_I_clsfilt",  "gap_mm_S_clsfilt",
+                      "gap_mm_R_clscomp",  "gap_mm_L_clscomp",  "gap_mm_P_clscomp",
+                      "gap_mm_A_clscomp",  "gap_mm_I_clscomp",  "gap_mm_S_clscomp"}
 CONF_STEPS    = np.round(np.array([0.0, 0.001, 0.01, 0.05] + list(np.arange(0.1, 1.01, 0.1))), 3)
 SPLIT_COLORS  = {"train": "#4C72B0", "val": "#DD8452", "test": "#55A868", "unknown": "#8172B2"}
 

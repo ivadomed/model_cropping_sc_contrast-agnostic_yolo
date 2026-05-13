@@ -9,6 +9,8 @@
 #   mask_suffix  : SC mask filename suffix (required)
 #   canal_suffix : spinal canal mask suffix (null = no canal mask for this dataset)
 #   labels_dir   : subdirectory under derivatives/ containing labels (default: labels)
+#   img_glob     : glob pattern to find the image from the subject/plane dir when the standard
+#                  mask-stem derivation doesn't work (e.g. fMRI: "*_bold.nii.gz"). Default: null.
 #   region       : cervical | lumbar | mixed | null (unknown)
 #   (out-of-domain test-only datasets are specified in configs/training_dataset.yaml → test_datasets)
 #
@@ -262,4 +264,5 @@ datasets:
     commit: 72075f6
     mask_suffix: spinalcordmask.nii.gz
     labels_dir: label
+    img_glob: "*_bold.nii.gz"
     region: mixed

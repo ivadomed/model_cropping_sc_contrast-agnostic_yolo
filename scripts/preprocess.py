@@ -92,6 +92,7 @@ _REGISTRY = yaml.safe_load(
 DATASET_MASK_SUFFIX  = {d["name"]: d["mask_suffix"] for d in _REGISTRY}
 DATASET_LABELS_DIR   = {d["name"]: d["labels_dir"] for d in _REGISTRY if "labels_dir" in d}
 DATASET_CANAL_SUFFIX = {d["name"]: d["canal_suffix"] for d in _REGISTRY if d.get("canal_suffix")}
+DATASET_IMG_GLOB     = {d["name"]: d["img_glob"] for d in _REGISTRY if d.get("img_glob")}
 
 
 _GZIP_MAGIC = b"\x1f\x8b"
@@ -127,19 +128,31 @@ def find_pairs(dataset_root: Path, with_canal: bool = False):
     missing_pairs : list of image Path objects absent or not yet downloaded via git-annex
     Crashes if the dataset name is not in DATASET_MASK_SUFFIX.
     canal_mask_path is None when with_canal=False or no canal mask exists for the pair.
+    Searches anat/, func/, and dwi/ plane dirs (ses-* variants included).
+    If DATASET_IMG_GLOB is set for the dataset, the image is found by glob instead of mask-stem derivation.
     """
     mask_suffix = DATASET_MASK_SUFFIX[dataset_root.name]
     canal_suffix = DATASET_CANAL_SUFFIX.get(dataset_root.name) if with_canal else None
     labels_dir = DATASET_LABELS_DIR.get(dataset_root.name, "labels")
+    img_glob   = DATASET_IMG_GLOB.get(dataset_root.name)
     labels_root = dataset_root / "derivatives" / labels_dir
 
     pairs, missing = [], []
     for sub_dir in sorted(labels_root.iterdir()):
         if not sub_dir.is_dir() or not sub_dir.name.startswith("sub-"):
             continue
-        for anat_seg in list(sub_dir.glob("ses-*/anat")) + list(sub_dir.glob("anat")):
+        plane_dirs = (list(sub_dir.glob("ses-*/anat")) + list(sub_dir.glob("anat"))
+                      + list(sub_dir.glob("ses-*/func")) + list(sub_dir.glob("func"))
+                      + list(sub_dir.glob("ses-*/dwi")) + list(sub_dir.glob("dwi")))
+        for anat_seg in plane_dirs:
             for mask in sorted(anat_seg.glob(f"*{mask_suffix}")):
-                img_path = dataset_root / sub_dir.name / anat_seg.relative_to(sub_dir) / (mask.name[: -len(mask_suffix)] + ".nii.gz")
+                img_dir = dataset_root / sub_dir.name / anat_seg.relative_to(sub_dir)
+                if img_glob:
+                    candidates = sorted(img_dir.glob(img_glob))
+                    assert len(candidates) == 1, f"expected 1 image for {img_glob} in {img_dir}, got {candidates}"
+                    img_path = candidates[0]
+                else:
+                    img_path = img_dir / (mask.name[: -len(mask_suffix)] + ".nii.gz")
                 if not img_path.exists() or not _is_nifti_downloaded(img_path) or not _is_nifti_downloaded(mask):
                     missing.append(img_path)
                     continue
@@ -203,7 +216,11 @@ def process_pair(args: tuple):
     for d in ("png", "txt", "volume"):
         (patient_dir / d).mkdir(parents=True, exist_ok=True)
 
-    img_las  = reorient_to_las(nib.load(str(img_path)))
+    img_nib = nib.load(str(img_path))
+    if img_nib.ndim == 4:
+        mean_data = img_nib.get_fdata(dtype=np.float32).mean(axis=-1)
+        img_nib = nib.Nifti1Image(mean_data, img_nib.affine, img_nib.header)
+    img_las  = reorient_to_las(img_nib)
     mask_las = reorient_to_las(nib.load(str(mask_path_str)))
     rl_native_mm, ap_native_mm = float(img_las.header.get_zooms()[0]), float(img_las.header.get_zooms()[1])
 

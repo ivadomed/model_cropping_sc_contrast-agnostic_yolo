@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Build YOLO classification dataset from processed/ slices.
+Build YOLO classification dataset from processed slices and per-dataset split YAMLs.
 
+Iterates datasplit_<dataset>_seed<N>.yaml files (same pattern as build_dataset.py).
 Classes: sc (GT non-empty) / no_sc (GT empty).
 Creates symlinks in <out>/<split>/sc/ and <out>/<split>/no_sc/.
-Slices in 'unknown' split (no datasplit yaml or subject not listed) are skipped.
 
 --superior-only: restrict each patient to slices [0, z2_GT] where z2_GT is the
   inferior SC boundary from volume/bbox_3d.txt. Only the superior transition
@@ -35,21 +35,20 @@ from pathlib import Path
 import yaml
 
 
-def _subject_split(splits_dir: Path, dataset: str, stem: str) -> str:
-    split_file = splits_dir / f"datasplit_{dataset}_seed50.yaml"
-    if not split_file.exists():
-        return "unknown"
-    data = yaml.safe_load(split_file.read_text()) or {}
-    m = re.match(r"(sub-[^_]+)", stem)
-    subject = m.group(1) if m else stem
-    for split_name in ("train", "val", "test"):
-        if subject in (data.get(split_name) or []):
-            return split_name
-    return "unknown"
+def _dataset_name(path: Path) -> str:
+    return re.sub(r"_seed\d+$", "", path.stem[len("datasplit_"):])
+
+
+_dir_cache: dict[Path, list[Path]] = {}
+
+def _find_stem_dirs(dataset_dir: Path, subject: str) -> list[Path]:
+    if dataset_dir not in _dir_cache:
+        _dir_cache[dataset_dir] = sorted(p for p in dataset_dir.iterdir() if p.is_dir())
+    return [d for d in _dir_cache[dataset_dir]
+            if d.name == subject or d.name.startswith(subject + "_")]
 
 
 def _superior_z2(patient_dir: Path) -> int | None:
-    """Return z2 (inferior SC boundary, inclusive) from volume/bbox_3d.txt, or None."""
     bbox_path = patient_dir / "volume" / "bbox_3d.txt"
     if not bbox_path.exists():
         return None
@@ -59,47 +58,59 @@ def _superior_z2(patient_dir: Path) -> int | None:
 def run(processed: str | Path, splits_dir: str | Path, out: str | Path,
         test_datasets: list[str] | None = None,
         superior_only: bool = False) -> None:
-    processed_dir  = Path(processed)
-    splits_dir     = Path(splits_dir)
-    out_dir        = Path(out)
-    test_datasets  = set(test_datasets or [])
+    processed_dir = Path(processed)
+    splits_dir    = Path(splits_dir)
+    out_dir       = Path(out)
+    test_only     = set(test_datasets or [])
 
     counts: dict[str, dict[str, int]] = {
         s: {"sc": 0, "no_sc": 0} for s in ("train", "val", "test")
     }
 
-    for dataset_dir in sorted(processed_dir.iterdir()):
+    link_dirs: dict[tuple[str, str], Path] = {}
+    for split in ("train", "val", "test"):
+        for cls in ("sc", "no_sc"):
+            d = out_dir / split / cls
+            d.mkdir(parents=True, exist_ok=True)
+            link_dirs[(split, cls)] = d
+
+    def _link_patient(patient_dir: Path, split: str, dataset: str) -> None:
+        z2 = _superior_z2(patient_dir) if superior_only else None
+        txt_dir = patient_dir / "txt"
+        for png in sorted((patient_dir / "png").glob("slice_*.png")):
+            z = int(png.stem.split("_")[1])
+            if z2 is not None and z > z2:
+                continue
+            txt = txt_dir / (png.stem + ".txt")
+            cls = "sc" if (txt.exists() and txt.stat().st_size > 0) else "no_sc"
+            link = link_dirs[(split, cls)] / f"{dataset}_{patient_dir.name}_{png.name}"
+            if not link.exists():
+                link.symlink_to(png.resolve())
+            counts[split][cls] += 1
+
+    for split_yaml in sorted(splits_dir.glob("datasplit_*.yaml")):
+        dataset = _dataset_name(split_yaml)
+        if dataset in test_only:
+            continue
+        dataset_dir = processed_dir / dataset
         if not dataset_dir.is_dir():
             continue
-        dataset = dataset_dir.name
+        splits = yaml.safe_load(split_yaml.read_text()) or {}
+        n_subjects = sum(len(splits.get(p) or []) for p in ("train", "val", "test"))
+        print(f"{dataset}: {n_subjects} subjects")
+        for partition in ("train", "val", "test"):
+            for subject in (splits.get(partition) or []):
+                for stem_dir in _find_stem_dirs(dataset_dir, subject):
+                    _link_patient(stem_dir, partition, dataset)
 
-        for patient_dir in sorted(dataset_dir.iterdir()):
-            if not (patient_dir / "png").is_dir():
-                continue
-
-            if dataset in test_datasets:
-                split = "test"
-            else:
-                split = _subject_split(splits_dir, dataset, patient_dir.name)
-
-            if split == "unknown":
-                continue
-
-            z2 = _superior_z2(patient_dir) if superior_only else None
-
-            txt_dir = patient_dir / "txt"
-            for png in sorted((patient_dir / "png").glob("slice_*.png")):
-                z = int(png.stem.split("_")[1])
-                if z2 is not None and z > z2:
-                    continue
-                txt = txt_dir / (png.stem + ".txt")
-                cls = "sc" if (txt.exists() and txt.stat().st_size > 0) else "no_sc"
-                link_dir = out_dir / split / cls
-                link_dir.mkdir(parents=True, exist_ok=True)
-                link = link_dir / f"{dataset}_{patient_dir.name}_{png.name}"
-                if not link.exists():
-                    link.symlink_to(png.resolve())
-                counts[split][cls] += 1
+    for dataset in sorted(test_only):
+        dataset_dir = processed_dir / dataset
+        if not dataset_dir.is_dir():
+            continue
+        stem_dirs = sorted(p for p in dataset_dir.iterdir() if p.is_dir())
+        print(f"{dataset} [test-only]: {len(stem_dirs)} subjects")
+        for stem_dir in stem_dirs:
+            _link_patient(stem_dir, "test", dataset)
 
     total = sum(v for s in counts.values() for v in s.values())
     print(f"Classification dataset → {out_dir}  ({total} slices)")

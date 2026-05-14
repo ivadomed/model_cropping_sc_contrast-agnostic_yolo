@@ -120,65 +120,81 @@ def patch_albumentations_detection() -> None:
     Albumentations.__init__ = _patched
 
 
+class LetterboxClsTransform:
+    """Letterbox + detection-style augmentations for classification.
+
+    Module-level class (picklable) used by patch_classification_letterbox().
+    Replaces torchvision RandomResizedCrop + RandAugment so non-square MRI slices
+    are padded (not cropped) and pseudo-RGB channels are never grayscaled.
+    """
+
+    def __init__(self, imgsz: int, augment: bool,
+                 hsv_v: float, scale: float, degrees: float, translate: float,
+                 fliplr: float, flipud: float):
+        self.imgsz    = imgsz
+        self.augment  = augment
+        self.hsv_v    = hsv_v
+        self.scale    = scale
+        self.degrees  = degrees
+        self.translate = translate
+        self.fliplr   = fliplr
+        self.flipud   = flipud
+
+    def __call__(self, pil_img):
+        import torch
+        img = np.array(pil_img, dtype=np.uint8)  # RGB HWC
+        # Letterbox: maintain aspect ratio, pad with grey (114)
+        h, w = img.shape[:2]
+        r = self.imgsz / max(h, w)
+        nh, nw = round(h * r), round(w * r)
+        if nh != h or nw != w:
+            img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+        ph, pw = self.imgsz - nh, self.imgsz - nw
+        img = cv2.copyMakeBorder(img, ph // 2, ph - ph // 2, pw // 2, pw - pw // 2,
+                                 cv2.BORDER_CONSTANT, value=(114, 114, 114))
+        if self.augment:
+            # Affine: scale + rotation + translation (mirrors detection RandomPerspective)
+            s  = np.random.uniform(1 - self.scale, 1 + self.scale)
+            a  = np.random.uniform(-self.degrees, self.degrees)
+            tx = np.random.uniform(-self.translate, self.translate) * self.imgsz
+            ty = np.random.uniform(-self.translate, self.translate) * self.imgsz
+            M  = cv2.getRotationMatrix2D((self.imgsz / 2, self.imgsz / 2), a, s)
+            M[0, 2] += tx
+            M[1, 2] += ty
+            img = cv2.warpAffine(img, M, (self.imgsz, self.imgsz),
+                                 borderMode=cv2.BORDER_CONSTANT, borderValue=(114, 114, 114))
+            # HSV-V brightness (matches detection RandomHSV with hgain=sgain=0)
+            if self.hsv_v > 0:
+                gain = np.random.uniform(-self.hsv_v, self.hsv_v)
+                lut  = np.clip(np.arange(256, dtype=np.float32) * (1 + gain), 0, 255).astype(np.uint8)
+                img  = cv2.LUT(img, lut)
+            if self.flipud > 0 and np.random.random() < self.flipud:
+                img = img[::-1]
+            if self.fliplr > 0 and np.random.random() < self.fliplr:
+                img = img[:, ::-1]
+        # CHW float32 [0, 1]
+        return torch.from_numpy(np.ascontiguousarray(img.transpose(2, 0, 1))).float() / 255.0
+
+
 def patch_classification_letterbox(imgsz: int, hsv_v: float = 0.15, scale: float = 0.2,
                                     degrees: float = 15.0, translate: float = 0.1,
                                     fliplr: float = 0.5, flipud: float = 0.5) -> None:
-    """Patch ClassificationDataset to use letterbox + detection-style augmentations.
-
-    Replaces torchvision RandomResizedCrop + RandAugment with:
-      - Letterbox: resize maintaining aspect ratio, pad to imgsz×imgsz with grey (114)
-      - Affine (train only): random scale/rotation/translation matching detection RandomPerspective
-      - HSV-V brightness (train only)
-      - Random flips (train only)
+    """Patch ClassificationDataset to use LetterboxClsTransform instead of RandomResizedCrop+RandAugment.
 
     Must be called BEFORE YOLO() so workers inherit the patch at fork time.
+    LetterboxClsTransform is defined at module level so it is picklable by torch.save().
     """
-    import torch as _torch
     from ultralytics.data import ClassificationDataset
-
-    class _LBTransform:
-        def __init__(self, augment: bool):
-            self.augment = augment
-
-        def __call__(self, pil_img):
-            img = np.array(pil_img, dtype=np.uint8)  # RGB HWC
-            # Letterbox: maintain aspect ratio, pad with grey (114)
-            h, w = img.shape[:2]
-            r = imgsz / max(h, w)
-            nh, nw = round(h * r), round(w * r)
-            if nh != h or nw != w:
-                img = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
-            ph, pw = imgsz - nh, imgsz - nw
-            img = cv2.copyMakeBorder(img, ph // 2, ph - ph // 2, pw // 2, pw - pw // 2,
-                                     cv2.BORDER_CONSTANT, value=(114, 114, 114))
-            if self.augment:
-                # Affine: scale + rotation + translation (mirrors detection RandomPerspective)
-                s  = np.random.uniform(1 - scale, 1 + scale)
-                a  = np.random.uniform(-degrees, degrees)
-                tx = np.random.uniform(-translate, translate) * imgsz
-                ty = np.random.uniform(-translate, translate) * imgsz
-                M  = cv2.getRotationMatrix2D((imgsz / 2, imgsz / 2), a, s)
-                M[0, 2] += tx
-                M[1, 2] += ty
-                img = cv2.warpAffine(img, M, (imgsz, imgsz),
-                                     borderMode=cv2.BORDER_CONSTANT, borderValue=(114, 114, 114))
-                # HSV-V brightness (matches detection RandomHSV with hgain=sgain=0)
-                if hsv_v > 0:
-                    gain = np.random.uniform(-hsv_v, hsv_v)
-                    lut  = np.clip(np.arange(256, dtype=np.float32) * (1 + gain), 0, 255).astype(np.uint8)
-                    img  = cv2.LUT(img, lut)
-                if flipud > 0 and np.random.random() < flipud:
-                    img = img[::-1]
-                if fliplr > 0 and np.random.random() < fliplr:
-                    img = img[:, ::-1]
-            # CHW float32 [0, 1]
-            return _torch.from_numpy(np.ascontiguousarray(img.transpose(2, 0, 1))).float() / 255.0
 
     _orig = ClassificationDataset.__init__
 
     def _patched(self, root, args, augment=False, prefix=""):
         _orig(self, root, args, augment=augment, prefix=prefix)
-        self.torch_transforms = _LBTransform(augment=augment)
+        self.torch_transforms = LetterboxClsTransform(
+            imgsz=imgsz, augment=augment,
+            hsv_v=hsv_v, scale=scale, degrees=degrees, translate=translate,
+            fliplr=fliplr, flipud=flipud,
+        )
         mode = "train" if augment else "val"
         aug_desc = (f"affine(s={scale},d={degrees},t={translate}) + hsv_v={hsv_v} + "
                     f"flip(lr={fliplr},ud={flipud})") if augment else "none"

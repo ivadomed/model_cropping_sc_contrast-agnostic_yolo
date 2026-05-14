@@ -131,14 +131,18 @@ class LetterboxClsTransform:
     def __init__(self, imgsz: int, augment: bool,
                  hsv_v: float, scale: float, degrees: float, translate: float,
                  fliplr: float, flipud: float):
-        self.imgsz    = imgsz
-        self.augment  = augment
-        self.hsv_v    = hsv_v
-        self.scale    = scale
-        self.degrees  = degrees
+        self.imgsz     = imgsz
+        self.augment   = augment
+        self.hsv_v     = hsv_v
+        self.scale     = scale
+        self.degrees   = degrees
         self.translate = translate
-        self.fliplr   = fliplr
-        self.flipud   = flipud
+        self.fliplr    = fliplr
+        self.flipud    = flipud
+        # ClassificationPredictor.setup_source accesses model.transforms.transforms[0]
+        # expecting a T.Compose-like object. Expose [self] so the chain resolves without error.
+        # hasattr(..., "size") returns False → updated=False → predictor uses our transform as-is.
+        self.transforms = [self]
 
     def __call__(self, pil_img):
         import torch

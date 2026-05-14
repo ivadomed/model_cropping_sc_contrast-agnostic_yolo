@@ -413,6 +413,43 @@ def update_meta_resolutions(processed_dir: Path) -> None:
     print(f"Done — updated: {counts['updated']}  skipped (already had fields): {counts['skipped']}")
 
 
+def output_dir_from_params(si_res: float, axial_res: float | None, rl_res: float | None,
+                           three_ch: bool, norm_scope: str, si_stride: int | None,
+                           plane: str, sc_pad_mm: float | None, with_canal: bool) -> Path:
+    """Derive the processed output directory path from preprocessing parameters."""
+    name = f"{si_res:g}mm_SI"
+    if axial_res  is not None: name += f"_{axial_res:g}mm_axial"
+    if rl_res     is not None: name += f"_{rl_res:g}mm_RL"
+    if three_ch:               name += "_3ch"
+    if norm_scope == "volume": name += "_normvol"
+    if si_stride is not None and si_stride > 1: name += f"_stride{si_stride}"
+    if plane == "sagittal":    name += "_sagittal"
+    if sc_pad_mm is not None:  name += f"_sc{sc_pad_mm:g}mm"
+    if with_canal:             name += "_sc_and_canal"
+    return Path("processed") / name
+
+
+def output_dir(cfg: dict) -> Path:
+    """Derive the processed output directory from a preprocess config dict.
+
+    Convenience wrapper around output_dir_from_params() for use by run_pipeline.py
+    when preprocess.yaml does not set an explicit 'out' field.
+    """
+    plane     = cfg.get("plane", "axial")
+    section   = cfg.get(plane, {})
+    return output_dir_from_params(
+        si_res     = section["si_res"],
+        axial_res  = section.get("inplane_res"),
+        rl_res     = section.get("rl_res"),
+        three_ch   = cfg.get("three_ch", False),
+        norm_scope = cfg.get("norm_scope", "slice"),
+        si_stride  = cfg.get("si_stride"),
+        plane      = plane,
+        sc_pad_mm  = section.get("sc_pad"),
+        with_canal = cfg.get("with_canal", False),
+    )
+
+
 def run(config: str | Path | None = None,
         raw: str | Path = "data/raw",
         out: str | Path | None = None,
@@ -448,16 +485,8 @@ def run(config: str | Path | None = None,
     assert si_stride is None or plane == "axial",    "--si-stride is only valid with axial plane"
 
     if out is None:
-        name = f"{si_res:g}mm_SI"
-        if axial_res  is not None: name += f"_{axial_res:g}mm_axial"
-        if rl_res     is not None: name += f"_{rl_res:g}mm_RL"
-        if three_ch:               name += "_3ch"
-        if norm_scope == "volume": name += "_normvol"
-        if si_stride is not None:  name += f"_stride{si_stride}"
-        if plane == "sagittal":    name += "_sagittal"
-        if sc_pad_mm is not None:  name += f"_sc{sc_pad_mm:g}mm"
-        if with_canal:             name += "_sc_and_canal"
-        out = Path("processed") / name
+        out = output_dir_from_params(si_res, axial_res, rl_res, three_ch, norm_scope,
+                                     si_stride, plane, sc_pad_mm, with_canal)
 
     processed_dir = str(Path(out))
 

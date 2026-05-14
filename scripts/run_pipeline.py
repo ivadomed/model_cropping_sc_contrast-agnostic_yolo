@@ -115,7 +115,9 @@ def main():
     assert mode in ("detection", "classification"), \
         f"training.yaml: mode must be detection|classification, got {mode!r}"
 
-    processed_dir   = Path(preprocess_cfg["out"])
+    processed_dir   = (Path(preprocess_cfg["out"])
+                       if preprocess_cfg.get("out")
+                       else preprocess.output_dir(preprocess_cfg))
     seed            = dataset_cfg["seed"]
     split_train     = dataset_cfg.get("train", 0.5)
     split_val       = dataset_cfg.get("val",   0.2)

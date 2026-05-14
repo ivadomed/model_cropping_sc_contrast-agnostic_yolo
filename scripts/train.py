@@ -144,6 +144,13 @@ class LetterboxClsTransform:
         # hasattr(..., "size") returns False → updated=False → predictor uses our transform as-is.
         self.transforms = [self]
 
+    def __getattr__(self, name: str):
+        # Fallback for checkpoints saved before self.transforms was added to __init__.
+        # Pickle restores __dict__ without calling __init__, so old instances lack the attribute.
+        if name == "transforms":
+            return [self]
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
     def __call__(self, pil_img):
         import torch
         img = np.array(pil_img, dtype=np.uint8)  # RGB HWC

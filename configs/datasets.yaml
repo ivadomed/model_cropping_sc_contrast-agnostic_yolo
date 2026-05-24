@@ -266,3 +266,12 @@ datasets:
     labels_dir: label
     img_glob: "*_bold.nii.gz"
     region: mixed
+
+  # ── Zenodo (téléchargement direct, pas git-annex) ────────────────────────────
+  - name: totalsegmentator
+    host: zenodo
+    url_https: https://zenodo.org/records/10047292
+    url_ssh: null
+    commit: null
+    mask_suffix: _label-SC_seg.nii.gz
+    region: mixed

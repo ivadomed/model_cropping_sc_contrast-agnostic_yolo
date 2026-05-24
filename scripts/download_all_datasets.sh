@@ -15,17 +15,26 @@ LOG="$DATA_DIR/git_branch_commit.log"
 
 mkdir -p "$DATA_DIR"
 
-# Parse datasets.yaml once → lines of "name|url_ssh|url_https|commit"
+# Parse datasets.yaml once → lines of "name|url_ssh|url_https|commit|host"
 DATASETS=$(python - <<'EOF'
 import yaml
 with open("configs/datasets.yaml") as f:
     for d in yaml.safe_load(f)["datasets"]:
-        print(f"{d['name']}|{d.get('url_ssh') or ''}|{d.get('url_https') or ''}|{d.get('commit') or ''}")
+        print(f"{d['name']}|{d.get('url_ssh') or ''}|{d.get('url_https') or ''}|{d.get('commit') or ''}|{d.get('host') or ''}")
 EOF
 )
 
 # ---- Clone each dataset ----
-while IFS='|' read -r name url_ssh url_https commit; do
+while IFS='|' read -r name url_ssh url_https commit host; do
+    # Datasets Zenodo : téléchargement manuel via scripts/download_totalsegmentator.sh
+    if [ "$host" = "zenodo" ]; then
+        if [ ! -d "$DATA_DIR/$name" ]; then
+            echo "  -> $name (zenodo) : lancer bash scripts/download_${name}.sh pour télécharger."
+        else
+            echo "  -> $name (zenodo) : déjà présent."
+        fi
+        continue
+    fi
     echo "=========================================="
     echo "Cloning: $name"
     echo "=========================================="
@@ -65,7 +74,8 @@ echo "=========================================="
 
 pids=()
 dataset_names=()
-while IFS='|' read -r name url_ssh url_https commit; do
+while IFS='|' read -r name url_ssh url_https commit host; do
+    [ "$host" = "zenodo" ] && continue   # pas de git annex pour les datasets zenodo
     if [ -d "$DATA_DIR/$name" ]; then
         echo "  -> git annex get: $name"
         (cd "$DATA_DIR/$name" && git annex get .) &

@@ -4,28 +4,40 @@ Produce a release-ready zip for sc_crop from a trained YOLO checkpoint.
 
 Reads preprocess.yaml from the run snapshot, copies best.pt directly (no ONNX
 conversion), and writes a config.yaml with the inference parameters.
+The training run name and repo commit are embedded in config.yaml for traceability
+(see VERSIONS.md in the sc-crop package for the version linkage table).
 
 Output:
   sc_crop_models_v<version>.zip
   ├── model.pt
-  └── config.yaml
+  └── config.yaml   ← includes training_run and training_repo_commit fields
 
 This script writes nothing to the sc_crop package itself.
 
 Requires: conda activate contrast_agnostic
 
 Usage:
-    python scripts/export_model.py --run-dir runs/20260504_135903 --version 0.2.0
+    python scripts/export_model.py --run-dir checkpoints/pipeline_yolo26n_axial_200ep_20260430_2319582 --version 0.0.4
 """
 
 import argparse
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
 import yaml
+
+
+def _git_head_commit() -> str:
+    """Return the current HEAD commit SHA (short), or 'unknown' if not in a git repo."""
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        capture_output=True, text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else "unknown"
 
 
 def load_preprocess_cfg(run_dir: Path) -> dict:
@@ -66,11 +78,17 @@ def main():
         print("Seul le mode axial est supporté.", file=sys.stderr)
         sys.exit(1)
 
+    commit = _git_head_commit()
+
     config = {
-        "si_res":      pre_cfg["axial"]["si_res"],
-        "inplane_res": pre_cfg["axial"].get("inplane_res"),
-        "channels":    pre_cfg["channels"],
-        "conf":        0.1,
+        "si_res":                 pre_cfg["axial"]["si_res"],
+        "inplane_res":            pre_cfg["axial"].get("inplane_res"),
+        "channels":               pre_cfg["channels"],
+        "conf":                   0.1,
+        # Traceability: link this model back to its training run and repo commit.
+        # See VERSIONS.md in ivadomed/sc-crop for the full version linkage table.
+        "training_run":           run_dir.name,
+        "training_repo_commit":   commit,
     }
     config_yaml = yaml.dump(config, default_flow_style=False, sort_keys=False)
 
@@ -90,9 +108,15 @@ def main():
             zf.write(tmp / "config.yaml",  "config.yaml")
 
     print(f"Release zip : {zip_path.resolve()}")
-    print(f"Config      : {config}")
-    print(f"\nAttacher {zip_name} à la GitHub release v{args.version}.")
-    print(f"Puis mettre à jour _RELEASE_URL dans sc_crop/sc_crop/download.py.")
+    print(f"Config      :")
+    for k, v in config.items():
+        print(f"  {k}: {v}")
+    print(f"\nProchaines étapes :")
+    print(f"  1. gh release create v{args.version} model.onnx model.pt cls_model.onnx cls_model.pt "
+          f"--repo ivadomed/sc-crop --title 'sc-crop model v{args.version}'")
+    print(f"  2. Mettre à jour _MODEL_TAG + SHA256 dans sc_crop/download.py")
+    print(f"  3. Bumper version dans pyproject.toml")
+    print(f"  4. Ajouter une ligne dans VERSIONS.md (run: {run_dir.name}, commit: {commit[:12]})")
 
 
 if __name__ == "__main__":

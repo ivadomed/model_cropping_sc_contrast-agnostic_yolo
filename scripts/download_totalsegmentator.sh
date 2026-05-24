@@ -2,35 +2,36 @@
 # Download TotalSegmentator v201 from Zenodo and build a BIDS-compatible symlink tree.
 #
 # Source : https://zenodo.org/records/10047292  (22 Go, 1228 sujets CT)
-# Output :
-#   data/raw/Totalsegmentator_dataset_v201/    ← ZIP extrait (fichiers réels)
-#   data/raw/totalsegmentator/                 ← arbre BIDS avec symlinks
-#     sub-s0001/anat/sub-s0001_ct.nii.gz       → .../s0001/ct.nii.gz
-#     derivatives/labels/sub-s0001/anat/
-#       sub-s0001_ct_label-SC_seg.nii.gz       → .../s0001/segmentations/spinal_cord.nii.gz
+#
+# Layout produit :
+#   data/Totalsegmentator_dataset_v201/    ← ZIP extrait (fichiers réels, hors data/raw/)
+#   data/raw/totalsegmentator/             ← arbre BIDS avec symlinks → ci-dessus
+#     sub-s0001/anat/sub-s0001_ct.nii.gz
+#     derivatives/labels/sub-s0001/anat/sub-s0001_ct_label-SC_seg.nii.gz
+#
+# Le ZIP est extrait dans data/ (pas data/raw/) pour éviter que preprocess.py
+# ne rencontre un dataset inconnu et plante sur DATASET_MASK_SUFFIX[name].
 #
 # Usage:
 #   bash scripts/download_totalsegmentator.sh
-#   bash scripts/download_totalsegmentator.sh --dest /chemin/alternatif
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."   # run depuis la racine du projet
 
 # ── Paramètres ────────────────────────────────────────────────────────────────
-DATA_DIR="${1:-data/raw}"
 ZENODO_URL="https://zenodo.org/records/10047292/files/Totalsegmentator_dataset_v201.zip?download=1"
-ZIP_FILE="$DATA_DIR/Totalsegmentator_dataset_v201.zip"
-EXTRACT_DIR="$DATA_DIR/Totalsegmentator_dataset_v201"
-BIDS_DIR="$DATA_DIR/totalsegmentator"
-LOG="$DATA_DIR/git_branch_commit.log"
+ZIP_FILE="data/Totalsegmentator_dataset_v201.zip"
+EXTRACT_DIR="data/Totalsegmentator_dataset_v201"
+BIDS_DIR="data/raw/totalsegmentator"
+LOG="data/raw/git_branch_commit.log"
 
-mkdir -p "$DATA_DIR"
+mkdir -p data/raw
 
 # ── 1. Téléchargement ─────────────────────────────────────────────────────────
 if [ -d "$EXTRACT_DIR" ]; then
-    echo "-> Répertoire $EXTRACT_DIR déjà présent, téléchargement sauté."
+    echo "-> $EXTRACT_DIR déjà présent, téléchargement sauté."
 elif [ -f "$ZIP_FILE" ]; then
-    echo "-> ZIP déjà présent, extraction sautée (lancer l'étape 2 directement)."
+    echo "-> ZIP déjà présent ($ZIP_FILE)."
 else
     echo "=========================================="
     echo "Téléchargement TotalSegmentator v201 (~22 Go)"
@@ -41,15 +42,15 @@ fi
 # ── 2. Extraction ─────────────────────────────────────────────────────────────
 if [ ! -d "$EXTRACT_DIR" ] && [ -f "$ZIP_FILE" ]; then
     echo "=========================================="
-    echo "Extraction du ZIP..."
+    echo "Extraction du ZIP dans data/..."
     echo "=========================================="
-    unzip -q "$ZIP_FILE" -d "$DATA_DIR"
+    unzip -q "$ZIP_FILE" -d data/
     echo "-> Extraction terminée : $EXTRACT_DIR"
 fi
 
 [ ! -d "$EXTRACT_DIR" ] && { echo "ERROR: $EXTRACT_DIR introuvable après extraction."; exit 1; }
 
-# ── 3. Structure BIDS (symlinks) ──────────────────────────────────────────────
+# ── 3. Structure BIDS (symlinks dans data/raw/totalsegmentator/) ───────────────
 if [ -d "$BIDS_DIR" ]; then
     echo "-> Structure BIDS $BIDS_DIR déjà présente, sautée."
 else
@@ -73,16 +74,14 @@ for subj_dir in sorted(source_dir.iterdir()):
         n_skip += 1
         continue
 
-    sub_id   = f"sub-{subj_dir.name}"   # s0001 → sub-s0001
+    sub_id = f"sub-{subj_dir.name}"   # s0001 → sub-s0001
 
-    # Image
     anat_dir = bids_dir / sub_id / "anat"
     anat_dir.mkdir(parents=True, exist_ok=True)
     img_link = anat_dir / f"{sub_id}_ct.nii.gz"
     if not img_link.exists():
         img_link.symlink_to(ct)
 
-    # Masque SC
     label_dir = bids_dir / "derivatives" / "labels" / sub_id / "anat"
     label_dir.mkdir(parents=True, exist_ok=True)
     mask_link = label_dir / f"{sub_id}_ct_label-SC_seg.nii.gz"

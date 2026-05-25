@@ -41,7 +41,7 @@ else
     echo "=========================================="
     echo "Extraction du ZIP dans data/..."
     echo "=========================================="
-    unzip -qo "$ZIP_FILE" -d data/
+    unzip -qo "$ZIP_FILE" -d "$EXTRACT_DIR"
     echo "-> Extraction terminée : $EXTRACT_DIR"
 fi
 

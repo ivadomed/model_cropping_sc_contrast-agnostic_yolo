@@ -26,12 +26,16 @@ EOF
 
 # ---- Clone each dataset ----
 while IFS='|' read -r name url_ssh url_https commit host; do
-    # Datasets Zenodo : téléchargement manuel via scripts/download_totalsegmentator.sh
+    # Datasets Zenodo : délégué à scripts/download_<name>.sh
     if [ "$host" = "zenodo" ]; then
-        if [ ! -d "$DATA_DIR/$name" ]; then
-            echo "  -> $name (zenodo) : lancer bash scripts/download_${name}.sh pour télécharger."
+        script="scripts/download_${name}.sh"
+        if [ -f "$script" ]; then
+            echo "=========================================="
+            echo "Zenodo dataset: $name → $script"
+            echo "=========================================="
+            bash "$script"
         else
-            echo "  -> $name (zenodo) : déjà présent."
+            echo "  WARNING: $name (zenodo) — script $script introuvable, skipped."
         fi
         continue
     fi

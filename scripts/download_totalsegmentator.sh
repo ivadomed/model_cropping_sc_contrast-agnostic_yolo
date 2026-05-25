@@ -27,20 +27,17 @@ LOG="data/raw/git_branch_commit.log"
 
 mkdir -p data/raw
 
-# ── 1. Téléchargement ─────────────────────────────────────────────────────────
+# ── 1. Téléchargement + extraction ────────────────────────────────────────────
+# wget -c reprend le téléchargement si le ZIP est incomplet ou absent.
+# On n'essaie jamais d'extraire un ZIP potentiellement partiel.
 if [ -d "$EXTRACT_DIR" ]; then
-    echo "-> $EXTRACT_DIR déjà présent, téléchargement sauté."
-elif [ -f "$ZIP_FILE" ]; then
-    echo "-> ZIP déjà présent ($ZIP_FILE)."
+    echo "-> $EXTRACT_DIR déjà présent, téléchargement et extraction sautés."
 else
     echo "=========================================="
-    echo "Téléchargement TotalSegmentator v201 (~22 Go)"
+    echo "Téléchargement TotalSegmentator v201 (~22 Go, reprise si interrompu)"
     echo "=========================================="
     wget -c "$ZENODO_URL" -O "$ZIP_FILE"
-fi
 
-# ── 2. Extraction ─────────────────────────────────────────────────────────────
-if [ ! -d "$EXTRACT_DIR" ] && [ -f "$ZIP_FILE" ]; then
     echo "=========================================="
     echo "Extraction du ZIP dans data/..."
     echo "=========================================="

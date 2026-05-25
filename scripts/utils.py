@@ -15,11 +15,18 @@ def nifti_stem(path: Path) -> str:
 
 
 def normalize_to_uint8(arr: np.ndarray, lo=None, hi=None) -> np.ndarray:
-    """Normalise arr to uint8. If lo/hi are None, compute from non-zero pixels (slice-level).
-    Pass pre-computed lo/hi for volume-level normalisation."""
+    """Normalise arr to uint8. If lo/hi are None, compute from non-background pixels (slice-level).
+    Pass pre-computed lo/hi for volume-level normalisation.
+
+    Background detection:
+      MRI : background = 0  → threshold = 0   (keep arr > 0)
+      CT  : background = air ≈ -1000 HU → threshold = -200  (keep arr > -200)
+    CT is auto-detected when arr.min() < -100 (only Hounsfield units reach such negatives).
+    """
     if lo is None or hi is None:
+        threshold = -200 if arr.min() < -100 else 0
         nz = arr.ravel()
-        nz = nz[nz > 0]
+        nz = nz[nz > threshold]
         if not len(nz):
             return np.zeros_like(arr, dtype=np.uint8)
         lo, hi = np.percentile(nz, [0.5, 99.5])

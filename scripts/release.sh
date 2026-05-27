@@ -17,6 +17,8 @@ DET_RUN="runs/20260524_224406"        # run du détecteur
 CLS_RUN="runs/20260525_150625"        # run du classifieur
 MODEL_VERSION="0.0.6"                 # version du modèle  → tag vMODEL_VERSION sur sc-crop
 PACKAGE_VERSION="0.1.5"              # version du package → tag vPACKAGE_VERSION sur sc-crop
+DET_CHECKPOINT="best.pt"             # poids détecteur  : best.pt | last.pt
+CLS_CHECKPOINT="best.pt"             # poids classifieur: best.pt | loss_best.pt | last.pt
 # ─────────────────────────────────────────────────────────────
 
 TRAINING_REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -49,10 +51,12 @@ if [ "$RELEASE_ONLY" = false ]; then
     info "Sortie     : ${OUT_DIR}"
 
     "$PYTHON" "${TRAINING_REPO}/scripts/export_model.py" \
-        --run-dir     "${TRAINING_REPO}/${DET_RUN}" \
-        --cls-run-dir "${TRAINING_REPO}/${CLS_RUN}" \
-        --version     "${MODEL_VERSION}" \
-        --out-dir     "${OUT_DIR}"
+        --run-dir        "${TRAINING_REPO}/${DET_RUN}" \
+        --cls-run-dir    "${TRAINING_REPO}/${CLS_RUN}" \
+        --version        "${MODEL_VERSION}" \
+        --out-dir        "${OUT_DIR}" \
+        --det-checkpoint "${DET_CHECKPOINT}" \
+        --cls-checkpoint "${CLS_CHECKPOINT}"
 
     echo ""
     info "Fichiers produits :"

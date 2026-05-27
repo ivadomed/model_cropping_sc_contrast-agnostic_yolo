@@ -64,14 +64,19 @@ def main():
         description="Export detector + classifier to a sc_crop release bundle.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--run-dir",     required=True,
+    parser.add_argument("--run-dir",         required=True,
                         help="Detector run directory (runs/<timestamp>/)")
-    parser.add_argument("--cls-run-dir", required=True,
+    parser.add_argument("--cls-run-dir",     required=True,
                         help="Classifier run directory (runs/<timestamp>/)")
-    parser.add_argument("--version",     required=True,
-                        help="Model version string, e.g. 0.0.5")
-    parser.add_argument("--out-dir",     default="release_export",
+    parser.add_argument("--version",         required=True,
+                        help="Model version string, e.g. 0.0.6")
+    parser.add_argument("--out-dir",         default="release_export",
                         help="Directory to write the 4 release files")
+    parser.add_argument("--det-checkpoint",  default="best.pt",
+                        help="Detector weight file in checkpoints/weights/ (default: best.pt)")
+    parser.add_argument("--cls-checkpoint",  default="best.pt",
+                        help="Classifier weight file in checkpoints_cls/weights/ "
+                             "(default: best.pt — use loss_best.pt for min-loss checkpoint)")
     args = parser.parse_args()
 
     run_dir     = Path(args.run_dir)
@@ -80,8 +85,8 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     version     = args.version
 
-    det_pt  = run_dir     / "checkpoints"     / "weights" / "best.pt"
-    cls_pt  = cls_run_dir / "checkpoints_cls" / "weights" / "best.pt"
+    det_pt  = run_dir     / "checkpoints"     / "weights" / args.det_checkpoint
+    cls_pt  = cls_run_dir / "checkpoints_cls" / "weights" / args.cls_checkpoint
     assert det_pt.exists(),  f"Detector checkpoint not found: {det_pt}"
     assert cls_pt.exists(),  f"Classifier checkpoint not found: {cls_pt}"
 

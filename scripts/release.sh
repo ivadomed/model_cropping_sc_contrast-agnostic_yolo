@@ -15,7 +15,7 @@ set -euo pipefail
 # ── VARIABLES À MODIFIER ENTRE DEUX RELEASES ────────────────
 DET_RUN="runs/20260524_224406"        # run du détecteur
 CLS_RUN="runs/20260525_150625"        # run du classifieur
-MODEL_VERSION="0.0.5"                 # version du modèle  → tag vMODEL_VERSION sur sc-crop
+MODEL_VERSION="0.0.6"                 # version du modèle  → tag vMODEL_VERSION sur sc-crop
 PACKAGE_VERSION="0.1.5"              # version du package → tag vPACKAGE_VERSION sur sc-crop
 # ─────────────────────────────────────────────────────────────
 

@@ -139,33 +139,23 @@ def main():
     # ── SHA256 ────────────────────────────────────────────────────────────────
     shas = {name: _sha256(out_dir / name) for name in files}
 
+    # Write sha256.yaml — read by release.sh to avoid parsing stdout
+    sha256_data = {
+        "version":    version,
+        "det_run":    run_dir.name,
+        "cls_run":    cls_run_dir.name,
+        "export_git_hash": _git_head(),
+        "assets":     shas,
+    }
+    (out_dir / "sha256.yaml").write_text(yaml.dump(sha256_data, default_flow_style=False, sort_keys=False))
+
     # ── Report ────────────────────────────────────────────────────────────────
     print(f"\n{'─'*60}")
     print(f"Release bundle v{version} → {out_dir.resolve()}/")
-    for name in files:
+    for name in list(files) + ["config.yaml", "sha256.yaml"]:
         print(f"  {name}")
-    print(f"  config.yaml")
-
     print(f"\n{'─'*60}")
-    print("SHA256 hashes — paste into sc_crop/download.py :")
-    print(f'_MODEL_TAG = "v{version}"')
-    print(f'_ASSETS = {{')
-    for name, sha in shas.items():
-        key = name.replace("-", "_")  # cls_model.onnx → already correct
-        print(f'    "{name}": {{"url": f"{{_BASE_URL}}/{name}", "sha256": "{sha}"}},')
-    print(f'}}')
-
-    print(f"\n{'─'*60}")
-    print("Next steps :")
-    print(f"  1. gh release create v{version} {out_dir}/model.pt {out_dir}/model.onnx "
-          f"{out_dir}/cls_model.pt {out_dir}/cls_model.onnx \\")
-    print(f"       --repo ivadomed/sc-crop \\")
-    print(f"       --title 'sc-crop model v{version}' \\")
-    print(f"       --notes 'det={run_dir.name}  cls={cls_run_dir.name}'")
-    print(f"  2. Update _MODEL_TAG + SHA256 in sc_crop/download.py")
-    print(f"  3. Update VERSIONS.md")
-    print(f"  4. Bump version in pyproject.toml + sc_crop/__init__.py")
-    print(f"  5. git commit + tag v{version} + push")
+    print(f"Done. Run:  bash scripts/release.sh")
 
 
 if __name__ == "__main__":

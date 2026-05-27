@@ -23,7 +23,7 @@ CLS_CHECKPOINT="best.pt"             # poids classifieur: best.pt | loss_best.pt
 
 TRAINING_REPO="$(cd "$(dirname "$0")/.." && pwd)"
 SCCROP_REPO="/home/quentinr/sc-crop"
-PYTHON="/home/quentinr/.conda/envs/contrast_agnostic/bin/python"
+PYTHON="/home/quentinr/.conda/envs/sc_crop_training/bin/python"
 OUT_DIR="${TRAINING_REPO}/release_export"
 
 EXPORT_ONLY=false

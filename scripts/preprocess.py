@@ -236,8 +236,10 @@ def process_pair(args: tuple):
     mask_data = np.round(mask_r.get_fdata()).astype(np.uint8)
 
     # Volume-level percentiles (used when norm_scope == "volume")
+    # Same CT-aware threshold as normalize_to_uint8: exclude air (<-200 HU) for CT, background (<=0) for MRI.
     if norm_scope == "volume":
-        nz = img_data[img_data > 0]
+        threshold = -200 if img_data.min() < -100 else 0
+        nz = img_data[img_data > threshold]
         vol_lo, vol_hi = (np.percentile(nz, [0.5, 99.5]) if len(nz) else (0.0, 1.0))
     else:
         vol_lo = vol_hi = None
@@ -559,9 +561,10 @@ def main():
                         help="Extract 1 out of every N SI slices after resampling (axial only). "
                              "si_res_mm in meta = N × si_res. RGB neighbours are selected slices N apart.")
     parser.add_argument("--norm-scope",  default=None, choices=["slice", "volume"], dest="norm_scope",
-                        help="Normalisation scope: 'slice' (per-slice percentile, default) or "
-                             "'volume' (percentile computed on all non-zero voxels of the volume — "
-                             "dark slices stay dark instead of having their noise amplified).")
+                        help="Normalisation scope: 'slice' (per-slice percentile) or "
+                             "'volume' (percentile computed once on all non-background voxels of the volume; "
+                             "CT: threshold=-200 HU, MRI: threshold=0). "
+                             "Config default: volume.")
     parser.add_argument("--update-meta", action="store_true")
     args = parser.parse_args()
 

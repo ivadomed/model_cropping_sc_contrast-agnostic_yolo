@@ -18,5 +18,6 @@ sagittal:
 three_ch: true       # pseudo-RGB: R=Superior neighbour, G=current, B=Inferior neighbour
 si_stride: 1        # axial only: no stride (1 slice every si_res mm)
 with_canal: false    # true = also extract spinal canal (class 1)
-norm_scope: slice    # slice  = per-slice percentile 0.5–99.5% (défaut, correspond à processed/10mm_SI_1mm_axial_3ch)
+norm_scope: volume   # slice  = per-slice percentile 0.5–99.5%
                      # volume = percentile calculé sur tous les voxels non-nuls du volume → processed/10mm_SI_1mm_axial_3ch_normvol
+                     #          CT : exclut air < -200 HU ; MRI : exclut fond = 0

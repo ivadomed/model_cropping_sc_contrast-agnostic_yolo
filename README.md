@@ -311,3 +311,26 @@ scripts/                    ← all pipeline scripts
 ```
 
 `processed/`, `datasets/`, `checkpoints/`, `predictions/` are gitignored.
+
+---
+
+## Faire une release
+
+Après avoir entraîné un nouveau détecteur et un nouveau classifieur, une seule commande publie la release complète sur les deux dépôts :
+
+```bash
+bash scripts/release.sh
+```
+
+Le script fait les 8 étapes dans l'ordre : export ONNX, calcul des SHA256, création de la release GitHub sur `ivadomed/sc-crop`, tag du repo de training, mise à jour de `download.py`, mise à jour de `VERSIONS.md`, bump de version du package, commit + tag + push.
+
+**Avant de lancer**, modifier les 4 variables en haut de `scripts/release.sh` :
+
+```bash
+DET_RUN="runs/YYYYMMDD_XXXXXX"   # run du détecteur
+CLS_RUN="runs/YYYYMMDD_XXXXXX"   # run du classifieur
+MODEL_VERSION="0.0.X"             # prochain tag modèle sur ivadomed/sc-crop
+PACKAGE_VERSION="0.1.X"           # prochain tag package sur ivadomed/sc-crop
+```
+
+Le lien entre versions de package, versions de modèle et runs d'entraînement est documenté dans [VERSIONS.md](https://github.com/ivadomed/sc-crop/blob/main/VERSIONS.md) du dépôt sc-crop.

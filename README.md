@@ -149,8 +149,8 @@ From spineimage.ca:
 ```bash
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo
 cd model_cropping_sc_contrast-agnostic_yolo
-conda create -n contrast_agnostic python=3.11
-conda activate contrast_agnostic
+conda create -n sc_crop_training python=3.11 -y
+conda activate sc_crop_training
 pip install -r requirements.txt
 ```
 

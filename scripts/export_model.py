@@ -10,13 +10,17 @@ Exports both best.pt checkpoints to ONNX and assembles 4 release files:
 Also writes config.yaml with full provenance (preprocessing params, git hashes,
 wandb run ids) and prints SHA256 hashes ready to paste into sc_crop/download.py.
 
-Requires: conda activate contrast_agnostic
+config.yaml includes all inference parameters (si_res, inplane_res, channels,
+norm_scope, conf, regularization, cls_conf) and is meant to be copied verbatim
+into sc_crop/models/config.yaml by release.sh.
+
+Requires: conda activate sc_crop_training
 
 Usage:
     python scripts/export_model.py \\
         --run-dir     runs/20260524_224406 \\
         --cls-run-dir runs/20260525_150625 \\
-        --version     0.0.5
+        --version     0.0.6
 """
 
 import argparse
@@ -124,8 +128,10 @@ def main():
         "inplane_res":   pre_cfg.get("axial", {}).get("inplane_res", 1.0),
         "channels":      3 if pre_cfg.get("three_ch", False) else 1,
         "norm_scope":    pre_cfg.get("norm_scope", "slice"),
-        # inference
+        # inference thresholds
         "conf":          0.1,
+        "regularization": "cls",   # classifier run always provided → cls regularization
+        "cls_conf":      0.5,
         # traceability — detector
         "det_run":             run_dir.name,
         "det_git_hash":        run_info.get("git_hash", "unknown"),

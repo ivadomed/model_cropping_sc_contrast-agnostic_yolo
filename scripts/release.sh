@@ -13,12 +13,12 @@
 set -euo pipefail
 
 # ── VARIABLES À MODIFIER ENTRE DEUX RELEASES ────────────────
-DET_RUN="runs/20260524_224406"        # run du détecteur
-CLS_RUN="runs/20260525_150625"        # run du classifieur
-MODEL_VERSION="0.0.6"                 # version du modèle  → tag vMODEL_VERSION sur sc-crop
-PACKAGE_VERSION="0.1.5"              # version du package → tag vPACKAGE_VERSION sur sc-crop
+DET_RUN="runs/20260528_192341"        # run du détecteur
+CLS_RUN="runs/20260529_090157"        # run du classifieur
+MODEL_VERSION="0.0.7"                 # version du modèle  → tag vMODEL_VERSION sur sc-crop
+PACKAGE_VERSION="0.1.7"              # version du package → tag vPACKAGE_VERSION sur sc-crop
 DET_CHECKPOINT="best.pt"             # poids détecteur  : best.pt | last.pt
-CLS_CHECKPOINT="best.pt"             # poids classifieur: best.pt | loss_best.pt | last.pt
+CLS_CHECKPOINT="loss_best.pt"             # poids classifieur: best.pt | loss_best.pt | last.pt
 # ─────────────────────────────────────────────────────────────
 
 TRAINING_REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -101,6 +101,47 @@ gh release create "v${MODEL_VERSION}" \
     --notes "det=${DET_RUN##*/}  cls=${CLS_RUN##*/}  export_commit=${EXPORT_GIT_HASH:0:12}"
 
 info "Release v${MODEL_VERSION} créée sur ivadomed/sc-crop"
+
+
+# ════════════════════════════════════════════════════════════
+# PHASE 3b — COPIE config.yaml → sc_crop/models/config.yaml
+# ════════════════════════════════════════════════════════════
+step "Phase 3b — Déploiement de config.yaml dans sc_crop/models/"
+
+CONFIG_SRC="${OUT_DIR}/config.yaml"
+CONFIG_DST="${SCCROP_REPO}/sc_crop/config.yaml"
+[ -f "$CONFIG_SRC" ] || { echo "ERREUR : ${CONFIG_SRC} introuvable."; exit 1; }
+
+# Keep only inference-relevant keys (strip traceability fields)
+"$PYTHON" - <<PYEOF
+import yaml
+from pathlib import Path
+
+src = yaml.safe_load(Path("${CONFIG_SRC}").read_text())
+
+inference_keys = ["si_res", "inplane_res", "channels", "norm_scope",
+                  "conf", "regularization", "cls_conf"]
+comments = {
+    "si_res":        "SI resampling resolution (mm) — must match training",
+    "inplane_res":   "In-plane resampling resolution (mm) — must match training",
+    "channels":      "Input channels (3 = superior/current/inferior)",
+    "norm_scope":    "Normalisation scope — must match training: volume | slice",
+    "conf":          "Detection confidence threshold",
+    "regularization":"cls | graphtrim | none",
+    "cls_conf":      "Classification confidence threshold (used with regularization=cls)",
+}
+
+lines = []
+for k in inference_keys:
+    v = src[k]
+    comment = comments.get(k, "")
+    lines.append(f"{k}: {v!r:<14}  # {comment}")
+
+Path("${CONFIG_DST}").write_text("\n".join(lines) + "\n")
+print("  config.yaml déployé :", "${CONFIG_DST}")
+PYEOF
+
+info "config.yaml → sc_crop/models/config.yaml"
 
 
 # ════════════════════════════════════════════════════════════
@@ -205,6 +246,7 @@ step "Phase 8 — Commit + tag v${PACKAGE_VERSION} + push sc-crop"
 git -C "${SCCROP_REPO}" add \
     sc_crop/download.py \
     sc_crop/__init__.py \
+    sc_crop/config.yaml \
     pyproject.toml \
     VERSIONS.md
 

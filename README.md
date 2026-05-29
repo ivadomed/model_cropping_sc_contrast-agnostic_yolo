@@ -149,10 +149,16 @@ From spineimage.ca:
 ```bash
 git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo
 cd model_cropping_sc_contrast-agnostic_yolo
-conda create -n sc_crop_training python=3.11 -y
+conda create -n sc_crop_training python=3.13 -y
 conda activate sc_crop_training
 pip install -r requirements.txt
 ```
+
+> **Blackwell GPU (RTX PRO 6000, RTX 5090, sm_120+):** `requirements.txt` pins `torch==2.8.0` which requires CUDA 12.8 wheels not on PyPI. Install PyTorch first:
+> ```bash
+> pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+> pip install -r requirements.txt
+> ```
 
 ```bash
 sudo apt install git-annex

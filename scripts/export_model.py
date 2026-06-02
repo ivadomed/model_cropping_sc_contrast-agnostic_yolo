@@ -52,10 +52,16 @@ def _load_yaml(path: Path) -> dict:
     return yaml.safe_load(path.read_text()) if path.exists() else {}
 
 
-def _export_onnx(pt_path: Path, imgsz: int) -> Path:
-    """Export a YOLO .pt to ONNX in-place and return the .onnx path."""
+def _export_onnx(pt_path: Path, imgsz: int, dynamic: bool) -> Path:
+    """Export a YOLO .pt to ONNX in-place and return the .onnx path.
+
+    dynamic=True exports with variable height/width axes — required for the
+    detector, which is fed rectangular letterboxed inputs (320×W, W a multiple
+    of 32) to match YOLO's predict() exactly. The classifier uses a fixed
+    320×320 square input, so dynamic=False.
+    """
     model = YOLO(str(pt_path))
-    model.export(format="onnx", imgsz=imgsz)
+    model.export(format="onnx", imgsz=imgsz, opset=19, dynamic=dynamic)
     onnx_path = pt_path.with_suffix(".onnx")
     assert onnx_path.exists(), f"ONNX export failed — {onnx_path} not found"
     return onnx_path
@@ -105,10 +111,12 @@ def main():
     wandb_id      = wandb_id_file.read_text().strip() if wandb_id_file.exists() else None
 
     # ── ONNX export ──────────────────────────────────────────────────────────
-    print("Exporting detector to ONNX …")
-    det_onnx = _export_onnx(det_pt, imgsz)
-    print("Exporting classifier to ONNX …")
-    cls_onnx = _export_onnx(cls_pt, imgsz)
+    # Detector: dynamic axes (rectangular letterbox, like YOLO predict()).
+    # Classifier: fixed 320×320 square input.
+    print("Exporting detector to ONNX (dynamic) …")
+    det_onnx = _export_onnx(det_pt, imgsz, dynamic=True)
+    print("Exporting classifier to ONNX (fixed) …")
+    cls_onnx = _export_onnx(cls_pt, imgsz, dynamic=False)
 
     # ── Copy the 4 files to out_dir ──────────────────────────────────────────
     files = {

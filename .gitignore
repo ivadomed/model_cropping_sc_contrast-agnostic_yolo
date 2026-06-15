@@ -45,3 +45,6 @@ wandb/
 *.swp
 .idea/
 .vscode/
+
+# experiment outputs (regenerable)
+experiments/out/

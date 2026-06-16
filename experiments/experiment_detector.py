@@ -219,7 +219,7 @@ def main():
     resuming = args.resume and csv_path.exists()
     rows     = load_rows(csv_path) if resuming else []
     done_keys = {(r["dataset"], r["case_id"]) for r in rows}
-    missing  = []
+    missing, skipped_2d = [], []
     if resuming:
         print(f"resume: {len(rows)} volumes already in results.csv — skipping those")
 
@@ -236,6 +236,9 @@ def main():
                     continue
                 for case_id, img_path, mask_path in pairs:
                     if (dataset, case_id) in done_keys:
+                        continue
+                    if 1 in nib.load(str(img_path)).shape[:3]:   # single-slice 2D: out of scope
+                        skipped_2d.append(f"{dataset}/{case_id}") # for the 2.5D axial detector
                         continue
                     row = run_one(dataset, case_id, img_path, mask_path, args.repeat_timing, t_load)
                     rows.append(row)
@@ -256,6 +259,7 @@ def main():
     summary = {
         "model_version": MODEL_VERSION,
         "n_volumes": len(rows),
+        "n_skipped_single_slice": len(skipped_2d),
         "n_subjects_missing_from_processed": len(missing),
         "t_model_load_s": round(t_load, 4),
         "global": {
@@ -273,10 +277,13 @@ def main():
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     if missing:
         (out_dir / "missing_from_processed.txt").write_text("\n".join(missing) + "\n")
+    if skipped_2d:
+        (out_dir / "skipped_single_slice.txt").write_text("\n".join(skipped_2d) + "\n")
 
     g = summary["global"]
     print("\n==================== SUMMARY ====================")
-    print(f"volumes processed   : {g['coverage_total']}   (subjects missing from processed/: {len(missing)})")
+    print(f"volumes processed   : {g['coverage_total']}   "
+          f"(skipped single-slice: {len(skipped_2d)}; subjects missing from processed/: {len(missing)})")
     print(f"E1 eta (FOV)        : mean {g['eta_mean']}  median {g['eta_median']}  range [{g['eta_min']}, {g['eta_max']}]")
     print(f"E2 coverage (cls)   : {g['coverage_ok']}/{g['coverage_total']} keep 100% of cord GT ({g['coverage_pct']}%)")
     print(f"E3 latency steady   : median {g['latency_steady_median_s']}s  (model load once: {t_load:.3f}s)")

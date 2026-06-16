@@ -176,32 +176,36 @@ def main():
     t_load = model_load_seconds()
     print(f"model load (det+cls) once: {t_load:.3f}s  | version {MODEL_VERSION}")
 
-    rows, missing = [], []
-    for dataset, subjects in test_subjects().items():
-        for subject in subjects:
-            pairs = raw_pairs(args.variant, dataset, subject)
-            if not pairs:
-                missing.append(f"{dataset}/{subject}")     # absent from processed/ (known cases, see CLAUDE.md)
-                continue
-            for case_id, img_path, mask_path in pairs:
-                rows.append(run_one(dataset, case_id, img_path, mask_path, args.repeat_timing, t_load))
-                r = rows[-1]
-                print(f"[{len(rows):4d}] {dataset}/{case_id}  eta={r['eta']}  ok={r['cov_ok']}  "
-                      f"t_steady={r['t_detect_steady_s']}s")
-                if args.limit and len(rows) >= args.limit:
-                    break
-            if args.limit and len(rows) >= args.limit:
-                break
-        if args.limit and len(rows) >= args.limit:
-            break
-
     fields = (["dataset", "case_id", "contrast", "eta", "voxels_orig", "voxels_box",
                "t_detect_full_s", "t_detect_steady_s", "cov_ok", "stray_voxels", "n_components"]
               + [f"extra_{f}_mm" for f in FACES])
-    with (out_dir / "results.csv").open("w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
-        w.writerows(rows)
+
+    # Rows are written incrementally so progress is never lost on a long run.
+    rows, missing = [], []
+    csv_path = out_dir / "results.csv"
+    with csv_path.open("w", newline="") as fcsv:
+        writer = csv.DictWriter(fcsv, fieldnames=fields)
+        writer.writeheader()
+        done = False
+        for dataset, subjects in test_subjects().items():
+            for subject in subjects:
+                pairs = raw_pairs(args.variant, dataset, subject)
+                if not pairs:
+                    missing.append(f"{dataset}/{subject}")   # absent from processed/ (known cases, see CLAUDE.md)
+                    continue
+                for case_id, img_path, mask_path in pairs:
+                    row = run_one(dataset, case_id, img_path, mask_path, args.repeat_timing, t_load)
+                    rows.append(row)
+                    writer.writerow(row)
+                    fcsv.flush()
+                    print(f"[{len(rows):4d}] {dataset}/{case_id}  eta={row['eta']}  ok={row['cov_ok']}  "
+                          f"t_steady={row['t_detect_steady_s']}s")
+                    if args.limit and len(rows) >= args.limit:
+                        done = True; break
+                if done:
+                    break
+            if done:
+                break
 
     eta = np.array([r["eta"] for r in rows])
     ok  = np.array([r["cov_ok"] for r in rows])

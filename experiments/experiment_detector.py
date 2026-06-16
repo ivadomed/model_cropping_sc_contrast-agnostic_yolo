@@ -213,20 +213,29 @@ def main():
                "t_detect_full_s", "t_detect_steady_s", "cov_ok", "stray_voxels", "n_components"]
               + [f"extra_{f}_mm" for f in FACES])
 
-    # Rows are written incrementally so progress is never lost. With --resume, the
-    # existing results.csv is loaded, its volumes are skipped, and new rows appended.
-    csv_path = out_dir / "results.csv"
-    resuming = args.resume and csv_path.exists()
-    rows     = load_rows(csv_path) if resuming else []
-    done_keys = {(r["dataset"], r["case_id"]) for r in rows}
-    missing, skipped_2d = [], []
+    # Rows are written incrementally so progress is never lost. A volume on which
+    # detect() raises (e.g. nothing detected on a single-slice acquisition) is a real
+    # detection failure: it is recorded in fails.csv and the run continues. With
+    # --resume, both results.csv and fails.csv are loaded and their volumes skipped.
+    csv_path   = out_dir / "results.csv"
+    fails_path = out_dir / "fails.csv"
+    resuming   = args.resume and csv_path.exists()
+    rows  = load_rows(csv_path) if resuming else []
+    fails = list(csv.DictReader(fails_path.open())) if (resuming and fails_path.exists()) else []
+    done_keys = {(r["dataset"], r["case_id"]) for r in rows} | {(f["dataset"], f["case_id"]) for f in fails}
+    missing = []
     if resuming:
-        print(f"resume: {len(rows)} volumes already in results.csv — skipping those")
+        print(f"resume: {len(rows)} done + {len(fails)} failed already recorded — skipping those")
 
-    with csv_path.open("a" if resuming else "w", newline="") as fcsv:
-        writer = csv.DictWriter(fcsv, fieldnames=fields)
+    append_fails = resuming and fails_path.exists()
+    with csv_path.open("a" if resuming else "w", newline="") as fcsv, \
+         fails_path.open("a" if append_fails else "w", newline="") as ffail:
+        writer  = csv.DictWriter(fcsv, fieldnames=fields)
+        fwriter = csv.DictWriter(ffail, fieldnames=["dataset", "case_id", "error"])
         if not resuming:
             writer.writeheader()
+        if not append_fails:
+            fwriter.writeheader()
         stop = False
         for dataset, subjects in test_subjects().items():
             for subject in subjects:
@@ -237,10 +246,13 @@ def main():
                 for case_id, img_path, mask_path in pairs:
                     if (dataset, case_id) in done_keys:
                         continue
-                    if 1 in nib.load(str(img_path)).shape[:3]:   # single-slice 2D: out of scope
-                        skipped_2d.append(f"{dataset}/{case_id}") # for the 2.5D axial detector
+                    try:
+                        row = run_one(dataset, case_id, img_path, mask_path, args.repeat_timing, t_load)
+                    except Exception as e:                   # noqa: BLE001 — record the detection failure
+                        rec = {"dataset": dataset, "case_id": case_id, "error": str(e).splitlines()[-1][:200]}
+                        fails.append(rec); fwriter.writerow(rec); ffail.flush()
+                        print(f"[FAIL {len(fails):3d}] {dataset}/{case_id}: {rec['error']}")
                         continue
-                    row = run_one(dataset, case_id, img_path, mask_path, args.repeat_timing, t_load)
                     rows.append(row)
                     writer.writerow(row)
                     fcsv.flush()
@@ -259,7 +271,7 @@ def main():
     summary = {
         "model_version": MODEL_VERSION,
         "n_volumes": len(rows),
-        "n_skipped_single_slice": len(skipped_2d),
+        "n_failed": len(fails),
         "n_subjects_missing_from_processed": len(missing),
         "t_model_load_s": round(t_load, 4),
         "global": {
@@ -277,13 +289,11 @@ def main():
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     if missing:
         (out_dir / "missing_from_processed.txt").write_text("\n".join(missing) + "\n")
-    if skipped_2d:
-        (out_dir / "skipped_single_slice.txt").write_text("\n".join(skipped_2d) + "\n")
 
     g = summary["global"]
     print("\n==================== SUMMARY ====================")
     print(f"volumes processed   : {g['coverage_total']}   "
-          f"(skipped single-slice: {len(skipped_2d)}; subjects missing from processed/: {len(missing)})")
+          f"(detection failures: {len(fails)}; subjects missing from processed/: {len(missing)})")
     print(f"E1 eta (FOV)        : mean {g['eta_mean']}  median {g['eta_median']}  range [{g['eta_min']}, {g['eta_max']}]")
     print(f"E2 coverage (cls)   : {g['coverage_ok']}/{g['coverage_total']} keep 100% of cord GT ({g['coverage_pct']}%)")
     print(f"E3 latency steady   : median {g['latency_steady_median_s']}s  (model load once: {t_load:.3f}s)")

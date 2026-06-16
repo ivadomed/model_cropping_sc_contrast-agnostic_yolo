@@ -60,9 +60,11 @@ REPO    = Path(__file__).resolve().parents[1]
 SPLITS  = REPO / "data" / "datasplits_seed50"
 VARIANT = "10mm_SI_1mm_axial_3ch_normslice_all"   # processed variant = shipped detector preprocessing
 FACES   = ["superior", "inferior", "left", "right", "anterior", "posterior"]
-# Datasets excluded from the test: beijing-tumor has faulty SC labels (the GT does
-# not delineate the cord reliably), so its coverage figures are not meaningful.
-EXCLUDE_DATASETS = {"beijing-tumor"}
+# Datasets excluded from the test:
+#   beijing-tumor     — faulty SC ground-truth labels (do not delineate the cord)
+#   ms-barcelona-psir — single-slice 2D PSIR; incompatible with the 2.5D detector
+#                       (no superior/inferior neighbour slices -> nothing to detect)
+EXCLUDE_DATASETS = {"beijing-tumor", "ms-barcelona-psir"}
 
 
 def parse_args():
@@ -71,6 +73,8 @@ def parse_args():
     p.add_argument("--out", default=None, help="output dir (default experiments/out/detector_<MODEL_VERSION>)")
     p.add_argument("--limit", type=int, default=0, help="process only the first N volumes (smoke test)")
     p.add_argument("--repeat-timing", type=int, default=1, help="repeat detect() N times per volume, keep median")
+    p.add_argument("--resume", action="store_true",
+                   help="continue an interrupted run: skip volumes already in results.csv and append")
     return p.parse_args()
 
 
@@ -156,6 +160,25 @@ def run_one(dataset, case_id, img_path, mask_path, repeat, t_load):
     return row
 
 
+def load_rows(csv_path: Path) -> list:
+    """Read an existing results.csv back, casting fields to the types run_one() emits
+    (so the summary can aggregate resumed + new rows uniformly)."""
+    rows = []
+    for r in csv.DictReader(csv_path.open()):
+        r["eta"]               = float(r["eta"])
+        r["voxels_orig"]       = int(r["voxels_orig"])
+        r["voxels_box"]        = int(r["voxels_box"])
+        r["t_detect_full_s"]   = float(r["t_detect_full_s"])
+        r["t_detect_steady_s"] = float(r["t_detect_steady_s"])
+        r["cov_ok"]            = (r["cov_ok"] == "True")
+        r["stray_voxels"]      = int(r["stray_voxels"])
+        r["n_components"]      = int(r["n_components"])
+        for f in FACES:
+            r[f"extra_{f}_mm"] = float(r[f"extra_{f}_mm"])
+        rows.append(r)
+    return rows
+
+
 def group_stats(rows, key) -> dict:
     out = {}
     for g in sorted({r[key] for r in rows}):
@@ -186,13 +209,21 @@ def main():
                "t_detect_full_s", "t_detect_steady_s", "cov_ok", "stray_voxels", "n_components"]
               + [f"extra_{f}_mm" for f in FACES])
 
-    # Rows are written incrementally so progress is never lost on a long run.
-    rows, missing = [], []
+    # Rows are written incrementally so progress is never lost. With --resume, the
+    # existing results.csv is loaded, its volumes are skipped, and new rows appended.
     csv_path = out_dir / "results.csv"
-    with csv_path.open("w", newline="") as fcsv:
+    resuming = args.resume and csv_path.exists()
+    rows     = load_rows(csv_path) if resuming else []
+    done_keys = {(r["dataset"], r["case_id"]) for r in rows}
+    missing  = []
+    if resuming:
+        print(f"resume: {len(rows)} volumes already in results.csv — skipping those")
+
+    with csv_path.open("a" if resuming else "w", newline="") as fcsv:
         writer = csv.DictWriter(fcsv, fieldnames=fields)
-        writer.writeheader()
-        done = False
+        if not resuming:
+            writer.writeheader()
+        stop = False
         for dataset, subjects in test_subjects().items():
             for subject in subjects:
                 pairs = raw_pairs(args.variant, dataset, subject)
@@ -200,6 +231,8 @@ def main():
                     missing.append(f"{dataset}/{subject}")   # absent from processed/ (known cases, see CLAUDE.md)
                     continue
                 for case_id, img_path, mask_path in pairs:
+                    if (dataset, case_id) in done_keys:
+                        continue
                     row = run_one(dataset, case_id, img_path, mask_path, args.repeat_timing, t_load)
                     rows.append(row)
                     writer.writerow(row)
@@ -207,10 +240,10 @@ def main():
                     print(f"[{len(rows):4d}] {dataset}/{case_id}  eta={row['eta']}  ok={row['cov_ok']}  "
                           f"t_steady={row['t_detect_steady_s']}s")
                     if args.limit and len(rows) >= args.limit:
-                        done = True; break
-                if done:
+                        stop = True; break
+                if stop:
                     break
-            if done:
+            if stop:
                 break
 
     eta = np.array([r["eta"] for r in rows])

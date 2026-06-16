@@ -61,10 +61,10 @@ SPLITS  = REPO / "data" / "datasplits_seed50"
 VARIANT = "10mm_SI_1mm_axial_3ch_normslice_all"   # processed variant = shipped detector preprocessing
 FACES   = ["superior", "inferior", "left", "right", "anterior", "posterior"]
 # Datasets excluded from the test:
-#   beijing-tumor     — faulty SC ground-truth labels (do not delineate the cord)
-#   ms-barcelona-psir — single-slice 2D PSIR; incompatible with the 2.5D detector
-#                       (no superior/inferior neighbour slices -> nothing to detect)
-EXCLUDE_DATASETS = {"beijing-tumor", "ms-barcelona-psir"}
+#   beijing-tumor — faulty SC ground-truth labels (do not delineate the cord)
+# Single-slice / undetected volumes are NOT excluded by dataset: empty-label volumes
+# are skipped and label-present-but-undetected volumes are recorded as failures.
+EXCLUDE_DATASETS = {"beijing-tumor"}
 
 
 def parse_args():
@@ -131,6 +131,11 @@ def model_load_seconds() -> float:
 
 
 def run_one(dataset, case_id, img_path, mask_path, repeat, t_load):
+    # Empty GT label -> no cord annotated -> not a meaningful test -> skip (return None).
+    clean, n_comp, stray = largest_component(nib.load(str(mask_path)))
+    if int(np.count_nonzero(np.asarray(clean.dataobj))) == 0:
+        return None
+
     img = nib.load(str(img_path))
     if img.ndim == 4:                                 # 4D series (e.g. DWI) -> mean over
         data = np.asarray(img.dataobj, dtype=np.float32).mean(axis=-1)   # volumes, like preprocess.py
@@ -148,7 +153,6 @@ def run_one(dataset, case_id, img_path, mask_path, repeat, t_load):
                    * (bbox["zmax"] - bbox["zmin"] + 1))
     voxels_orig = int(np.prod(img.shape[:3]))
 
-    clean, n_comp, stray = largest_component(nib.load(str(mask_path)))
     qc = check_label_crop(clean, bbox)                # ← coverage: ok + extra_pad_*_mm per face
 
     row = {
@@ -223,7 +227,7 @@ def main():
     rows  = load_rows(csv_path) if resuming else []
     fails = list(csv.DictReader(fails_path.open())) if (resuming and fails_path.exists()) else []
     done_keys = {(r["dataset"], r["case_id"]) for r in rows} | {(f["dataset"], f["case_id"]) for f in fails}
-    missing = []
+    missing, skipped_empty = [], []
     if resuming:
         print(f"resume: {len(rows)} done + {len(fails)} failed already recorded — skipping those")
 
@@ -253,6 +257,9 @@ def main():
                         fails.append(rec); fwriter.writerow(rec); ffail.flush()
                         print(f"[FAIL {len(fails):3d}] {dataset}/{case_id}: {rec['error']}")
                         continue
+                    if row is None:                          # empty GT label -> skip (no cord annotated)
+                        skipped_empty.append(f"{dataset}/{case_id}")
+                        continue
                     rows.append(row)
                     writer.writerow(row)
                     fcsv.flush()
@@ -272,6 +279,7 @@ def main():
         "model_version": MODEL_VERSION,
         "n_volumes": len(rows),
         "n_failed": len(fails),
+        "n_skipped_empty_label": len(skipped_empty),
         "n_subjects_missing_from_processed": len(missing),
         "t_model_load_s": round(t_load, 4),
         "global": {
@@ -289,11 +297,14 @@ def main():
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     if missing:
         (out_dir / "missing_from_processed.txt").write_text("\n".join(missing) + "\n")
+    if skipped_empty:
+        (out_dir / "skipped_empty_label.txt").write_text("\n".join(skipped_empty) + "\n")
 
     g = summary["global"]
     print("\n==================== SUMMARY ====================")
     print(f"volumes processed   : {g['coverage_total']}   "
-          f"(detection failures: {len(fails)}; subjects missing from processed/: {len(missing)})")
+          f"(failures: {len(fails)}; skipped empty-label: {len(skipped_empty)}; "
+          f"missing from processed/: {len(missing)})")
     print(f"E1 eta (FOV)        : mean {g['eta_mean']}  median {g['eta_median']}  range [{g['eta_min']}, {g['eta_max']}]")
     print(f"E2 coverage (cls)   : {g['coverage_ok']}/{g['coverage_total']} keep 100% of cord GT ({g['coverage_pct']}%)")
     print(f"E3 latency steady   : median {g['latency_steady_median_s']}s  (model load once: {t_load:.3f}s)")

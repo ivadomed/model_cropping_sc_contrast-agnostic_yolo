@@ -61,10 +61,12 @@ SPLITS  = REPO / "data" / "datasplits_seed50"
 VARIANT = "10mm_SI_1mm_axial_3ch_normslice_all"   # processed variant = shipped detector preprocessing
 FACES   = ["superior", "inferior", "left", "right", "anterior", "posterior"]
 # Datasets excluded from the test:
-#   beijing-tumor — faulty SC ground-truth labels (do not delineate the cord)
+#   beijing-tumor     — faulty SC ground-truth labels (do not delineate the cord)
+#   ms-barcelona-psir — excluded on request
+#   uqueensland_mouse — excluded on request (mouse data, out of scope)
 # Single-slice / undetected volumes are NOT excluded by dataset: empty-label volumes
 # are skipped and label-present-but-undetected volumes are recorded as failures.
-EXCLUDE_DATASETS = {"beijing-tumor"}
+EXCLUDE_DATASETS = {"beijing-tumor", "ms-barcelona-psir", "uqueensland_mouse"}
 
 
 def parse_args():

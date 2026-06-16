@@ -57,7 +57,11 @@ from sc_crop import detect, check_label_crop, ensure_model, ensure_cls_model, MO
 from sc_crop.infer_onnx import load_session
 
 REPO    = Path(__file__).resolve().parents[1]
-SPLITS  = REPO / "data" / "datasplits_seed50"
+# Frozen train/val/test split of the RELEASE detector (model v0.0.10, run
+# 20260528_192341 — see VERSIONS.md). Using the run's own snapshot guarantees the
+# test set is exactly what the shipped detector held out (no leakage), and it
+# includes totalsegmentator (CT) and ds005143, absent from data/datasplits_seed50.
+SPLITS  = REPO / "runs" / "20260528_192341" / "datasplits"
 VARIANT = "10mm_SI_1mm_axial_3ch_normslice_all"   # processed variant = shipped detector preprocessing
 FACES   = ["superior", "inferior", "left", "right", "anterior", "posterior"]
 # Datasets excluded from the test:

@@ -60,6 +60,9 @@ REPO    = Path(__file__).resolve().parents[1]
 SPLITS  = REPO / "data" / "datasplits_seed50"
 VARIANT = "10mm_SI_1mm_axial_3ch_normslice_all"   # processed variant = shipped detector preprocessing
 FACES   = ["superior", "inferior", "left", "right", "anterior", "posterior"]
+# Datasets excluded from the test: beijing-tumor has faulty SC labels (the GT does
+# not delineate the cord reliably), so its coverage figures are not meaningful.
+EXCLUDE_DATASETS = {"beijing-tumor"}
 
 
 def parse_args():
@@ -76,7 +79,10 @@ def test_subjects() -> dict:
     out = {}
     for f in sorted(SPLITS.glob("datasplit_*_seed50.yaml")):
         d = yaml.safe_load(f.read_text())
-        out[d["meta"]["name"]] = d["test"]
+        name = d["meta"]["name"]
+        if name in EXCLUDE_DATASETS:
+            continue
+        out[name] = d["test"]
     return out
 
 

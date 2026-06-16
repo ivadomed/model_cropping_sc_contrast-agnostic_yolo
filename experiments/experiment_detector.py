@@ -131,14 +131,18 @@ def model_load_seconds() -> float:
 
 
 def run_one(dataset, case_id, img_path, mask_path, repeat, t_load):
+    img = nib.load(str(img_path))
+    if img.ndim == 4:                                 # 4D series (e.g. DWI) -> mean over
+        data = np.asarray(img.dataobj, dtype=np.float32).mean(axis=-1)   # volumes, like preprocess.py
+        img  = nib.Nifti1Image(data, img.affine, img.header)
+
     times = []
     for _ in range(repeat):
         t0   = time.perf_counter()
-        bbox = detect(img_path)                       # ← the single inference (ONNX/CPU, cls)
+        bbox = detect(img)                            # ← the single inference (ONNX/CPU, cls)
         times.append(time.perf_counter() - t0)
     t_full = float(np.median(times))
 
-    img         = nib.load(str(img_path))
     voxels_box  = ((bbox["xmax"] - bbox["xmin"] + 1)
                    * (bbox["ymax"] - bbox["ymin"] + 1)
                    * (bbox["zmax"] - bbox["zmin"] + 1))

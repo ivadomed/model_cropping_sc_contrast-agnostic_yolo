@@ -7,13 +7,30 @@ sandbox/
 datasets/
 checkpoints/
 runs/
+# data/ is a scratch/download area — nothing under it is tracked except the
+# small config files below. Any dataset downloaded/extracted anywhere under
+# data/ (raw BIDS tree, zips, native archive layouts) is ignored by default,
+# so a new download script can never leak large data into git.
+data/*
+!data/raw/
 data/raw/*
 !data/raw/.gitkeep
+!data/datasets_summary.csv
+!data/datasplits_seed50/
 dataset_stats.csv
 metrics_*.csv
 metrics.csv
 failures.csv
 report.html
+
+# release/export build artifacts and one-off debug scripts
+release_export/
+compare_out.csv
+run_compare.sh
+
+# stray Claude Code config/lock files that shouldn't live in the repo tree
+.claude/
+**/.claude/
 
 # Images
 *.png

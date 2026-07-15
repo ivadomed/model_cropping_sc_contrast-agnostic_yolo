@@ -3,8 +3,9 @@
 Full training pipeline: download → preprocess → splits → build dataset → train → evaluate → metrics → plots → failures.
 
 Reads configs/preprocess.yaml, configs/training_dataset.yaml, configs/training.yaml, configs/evaluation.yaml.
-The mode (detection|classification) is read from configs/training.yaml and controls steps 4-9.
-Configs are snapshotted into runs/<TS>/configs/ at startup — configs/ can be modified for the next run immediately.
+The mode (detection|classification) is read from configs/training.yaml (or overridden with --mode)
+and controls steps 4-9. Configs are snapshotted into runs/<TS>/configs/ at startup — configs/ can be
+modified for the next run immediately. Use scripts/train_all.sh to run both modes in one command.
 
 Steps:
   1 = download datasets
@@ -80,6 +81,8 @@ def main():
     parser.add_argument("--run-dir",  default=None, help="Run directory (default: runs/<TS>)")
     parser.add_argument("--start",    type=int, default=1, help="First step to run (1-9)")
     parser.add_argument("--end",      type=int, default=9, help="Last step to run (1-9)")
+    parser.add_argument("--mode",     choices=["detection", "classification"], default=None,
+                        help="Override configs/training.yaml: mode for this run")
     parser.add_argument("--no-wandb",      action="store_true")
     parser.add_argument("--require-clean", action="store_true",
                         help="Abort if the git repo has uncommitted changes")
@@ -111,9 +114,10 @@ def main():
     training_cfg   = yaml.safe_load((cfg_dir / "training.yaml").read_text())
     eval_cfg       = yaml.safe_load((cfg_dir / "evaluation.yaml").read_text())
 
-    mode = training_cfg["mode"]
+    mode = args.mode or training_cfg["mode"]
     assert mode in ("detection", "classification"), \
         f"training.yaml: mode must be detection|classification, got {mode!r}"
+    training_cfg["mode"] = mode
 
     processed_dir   = (Path(preprocess_cfg["out"])
                        if preprocess_cfg.get("out")

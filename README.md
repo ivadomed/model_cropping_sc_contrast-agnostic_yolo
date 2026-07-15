@@ -166,177 +166,90 @@ sudo apt install git-annex
 
 Add your public SSH key to [data.neuro.polymtl.ca](https://data.neuro.polymtl.ca/user/settings/keys) and to [spineimage.ca](https://spineimage.ca/user/settings/keys).
 
-### Automatic pipeline
+### Adding a new dataset
 
-The full pipeline (download → train → evaluate) can be run with:
+Add a registry entry in `configs/datasets.yaml` (read exclusively by `download_all_datasets.sh` — no code change needed):
 
-```bash
-bash scripts/run_pipeline.sh
+```yaml
+- name: my-dataset
+  host: neuro              # neuro | github | spineimage | zenodo
+  url_ssh: git@...
+  url_https: https://...
+  commit: <pinned-sha>      # reproducibility
+  mask_suffix: _label-SC_seg.nii.gz
 ```
 
-The following variables are editable at the top of `scripts/run_pipeline.sh`:
+Host isn't git/git-annex (e.g. Zenodo)? Write `scripts/download_<name>.sh` producing a BIDS-shaped tree under `data/raw/<name>/` — see `scripts/download_totalsegmentator.sh`.
 
-| Variable | Description |
+### Train (the one command)
+
+```bash
+bash scripts/train_all.sh              # add --no-wandb to disable W&B logging
+```
+
+Produces `runs/<TS>_det/` and `runs/<TS>_cls/`, then prints the `export_model.py` command to run next.
+
+### Run a single step / debug
+
+```bash
+python scripts/run_pipeline.py --run-dir runs/20260101_120000 --start 5 --end 5   # rerun one step
+python scripts/run_pipeline.py --mode classification                              # full run, one mode
+```
+
+| Option | Description |
 |---|---|
-| `PLANE` | `axial` or `sagittal` |
-| `START_STEP` / `END_STEP` | Run only a subset of steps (1–9) |
-| `MAKE_SPLITS` | `true` to regenerate train/val/test splits from scratch |
-| `SEED` | Global random seed propagated to all scripts (default `50`) |
-| `AXIAL_SI_RES` / `AXIAL_INPLANE_RES` | Resampling resolutions for axial plane (mm) |
-| `SAG_SI_RES` / `SAG_INPLANE_RES` | Resampling resolutions for sagittal plane (mm) |
-| `SAG_SC_PAD` | Sagittal: slices kept = SC extent ± this value (mm) |
-| `SAG_SC_RATIO` | Sagittal: SC/non-SC slice balance ratio in the YOLO dataset |
-| `DATASET_FACTORS` | Per-dataset oversampling multipliers applied at step 4 (train split only) |
-| `WITH_CANAL` | `true` to also extract the spinal canal as a second detection class |
-| `MODEL` | YOLO model variant (e.g. `yolo26n.pt`, `yolo26s.pt`) |
-| `EPOCHS` | Number of training epochs |
-| `IMGSZ` | Input image size for training |
-| `FL_GAMMA` | Focal loss gamma (`0` = standard BCE) |
-| `WORKERS` | Number of dataloader workers |
-| `OVERRIDE_PROCESSED_DIR` / `OVERRIDE_DATASET_DIR` / `OVERRIDE_RUN_ID` | Point steps 4–9 to an existing directory |
+| `--run-dir` | Output directory (default `runs/<timestamp>/`) |
+| `--start` / `--end` | Run only a subset of steps (1–9) |
+| `--mode` | `detection` or `classification` — overrides `configs/training.yaml` |
+| `--no-wandb` | Disable Weights & Biases logging |
+| `--require-clean` | Abort if the repo has uncommitted changes |
 
-Output directories are prefixed with `pipeline_` (processed, datasets) and `pipeline_run_` (checkpoints, predictions).
+### Pipeline steps
 
-### Step-by-step pipeline
-
-#### Step 1 — Download datasets
-
-```bash
-bash scripts/download_all_datasets.sh
-```
-
-Datasets are downloaded to `data/raw/`.
-
----
-
-#### Step 2 — Generate train/val/test splits
-
-```bash
-python scripts/make_splits.py
-```
-
-Output: `data/datasplits/from_raw/datasplit_<dataset>_seed<SEED>.yaml` (one file per dataset).
-
----
-
-#### Step 3 — Preprocess
-
-```bash
-python scripts/preprocess.py --si-res 10.0 --axial-res 1.0
-```
-
-For pseudo-RGB (2.5D) input (R=prev slice, G=current, B=next):
-
-```bash
-python scripts/preprocess.py --si-res 10.0 --axial-res 1.0 --3ch
-```
-
-Output: `processed/10mm_SI_1mm_axial/<dataset>/<patient>/png/` and `txt/`.
-
----
-
-#### Step 4 — Build YOLO dataset
-
-```bash
-python scripts/build_dataset.py \
-    --processed processed/10mm_SI_1mm_axial \
-    --out datasets/10mm_SI_1mm_axial
-```
-
----
-
-#### Step 5 — Train
-
-```bash
-python scripts/train.py \
-    --dataset-yaml datasets/10mm_SI_1mm_axial/dataset.yaml \
-    --run-id yolo26_1mm_axial
-```
-
-Checkpoint saved to `checkpoints/yolo26_1mm_axial/weights/best.pt`. Training logged to Weights & Biases (project `spine_detection`).
-
----
-
-#### Step 6 — Run inference
-
-```bash
-python scripts/evaluate.py \
-    --checkpoint checkpoints/yolo26_1mm_axial/weights/best.pt \
-    --processed processed/10mm_SI_1mm_axial
-```
-
-Output: `predictions/yolo26_1mm_axial/<dataset>/<patient>/png|txt|volume/`.
-
----
-
-#### Step 7 — Compute metrics
-
-```bash
-python scripts/metrics.py \
-    --inference predictions/yolo26_1mm_axial \
-    --processed processed/10mm_SI_1mm_axial
-```
-
----
-
-#### Step 8 — Plot metrics
-
-```bash
-python scripts/plot_metrics.py \
-    --inference predictions/yolo26_1mm_axial \
-    --conf-sweep
-```
-
-| Metric | Definition |
-|---|---|
-| `iou_gt_mean` | Mean IoU on SC slices (missed SC slices contribute 0) |
-| `iou_all_mean` | Mean IoU on all slices (false detections also contribute 0) |
-
----
-
-#### Step 9 — Inspect failures
-
-```bash
-python scripts/find_failures.py \
-    --inference predictions/yolo26_1mm_axial
-```
-
----
+| # | Step | Output |
+|---|---|---|
+| 1 | Download datasets | `data/raw/<dataset>/` |
+| 2 | Preprocess | `processed/<variant>/<dataset>/<patient>/png,txt,volume/` |
+| 3 | Make splits | `<run-dir>/datasplits/` |
+| 4 | Build dataset | detection: YOLO format / classification: `sc`/`no_sc` folders, in `<run-dir>/dataset[_cls]/` |
+| 5 | Train | `<run-dir>/checkpoints[_cls]/weights/{best,last}.pt`, logged to W&B (project `spine_detection`) |
+| 6 | Evaluate | detection: bbox IoU / classification: `gap_mm_S`, `gap_mm_I` — written to `<run-dir>/predictions/` |
+| 7 | Compute metrics | `iou_3d_mm`, `gap_mm_R/L/P/A/I/S` per patient (`patients.csv`) |
+| 8 | Plot metrics | violin plots per split/metric |
+| 9 | Find failures | worst patients per metric, ranked |
 
 ### Repository structure
 
 ```
 data/
-  raw/                      ← BIDS datasets (read-only)
-  datasplits/from_raw/      ← train/val/test split YAMLs
-processed/                  ← preprocessed PNG slices + YOLO labels
-datasets/                   ← flat symlinks for YOLO training
-checkpoints/                ← trained model weights
-predictions/                ← inference outputs, metrics, plots, failures
+  raw/                      ← BIDS datasets (read-only, gitignored)
+  datasplits_seed50/        ← tracked reference train/val/test split YAMLs
+processed/                  ← preprocessed PNG slices + YOLO labels (gitignored)
+runs/<TS>/                  ← one full pipeline run: configs snapshot, dataset, checkpoints, predictions (gitignored)
 scripts/                    ← all pipeline scripts
 ```
 
-`processed/`, `datasets/`, `checkpoints/`, `predictions/` are gitignored.
+`data/` (except the tracked split/summary files above), `processed/`, `runs/`, `checkpoints/`, `predictions/`, `datasets/`, `wandb/` are all gitignored.
 
----
+### Release
 
-## Faire une release
+One command publishes a trained detector + classifier as a `sc-crop` release:
 
-Après avoir entraîné un nouveau détecteur et un nouveau classifieur, une seule commande publie la release complète sur les deux dépôts :
+Edit the variables at the top of `scripts/release.sh` (this is the file content to change, not a command to run):
+
+```bash
+DET_RUN="runs/YYYYMMDD_XXXXXX"        # detector run
+CLS_RUN="runs/YYYYMMDD_XXXXXX"        # classifier run
+MODEL_VERSION="0.0.X"                 # next model tag on ivadomed/sc-crop
+PACKAGE_VERSION="0.1.X"               # next package tag on ivadomed/sc-crop
+DET_CHECKPOINT="best.pt"              # best.pt | last.pt
+CLS_CHECKPOINT="loss_best.pt"         # best.pt | loss_best.pt | last.pt
+```
+
+Then run:
 
 ```bash
 bash scripts/release.sh
 ```
 
-Le script fait les 8 étapes dans l'ordre : export ONNX, calcul des SHA256, création de la release GitHub sur `ivadomed/sc-crop`, tag du repo de training, mise à jour de `download.py`, mise à jour de `VERSIONS.md`, bump de version du package, commit + tag + push.
-
-**Avant de lancer**, modifier les 4 variables en haut de `scripts/release.sh` :
-
-```bash
-DET_RUN="runs/YYYYMMDD_XXXXXX"   # run du détecteur
-CLS_RUN="runs/YYYYMMDD_XXXXXX"   # run du classifieur
-MODEL_VERSION="0.0.X"             # prochain tag modèle sur ivadomed/sc-crop
-PACKAGE_VERSION="0.1.X"           # prochain tag package sur ivadomed/sc-crop
-```
-
-Le lien entre versions de package, versions de modèle et runs d'entraînement est documenté dans [VERSIONS.md](https://github.com/ivadomed/sc-crop/blob/main/VERSIONS.md) du dépôt sc-crop.
+See [VERSIONS.md](https://github.com/ivadomed/sc-crop/blob/main/VERSIONS.md) on the `sc-crop` repo for how package/model versions map to training runs.

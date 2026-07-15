@@ -15,16 +15,44 @@ set -euo pipefail
 # ── VARIABLES À MODIFIER ENTRE DEUX RELEASES ────────────────
 DET_RUN="runs/20260528_192341"        # run du détecteur
 CLS_RUN="runs/20260529_090157"        # run du classifieur
-MODEL_VERSION="0.0.7"                 # version du modèle  → tag vMODEL_VERSION sur sc-crop
-PACKAGE_VERSION="0.1.7"              # version du package → tag vPACKAGE_VERSION sur sc-crop
+MODEL_VERSION="0.0.9"                 # version du modèle  → tag vMODEL_VERSION sur sc-crop
+PACKAGE_VERSION="0.1.9"              # version du package → tag vPACKAGE_VERSION sur sc-crop
 DET_CHECKPOINT="best.pt"             # poids détecteur  : best.pt | last.pt
 CLS_CHECKPOINT="loss_best.pt"             # poids classifieur: best.pt | loss_best.pt | last.pt
 # ─────────────────────────────────────────────────────────────
 
 TRAINING_REPO="$(cd "$(dirname "$0")/.." && pwd)"
-SCCROP_REPO="/home/quentinr/sc-crop"
-PYTHON="/home/quentinr/.conda/envs/sc_crop_training/bin/python"
+SCCROP_REPO="${SCCROP_REPO:-$(cd "${TRAINING_REPO}/../sc-crop" && pwd)}"
+PYTHON="$(command -v python)"
 OUT_DIR="${TRAINING_REPO}/release_export"
+
+[ -d "${SCCROP_REPO}/.git" ] || { echo "ERREUR : SCCROP_REPO=${SCCROP_REPO} n'est pas un clone de sc-crop. Exporte SCCROP_REPO=/chemin/vers/sc-crop."; exit 1; }
+command -v gh >/dev/null || { echo "ERREUR : gh (GitHub CLI) introuvable dans le PATH."; exit 1; }
+gh auth status >/dev/null 2>&1 || { echo "ERREUR : gh non authentifié — lance 'gh auth login'."; exit 1; }
+
+# Garde-fou anti-dérive : la version doit être strictement supérieure à la dernière publiée
+# dans sc-crop/VERSIONS.md (déjà pris en défaut une fois : brouillon local à 0.0.9/0.1.9
+# alors que v0.0.10 était déjà publié).
+LAST_PUBLISHED=$("$PYTHON" -c "
+import re
+text = open('${SCCROP_REPO}/VERSIONS.md').read()
+rows = re.findall(r'^\| v([\d.]+)\s*\| v([\d.]+)\s*\|', text, re.MULTILINE)
+pkg, model = rows[0]
+print(f'{pkg} {model}')
+")
+LAST_PACKAGE_VERSION="${LAST_PUBLISHED%% *}"
+LAST_MODEL_VERSION="${LAST_PUBLISHED##* }"
+
+version_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" = "$1" ]; }
+
+if ! version_gt "${PACKAGE_VERSION}" "${LAST_PACKAGE_VERSION}"; then
+    echo "ERREUR : PACKAGE_VERSION=${PACKAGE_VERSION} n'est pas > dernière version publiée v${LAST_PACKAGE_VERSION} (VERSIONS.md)."
+    exit 1
+fi
+if ! version_gt "${MODEL_VERSION}" "${LAST_MODEL_VERSION}"; then
+    echo "ERREUR : MODEL_VERSION=${MODEL_VERSION} n'est pas > dernière version publiée v${LAST_MODEL_VERSION} (VERSIONS.md)."
+    exit 1
+fi
 
 EXPORT_ONLY=false
 RELEASE_ONLY=false

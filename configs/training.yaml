@@ -2,12 +2,12 @@
 # mode selects which section (detection|classification) to run.
 # Common keys (seed, device, workers, wandb_*) apply to both modes.
 
-mode: classification  # detection | classification
+mode: detection  # detection | classification
 
 seed: 50
 device: "0"
 workers: 2
-wandb_entity: quentin-revillon-neuropoly
+wandb_entity: null  # null = default entity of whoever is logged in (`wandb login`); set to a team name to log there
 wandb_project: spine_detection
 
 detection:

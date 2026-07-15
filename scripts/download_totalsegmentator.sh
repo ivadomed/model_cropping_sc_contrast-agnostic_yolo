@@ -11,6 +11,8 @@
 #
 # Le ZIP est extrait dans data/ (pas data/raw/) pour éviter que preprocess.py
 # ne rencontre un dataset inconnu et plante sur DATASET_MASK_SUFFIX[name].
+# Le ZIP lui-même (~22 Go) est supprimé une fois l'extraction faite — seul
+# data/Totalsegmentator_dataset_v201/ (fichiers réels) est conservé, jamais commité (data/ est gitignored).
 #
 # Usage:
 #   bash scripts/download_totalsegmentator.sh
@@ -46,6 +48,9 @@ else
 fi
 
 [ ! -d "$EXTRACT_DIR" ] && { echo "ERROR: $EXTRACT_DIR introuvable après extraction."; exit 1; }
+
+# Le zip ne sert qu'à l'extraction ci-dessus — inutile une fois EXTRACT_DIR peuplé (~22 Go).
+[ -f "$ZIP_FILE" ] && rm -f "$ZIP_FILE"
 
 # ── 3. Structure BIDS (symlinks dans data/raw/totalsegmentator/) ───────────────
 if [ -d "$BIDS_DIR" ]; then

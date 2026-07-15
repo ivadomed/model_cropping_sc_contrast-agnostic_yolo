@@ -162,7 +162,6 @@ PREDICTIONS — deux hiérarchies selon le script d'origine
       │           ├── gt/             ← symlink → processed/<dataset>/<patient>/
       │           ├── meta.yaml
       │           └── metrics/
-      │               ├── slices.csv
       │               └── patient.csv
       ├── metrics/
       │   ├── per_split/
@@ -182,36 +181,6 @@ PREDICTIONS — deux hiérarchies selon le script d'origine
       │               └── <metric>_globals_conf0.1.png  ← tous splits, couleurs différentes + max dashed lines
       └── patients.csv
 
-  infer.py → structure avec sous-dossier slices/ (utilisée par reconstruct.py)
-  predictions/
-  └── <run_id>/
-      └── <dataset>/
-          └── <patient>/
-              ├── slices/
-              │   ├── png/        ← slices avec bbox pred superposée
-              │   └── txt/        ← prédictions YOLO brutes (5 champs, sans conf)
-              └── volume/
-                  └── bbox_3d.txt
-
-RECONSTRUCTIONS — hiérarchie exacte
-  reconstructions/
-  └── <run_id>/
-      └── <dataset>/
-          └── <patient>/
-              ├── original.nii.gz             ← symlink -> data/raw/...
-              ├── mask_original.nii.gz        ← symlink -> data/raw/...*_mask.nii.gz
-              ├── pred_slices_stacked.nii.gz  ← volume binaire reconstruit depuis bbox prédites
-              └── gt_slices_stacked.nii.gz    ← volume binaire reconstruit depuis labels GT
-
-SANDBOX — hiérarchie exacte (usage test uniquement, écrasé à chaque run)
-  sandbox/
-  └── <patient>/
-      ├── png/ txt/ volume/bbox_3d.txt          ← préprocessing GT
-      ├── slices/png/ slices/txt/ volume_pred/  ← inférence
-      ├── original.nii.gz mask_original.nii.gz  ← symlinks
-      ├── pred_slices_stacked.nii.gz
-      └── gt_slices_stacked.nii.gz
-
 DATASETS — généré par build_dataset.py, jamais versionné
   datasets[_<suffix>]/
   ├── dataset.yaml                ← config YOLO (path absolu, classes, splits)
@@ -219,8 +188,9 @@ DATASETS — généré par build_dataset.py, jamais versionné
   └── labels/train/ val/ test/    ← symlinks plats vers processed/.../txt/
   nommage symlink : <dataset>_<subject>[_<contrast>]_slice_NNN.png
 
-SPLITS — un yaml par dataset (data/datasplits/)
-  data/datasplits/datasplit_<dataset>_seed50.yaml
+SPLITS — un yaml par dataset, régénéré à chaque run dans <run-dir>/datasplits/
+  <run-dir>/datasplits/datasplit_<dataset>_seed50.yaml
+  data/datasplits_seed50/ contient la référence trackée (seed50, générée une fois, committée)
   format : train/val/test: [sub-xxx, ...]  (noms de sujets BIDS)
   build_dataset.py mappe sub-xxx → tous les dossiers sub-xxx_* dans processed/
   metrics.py/find_failures.py : sujets absents du split → marqués "unknown" dans le CSV
@@ -256,8 +226,6 @@ SCRIPTS — un script, une responsabilité
   │                              parse configs/datasets.yaml via Python one-liner (name|url_ssh|commit)
   │                              git clone + git annex dead here + git checkout <commit> si pinné
   │                              loggue les commits dans data/raw/git_branch_commit.log
-  ├── explore_stats.py  ← data/raw/ → dataset_stats.csv
-  │                       reorientation virtuelle LAS, rapporte shape/résolution/FOV mm
   ├── preprocess.py     ← data/raw/ → processed_{res}mm_SI[_{axial}mm_axial][_3ch]/
   │                       --si-res obligatoire, réoriente LAS, rééchantillonne via nibabel.processing (order=1)
   │                       --axial-res : rééchantillonnage isotropique du plan axial (RL, AP) en même temps que SI
@@ -269,49 +237,32 @@ SCRIPTS — un script, une responsabilité
   │                       écrit processed/<variant>/skipped.log (TSV: dataset/subject/reason) si des sujets
   │                       sont sautés : missing_nifti (git annex non téléchargé) ou no_sc_voxels (masque vide)
   │                       --update-meta --out <dir> : patche les meta.yaml existants sans re-préprocesser
-  ├── build_dataset.py  ← processed/ + data/datasplits/*.yaml → datasets/
+  ├── build_dataset.py  ← processed/ + <run-dir>/datasplits/*.yaml → datasets/
   │                       --processed processed_10mm_SI --out datasets_10mm_SI
   ├── train.py          ← datasets/ → checkpoints[_cls]/<run_id>/weights/{best,last}.pt
   │                       --mode detection|classification --dataset <yaml|dir> --run-dir <dir>
   │                       dispatche sur mode, lit configs/training.yaml (sections detection/classification)
   │                       sauvegarde resolved_config.yaml (toutes valeurs + git hash) dans run-dir
-  ├── infer.py          ← processed/ + checkpoint → predictions/<run_id>/ (structure slices/)
-  │                       filtré par split yaml + partition, txt sans conf (5 champs)
-  ├── reconstruct.py    ← predictions/<run_id>/ + data/raw/ → reconstructions/<run_id>/
   ├── evaluate.py       ← processed/ + checkpoint → predictions/<run_id>/predictions/
   │                       seuil unique CONF_THRESH=0.1 (défaut, injectable via --conf)
   │                       par patient : txt (bbox + conf), png (GT vert + pred rouge), volume/bbox_3d.txt
   │                       format txt préd : "0 cx cy w h conf" (champ conf en plus du format YOLO standard)
   ├── metrics.py        ← --inference predictions/<run_id>/ --processed processed/
-  │                       → predictions/<run_id>/predictions/<dataset>/<patient>/metrics/slices.csv
+  │                       → predictions/<run_id>/predictions/<dataset>/<patient>/metrics/patient.csv
   │                       → predictions/<run_id>/patients.csv
-  │                       colonnes slices.csv : slice_idx, has_gt, has_pred, pred_conf,
-  │                         iou (vs GT même slice, 0 si absent), iou_nearest_gt (vs GT voisin si pas de GT, 0 si pas de pred),
-  │                         z_dist_to_ref_gt, ref_gt_slice, is_fp, is_fn
-  │                       seuil CONF_THRESH=0.5 (injectable via --conf) pour precision/recall/f1
-  │                       SOURCE DE VÉRITÉ : slices.csv et patients.csv sont la base de tous les scripts aval
-  │                       --cls-inference <run_cls>/predictions : active les métriques _clsfilt
-  │                         filtre les pred_boxes du run de détection au z-range du run de classification
-  │                         (z_min/z_max déterminés par les txts non-vides du run cls) sans ré-inférence
+  │                       colonnes patient.csv (une ligne par conf_thresh) : conf_thresh, iou_3d_mm,
+  │                         gap_mm_R/L/P/A/I/S (padding mm signé par face, LAS)
+  │                       reconstruit le bbox 3D pred depuis txt/ (union des slices au-dessus du seuil)
+  │                         et le compare au bbox 3D GT (processed/.../volume/bbox_3d.txt)
+  │                       SOURCE DE VÉRITÉ : patients.csv + patient.csv sont la base de tous les scripts aval
+  │                       --metrics restreint les colonnes calculées/patchées (défaut : les 7 ci-dessus)
   ├── find_failures.py  ← --inference predictions/<run_id>/  (requiert patients.csv de metrics.py)
   │                       → predictions/<run_id>/metrics/per_split/<split>/<metric>/<conf>/failures/<dataset>/
-  │                       score_fail = (fp_rate + fn_rate) / 2 ; --top-k (défaut 20) ; --split optionnel
-  ├── border_metrics.py ← --inference predictions/<run_id>/  (requiert slices.csv de metrics.py)
-  │                       analyse les deux extrémités de la moelle indépendamment :
-  │                         SUPERIOR (jonction moelle/cerveau) : boundary_z = max GT slice
-  │                           niveau 0 = dernière slice avec GT ; -k = dans la moelle ; +k = au-dessus (FP zone)
-  │                         INFERIOR (début des lombaires) : boundary_z = min GT slice
-  │                           niveau 0 = première slice avec GT ; -k = en dessous (FP zone) ; +k = dans la moelle
-  │                       → border_metrics_{superior,inferior}.csv  (une ligne par slice par niveau)
-  │                       → border_iou_{superior,inferior}.png      (violin IoU, GT slices uniquement)
-  │                       → border_fp_fn_{superior,inferior}.png    (barres FP/FN, niveaux -N à +N)
-  │                       n_total affiché dans les labels de l'axe x des barres (dénominateur réel)
-  │                       FP = prédiction présente avec IoU < seuil ; FN = GT présent sans aucune prédiction
-  │                       splits traités : test + unknown ; paramètres : --n (défaut 5), --conf (0.5), --iou-thresh (0.5)
-  │                       --datasets filtre sur un sous-ensemble ; par défaut auto-détection via slices.csv existants
-  │                       PAS de --processed : lit slices.csv depuis predictions/<run_id>/predictions/<dataset>/<patient>/metrics/
-  ├── predict_volume.py ← image.nii.gz + checkpoint → bbox_pred.nii.gz (overlay FSLeyes)
-  │                       réoriente LAS, infère à --si-res (défaut 10.0mm), reprojette sur résolution native
-  │                       zoom_factor = orig_si_mm / si_res → round(z_orig * zoom_factor) = z_inf
-  │                       même dimensions et affine que l'entrée LAS → superposable dans FSLeyes
-  └── run_pipeline.py   ← image + masque + --si-res → sandbox/ (test end-to-end)
+  │                       classement indépendant par métrique (iou_3d_mm croissant, gap_mm_* décroissant,
+  │                         gap_mm_*_neg croissant) ; --top-k (défaut 10) ; --split optionnel
+  ├── run_pipeline.py   ← orchestrateur des 9 étapes (download→preprocess→splits→build→train→
+  │                       eval→metrics→plot→failures), lit configs/*.yaml, --mode override le mode
+  ├── train_all.sh      ← lance run_pipeline.py en mode detection PUIS classification
+  │                       (deux run-dirs distincts <root>_det/ et <root>_cls/), imprime la
+  │                       commande export_model.py à lancer ensuite
+  └── export_model.py + release.sh ← voir "Faire une release" dans README.md

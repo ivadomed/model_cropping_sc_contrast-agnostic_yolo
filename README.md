@@ -1,122 +1,28 @@
-# Contrast-agnostic spinal cord detection and cropping
+# Spinal cord detection model — training
 
-Detects the spinal cord on any MRI volume and outputs a tight 3D bounding box (a text file countaining the coordinates of the bounding box by default). Works across contrasts (T1, T2, MP2RAGE, DWI…), field strengths, and pathologies. Based on a YOLO26n model trained on multiple datasets covering cervical and lumbar spine.
+Trains the YOLO26n detector + classifier that find the spinal cord on **axial** MRI slices, contrast-agnostic (T1, T2, MP2RAGE, DWI…), across field strengths and pathologies, cervical and lumbar. Per-slice detections are aggregated into a 3D bounding box.
 
 <img width="1713" height="727" alt="image" src="https://github.com/user-attachments/assets/d8958227-06b6-4430-9378-4a6f91e9741d" />
 
----
+*(example crop produced by `sc-crop`, the inference package built from a model trained here)*
 
-## sc_crop — crop an MRI volume around the spinal cord
-
-`sc_crop` is a standalone Python package. It uses the pre-trained model from this repository and requires no knowledge of the training pipeline.
-
-### Install
-
-**Option A — conda (recommended)**
+This repository only trains the model. **It does not run inference.** To crop a volume with an already-trained model, use [`sc-crop`](https://github.com/ivadomed/sc-crop) — a separate, standalone Python package/repository:
 
 ```bash
-mkdir sc_crop && cd sc_crop
-conda create -p venv python=3.12
-git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
-conda activate ./venv
-pip install model_cropping_sc_contrast-agnostic_yolo/sc_crop/
+pip install git+https://github.com/ivadomed/sc-crop.git
+sc-crop download          # first use only
+sc-crop -i t2.nii.gz
 ```
 
-**Option B — venv**
-
-```bash
-mkdir sc_crop && cd sc_crop
-python3.12 -m venv venv
-git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo.git
-source venv/bin/activate
-pip install model_cropping_sc_contrast-agnostic_yolo/sc_crop/
-```
-
-**_Optional_ — Run these commands to use `sc_crop` without having to activate the virtual environment each time:**
-
-```bash
-mkdir -p ~/.local/bin
-ln -s sc_crop/venv/bin/sc_crop ~/.local/bin/sc_crop
-```
-
-Make sure `~/.local/bin` is in your `PATH` (add to `~/.bashrc` or `~/.zshrc` if needed):
-
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-After this, `sc_crop` works directly from any terminal without environment activation.
-___
-
-### Usage
-
-#### Environment activation (Skip if the environment is already activated or if _Optional_ section was followed)
-
-```bash
-source sc_crop/venv/bin/activate   # venv
-```
-
-```bash
-conda activate sc_crop/venv        # conda
-```
-
-#### Download the model (first use only):
-
-```bash
-sc_crop download
-```
-
-#### Crop a volume around the spinal cord
-
-```bash
-sc_crop -i t2.nii.gz
-```
-
-Outputs `t2_bbox.txt` next to the input with the inclusive voxel bounding box in native image space, compatible with SCT's `sct_crop_image`.
-
-##### Optional parameters
-
-| Parameter | Description | Default |
-|---|---|---|
-| `-o OUTPUT` | Output path (bbox txt, or crop volume if `--crop`) | `<stem>_bbox.txt` |
-| `--crop` | Also save the cropped volume | off |
-| `--las` | Output cropped volume in LAS orientation (requires `--crop`) | off |
-| `--no-translate` | Do not update affine (by default affine is updated for correct FSLeyes overlay) | off |
-| `--padding-rl MM` | Right-Left padding in mm | 10 |
-| `--padding-ap MM` | Anterior-Posterior padding in mm | 15 |
-| `--padding-si MM` | Superior-Inferior padding in mm | 20 |
-| `--conf FLOAT` | Detection confidence threshold | from config |
-| `--debug` | Save `<stem>_debug.png` (per-slice panel with bbox) | off |
-| `--time` | Print elapsed time per pipeline step | off |
-
-
-### Python API
-
-```python
-from sc_crop.crop import run
-
-result = run("t2.nii.gz")                             # bbox txt only
-result = run("t2.nii.gz", crop=True)                  # + cropped volume (native)
-result = run("t2.nii.gz", crop=True, las=True)        # + cropped volume (LAS)
-result = run("t2.nii.gz", crop=True, translate=False) # affine NOT updated
-
-# result keys: bbox_file, xmin, xmax, ymin, ymax, zmin, zmax, original_axcodes
-# + output (if crop=True)
-```
-
-### Requirements (automatically downloaded)
-
-Python ≥ 3.8. Pinned versions installed automatically by pip:
-`nibabel==5.3.3`, `numpy==2.0.2`, `pillow==11.3.0`, `pyyaml==6.0.2`, `ultralytics==8.4.33`.
+See the [`sc-crop` README](https://github.com/ivadomed/sc-crop#readme) for the full CLI/API. The link between a trained run here and a published `sc-crop` version is documented in [VERSIONS.md](https://github.com/ivadomed/sc-crop/blob/main/VERSIONS.md) on that repo.
 
 ---
-
-## Training the model
 
 ### Method
 
-- Spinal cord detected on 2.5D axial and sagittal slices using YOLO26n
+- Spinal cord detected on 2.5D **axial** slices using YOLO26n — this is what `sc-crop` ships (`export_model.py` only reads the `axial` section of `configs/preprocess.yaml`)
 - Detections aggregated across slices to reconstruct a 3D bounding box
+- Sagittal preprocessing (`--plane sagittal`) also exists in `preprocess.py` as an experimental alternative, not currently part of the release pipeline
 
 ### Datasets
 

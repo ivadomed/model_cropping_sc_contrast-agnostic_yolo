@@ -4,8 +4,9 @@
 #
 # Prerequisites:
 #   - git-annex installed
-#   - conda environment "contrast_agnostic" activated
-#   - SSH key access recommended (falls back to HTTPS if SSH unavailable)
+#   - conda environment activated
+#   - public SSH key added to data.neuro.polymtl.ca and spineimage.ca (falls back to
+#     HTTPS per-dataset if SSH fails, but crashes if both fail — no dataset is skipped silently)
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."   # run from project root
@@ -49,7 +50,7 @@ while IFS='|' read -r name url_ssh url_https commit host; do
     fi
 
     cloned=0
-    if [ -n "$url_ssh" ] && git clone "$url_ssh" "$DATA_DIR/$name" 2>/dev/null; then
+    if [ -n "$url_ssh" ] && git clone "$url_ssh" "$DATA_DIR/$name"; then
         echo "  -> Cloned via SSH."
         cloned=1
     elif [ -n "$url_https" ] && git clone "$url_https" "$DATA_DIR/$name"; then
@@ -58,8 +59,11 @@ while IFS='|' read -r name url_ssh url_https commit host; do
     fi
 
     if [ "$cloned" -eq 0 ]; then
-        echo "  ERROR: failed to clone $name, skipping."
-        continue
+        echo ""
+        echo "ERROR: failed to clone $name (SSH and HTTPS both failed, see git errors above)."
+        echo "Most likely cause: your public SSH key isn't registered on the data host —"
+        echo "add it at https://data.neuro.polymtl.ca/user/settings/keys (or spineimage.ca)."
+        exit 1
     fi
 
     git -C "$DATA_DIR/$name" annex dead here
@@ -96,10 +100,11 @@ done
 echo ""
 echo "=========================================="
 if (( ${#failed_datasets[@]} > 0 )); then
-    echo "WARNING: git annex get incomplete for:"
+    echo "ERROR: git annex get failed for:"
     printf "  - %s\n" "${failed_datasets[@]}"
-    echo "  Affected subjects will be skipped by preprocess.py."
-else
-    echo "Done!"
+    echo "Most likely cause: your public SSH key isn't registered on the data host —"
+    echo "add it at https://data.neuro.polymtl.ca/user/settings/keys (or spineimage.ca)."
+    exit 1
 fi
+echo "Done!"
 echo "=========================================="

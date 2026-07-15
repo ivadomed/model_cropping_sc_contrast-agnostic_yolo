@@ -20,9 +20,8 @@ See the [`sc-crop` README](https://github.com/ivadomed/sc-crop#readme) for the f
 
 ### Method
 
-- Spinal cord detected on 2.5D **axial** slices using YOLO26n — this is what `sc-crop` ships (`export_model.py` only reads the `axial` section of `configs/preprocess.yaml`)
+- Spinal cord detected on 2.5D **axial** slices using YOLO26n
 - Detections aggregated across slices to reconstruct a 3D bounding box
-- Sagittal preprocessing (`--plane sagittal`) also exists in `preprocess.py` as an experimental alternative, not currently part of the release pipeline
 
 ### Datasets
 

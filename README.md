@@ -42,7 +42,9 @@ Add your public SSH key to [data.neuro.polymtl.ca](https://data.neuro.polymtl.ca
 
 
 
-### Train (the one command)
+### Train (the one command) that dowloads datasets, train a detector and classifier
+
+Data dowloading and preprocessing are skipped if already done.
 
 ```bash
 bash scripts/train_all.sh              # add --no-wandb to disable W&B logging

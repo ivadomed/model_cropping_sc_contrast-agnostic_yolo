@@ -6,7 +6,11 @@
 #   - git-annex installed
 #   - conda environment activated
 #   - public SSH key added to data.neuro.polymtl.ca and spineimage.ca (falls back to
-#     HTTPS per-dataset if SSH fails, but crashes if both fail — no dataset is skipped silently)
+#     HTTPS per-dataset if SSH fails)
+#
+# A dataset that fails to clone or to fully download does NOT stop the script — it's
+# reported in the final summary instead. preprocess.py skips subjects/datasets whose
+# NIfTI files are missing (logged to processed/<variant>/skipped.log).
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."   # run from project root
@@ -15,6 +19,9 @@ DATA_DIR="data/raw"
 LOG="$DATA_DIR/git_branch_commit.log"
 
 mkdir -p "$DATA_DIR"
+
+failed_clone=()
+failed_annex=()
 
 # Parse datasets.yaml once → lines of "name|url_ssh|url_https|commit|host"
 DATASETS=$(python - <<'EOF'
@@ -59,11 +66,9 @@ while IFS='|' read -r name url_ssh url_https commit host; do
     fi
 
     if [ "$cloned" -eq 0 ]; then
-        echo ""
-        echo "ERROR: failed to clone $name (SSH and HTTPS both failed, see git errors above)."
-        echo "Most likely cause: your public SSH key isn't registered on the data host —"
-        echo "add it at https://data.neuro.polymtl.ca/user/settings/keys (or spineimage.ca)."
-        exit 1
+        echo "  ERROR: failed to clone $name (SSH and HTTPS both failed, see git errors above) — skipping."
+        failed_clone+=("$name")
+        continue
     fi
 
     git -C "$DATA_DIR/$name" annex dead here
@@ -92,19 +97,28 @@ while IFS='|' read -r name url_ssh url_https commit host; do
     fi
 done <<< "$DATASETS"
 
-failed_datasets=()
 for i in "${!pids[@]}"; do
-    wait "${pids[$i]}" || failed_datasets+=("${dataset_names[$i]}")
+    wait "${pids[$i]}" || failed_annex+=("${dataset_names[$i]}")
 done
 
 echo ""
 echo "=========================================="
-if (( ${#failed_datasets[@]} > 0 )); then
-    echo "ERROR: git annex get failed for:"
-    printf "  - %s\n" "${failed_datasets[@]}"
-    echo "Most likely cause: your public SSH key isn't registered on the data host —"
-    echo "add it at https://data.neuro.polymtl.ca/user/settings/keys (or spineimage.ca)."
-    exit 1
+echo "Summary"
+echo "=========================================="
+if (( ${#failed_clone[@]} > 0 )); then
+    echo "Failed to clone (dataset entirely missing):"
+    printf "  - %s\n" "${failed_clone[@]}"
 fi
-echo "Done!"
+if (( ${#failed_annex[@]} > 0 )); then
+    echo "Incomplete git-annex get (some NIfTI files missing):"
+    printf "  - %s\n" "${failed_annex[@]}"
+fi
+if (( ${#failed_clone[@]} > 0 || ${#failed_annex[@]} > 0 )); then
+    echo ""
+    echo "These datasets/subjects will be skipped by preprocess.py, not fail the pipeline."
+    echo "Common cause: public SSH key not registered on the data host — add it at"
+    echo "https://data.neuro.polymtl.ca/user/settings/keys (or spineimage.ca) and rerun."
+else
+    echo "Done — all datasets fully downloaded."
+fi
 echo "=========================================="

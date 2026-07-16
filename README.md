@@ -6,15 +6,7 @@ Trains the YOLO26n detector + classifier that find the spinal cord on **axial** 
 
 *(example crop produced by `sc-crop`, the inference package built from a model trained here)*
 
-This repository only trains the model. **It does not run inference.** To crop a volume with an already-trained model, use [`sc-crop`](https://github.com/ivadomed/sc-crop) — a separate, standalone Python package/repository:
-
-```bash
-pip install git+https://github.com/ivadomed/sc-crop.git
-sc-crop download          # first use only
-sc-crop -i t2.nii.gz
-```
-
-See the [`sc-crop` README](https://github.com/ivadomed/sc-crop#readme) for the full CLI/API. The link between a trained run here and a published `sc-crop` version is documented in [VERSIONS.md](https://github.com/ivadomed/sc-crop/blob/main/VERSIONS.md) on that repo.
+This repository only trains the model. **It does not run inference.** To crop a volume with an already-trained model, use [`sc-crop`](https://github.com/ivadomed/sc-crop) — a separate, standalone Python package/repository
 
 ---
 

@@ -15,6 +15,40 @@ This repository only trains the model. **It does not run inference.** To crop a 
 - Spinal cord detected on 2.5D **axial** slices using YOLO26n
 - Detections aggregated across slices to reconstruct a 3D bounding box
 
+
+
+### Install
+
+```bash
+git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo
+cd model_cropping_sc_contrast-agnostic_yolo
+conda create -n sc_crop_training python=3.13 -y
+conda activate sc_crop_training
+pip install -r requirements.txt
+```
+
+> **Blackwell GPU (RTX PRO 6000, RTX 5090, sm_120+):** `requirements.txt` pins `torch==2.8.0` which requires CUDA 12.8 wheels not on PyPI. Install PyTorch first:
+> ```bash
+> pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
+> pip install -r requirements.txt
+> ```
+
+```bash
+sudo apt install git-annex
+```
+
+Add your public SSH key to [data.neuro.polymtl.ca](https://data.neuro.polymtl.ca/user/settings/keys) and to [spineimage.ca](https://spineimage.ca/user/settings/keys).
+
+
+
+### Train (the one command)
+
+```bash
+bash scripts/train_all.sh              # add --no-wandb to disable W&B logging
+```
+
+Produces `runs/<TS>_det/` and `runs/<TS>_cls/`, then prints the `export_model.py` command to run next.
+
 ### Datasets
 
 18 MRI datasets covering cervical and lumbar spine, multiple contrasts and pathologies.
@@ -41,28 +75,6 @@ From spineimage.ca:
 17. [site_006](https://spineimage.ca/MON/site_006)
 18. [site_007](https://spineimage.ca/VGH/site_007)
 
-### Install
-
-```bash
-git clone https://github.com/ivadomed/model_cropping_sc_contrast-agnostic_yolo
-cd model_cropping_sc_contrast-agnostic_yolo
-conda create -n sc_crop_training python=3.13 -y
-conda activate sc_crop_training
-pip install -r requirements.txt
-```
-
-> **Blackwell GPU (RTX PRO 6000, RTX 5090, sm_120+):** `requirements.txt` pins `torch==2.8.0` which requires CUDA 12.8 wheels not on PyPI. Install PyTorch first:
-> ```bash
-> pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
-> pip install -r requirements.txt
-> ```
-
-```bash
-sudo apt install git-annex
-```
-
-Add your public SSH key to [data.neuro.polymtl.ca](https://data.neuro.polymtl.ca/user/settings/keys) and to [spineimage.ca](https://spineimage.ca/user/settings/keys).
-
 ### Adding a new dataset
 
 Add a registry entry in `configs/datasets.yaml` (read exclusively by `download_all_datasets.sh` — no code change needed):
@@ -78,28 +90,6 @@ Add a registry entry in `configs/datasets.yaml` (read exclusively by `download_a
 
 Host isn't git/git-annex (e.g. Zenodo)? Write `scripts/download_<name>.sh` producing a BIDS-shaped tree under `data/raw/<name>/` — see `scripts/download_totalsegmentator.sh`.
 
-### Train (the one command)
-
-```bash
-bash scripts/train_all.sh              # add --no-wandb to disable W&B logging
-```
-
-Produces `runs/<TS>_det/` and `runs/<TS>_cls/`, then prints the `export_model.py` command to run next.
-
-### Run a single step / debug
-
-```bash
-python scripts/run_pipeline.py --run-dir runs/20260101_120000 --start 5 --end 5   # rerun one step
-python scripts/run_pipeline.py --mode classification                              # full run, one mode
-```
-
-| Option | Description |
-|---|---|
-| `--run-dir` | Output directory (default `runs/<timestamp>/`) |
-| `--start` / `--end` | Run only a subset of steps (1–9) |
-| `--mode` | `detection` or `classification` — overrides `configs/training.yaml` |
-| `--no-wandb` | Disable Weights & Biases logging |
-| `--require-clean` | Abort if the repo has uncommitted changes |
 
 ### Pipeline steps
 

@@ -13,7 +13,7 @@ This repository only trains the model. **It does not run inference.** To crop a 
 ### Method
 
 - Spinal cord detected on 2.5D **axial** slices using YOLO26n
-- An image classifier gives a second opinion to say if there is spinal cord or not in the image (used to avoid detections of the spinal cord in the brain)
+- A YOLO26n image classifier gives a second opinion to say if there is spinal cord or not in the image (used to avoid detections of the spinal cord in the brain)
 - Detections aggregated across slices to reconstruct a 3D bounding box
 
 

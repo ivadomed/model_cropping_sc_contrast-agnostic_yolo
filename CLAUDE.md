@@ -23,6 +23,11 @@ ENVIRONNEMENT
 - ultralytics 8.4.23 (YOLO26 = modèle le plus récent, défaut : yolo26n.pt)
 - albumentations v2 installé (API : std_range=, scale_range= au lieu de var_limit=, scale_min/max=)
 - wandb installé, compte : quentin-revillon (neuropoly), project : spine_detection
+- sur romane.neuro.polymtl.ca (4× RTX A6000, driver 535.288.01, CUDA max 12.2) : env recréé en
+  python=3.12 + torch==2.5.1+cu121 / torchvision==0.20.1+cu121 (torch==2.8.0 de requirements.txt
+  n'a que des builds cu126/cu128/cu129, tous incompatibles avec ce driver — voir README
+  "Older GPU driver"). Sans ce fix, torch.cuda.is_available() retourne False silencieusement
+  alors que device_count() voit les 4 GPU.
 
 ÉTAT DES DONNÉES
 - processed/10mm_SI/            : COMPLET — tous datasets, 10mm SI, résolution native axiale, PNG grayscale

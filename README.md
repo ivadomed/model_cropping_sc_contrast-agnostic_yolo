@@ -34,6 +34,14 @@ pip install -r requirements.txt
 > pip install -r requirements.txt
 > ```
 
+> **Older GPU driver (`nvidia-smi` reports CUDA Version < 12.6, e.g. driver 535.x on Ampere-class GPUs like RTX A6000):** the only CUDA builds published for `torch==2.8.0` are `cu126`/`cu128`/`cu129`, all requiring driver ≥ 12.6 — none work here. `torch.cuda.is_available()` will silently return `False` (while `device_count()` still reports your GPUs) instead of a clear install error. The newest CUDA build compatible with driver ≤ 12.2 is `cu121`, which has no Python 3.13 wheel for `torchvision` — use **Python 3.12** for this env instead, and override torch/torchvision *after* `requirements.txt` so the `torch==2.8.0` pin doesn't clobber it:
+> ```bash
+> conda create -n sc_crop_training python=3.12 -y
+> conda activate sc_crop_training
+> pip install -r requirements.txt
+> pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+> ```
+
 ```bash
 sudo apt install git-annex
 ```
@@ -101,8 +109,8 @@ Host isn't git/git-annex (e.g. Zenodo)? Write `scripts/download_<name>.sh` produ
 | 1 | Download datasets | `data/raw/<dataset>/` |
 | 2 | Preprocess | `processed/<variant>/<dataset>/<patient>/png,txt,volume/` |
 | 3 | Make splits | `<run-dir>/datasplits/` |
-| 4 | Build dataset | detection: YOLO format / classification: `sc`/`no_sc` folders, in `<run-dir>/dataset[_cls]/` |
-| 5 | Train | `<run-dir>/checkpoints[_cls]/weights/{best,last}.pt`, logged to W&B (project `spine_detection`) |
+| 4 | Build dataset | detection: YOLO format / classification: `sc`/`no_sc` folders, in `<run-dir>/dataset/` |
+| 5 | Train | `<run-dir>/checkpoints/weights/{best,last}.pt`, logged to W&B (project `spine_detection`) |
 | 6 | Evaluate | detection: bbox IoU / classification: `gap_mm_S`, `gap_mm_I` — written to `<run-dir>/predictions/` |
 | 7 | Compute metrics | `iou_3d_mm`, `gap_mm_R/L/P/A/I/S` per patient (`patients.csv`) |
 | 8 | Plot metrics | violin plots per split/metric |
@@ -115,7 +123,7 @@ data/
   raw/                      ← BIDS datasets (read-only, gitignored)
   datasplits_seed50/        ← tracked reference train/val/test split YAMLs
 processed/                  ← preprocessed PNG slices + YOLO labels (gitignored)
-runs/<TS>/                  ← one full pipeline run: configs snapshot, dataset, checkpoints, predictions (gitignored)
+runs/<TS>/                  ← one full pipeline run: configs snapshot, dataset, checkpoints, predictions, pipeline.log (gitignored)
 scripts/                    ← all pipeline scripts
 ```
 

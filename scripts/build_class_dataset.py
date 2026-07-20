@@ -23,7 +23,7 @@ Usage:
     python scripts/build_class_dataset.py \\
         --processed processed/10mm_SI_1mm_axial_3ch \\
         --splits-dir runs/20260601_120000/datasplits \\
-        --out runs/20260601_120000/dataset_cls \\
+        --out runs/20260601_120000/dataset \\
         --superior-only
 """
 from __future__ import annotations

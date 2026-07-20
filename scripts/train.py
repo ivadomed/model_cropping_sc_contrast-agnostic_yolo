@@ -19,13 +19,13 @@ Classification (mode: classification)
              degrees=15, translate=0.1) + HSV brightness (hsv_v=0.15) + fliplr=0.5 + flipud=0.5.
              ClassificationDataset is patched to replace torchvision RandomResizedCrop+RandAugment
              (which crop content and include Grayscale, destroying pseudo-RGB channel encoding).
-  Output : <run-dir>/checkpoints_cls/weights/{best,last,loss_best}.pt
+  Output : <run-dir>/checkpoints/weights/{best,last,loss_best}.pt
              best.pt      = highest val accuracy_top1
              loss_best.pt = lowest val/loss
 
 Usage:
     python scripts/train.py --mode detection  --dataset runs/20260504/dataset/dataset.yaml --run-dir runs/20260601_120000
-    python scripts/train.py --mode classification --dataset runs/20260601_120000/dataset_cls --run-dir runs/20260601_120000
+    python scripts/train.py --mode classification --dataset runs/20260601_120000/dataset --run-dir runs/20260601_120000
     python scripts/train.py --mode detection  --dataset ... --run-dir ... --no-augment
     python scripts/train.py --mode detection  --dataset ... --run-dir ... --no-wandb
 """
@@ -401,7 +401,7 @@ def _train_classification(cfg: dict, dataset: str | Path, run_dir: Path,
         batch=batch,
         device=device,
         project=str(run_dir.resolve()),
-        name="checkpoints_cls",
+        name="checkpoints",
         patience=patience,
         workers=workers,
         seed=seed,

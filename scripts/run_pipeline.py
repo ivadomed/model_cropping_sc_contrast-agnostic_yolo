@@ -24,6 +24,7 @@ Usage:
 """
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,17 @@ from datetime import datetime
 from pathlib import Path
 
 import yaml
+
+
+def _tee_stdout_to(log_path: Path) -> None:
+    """Duplicate this process's stdout/stderr (fd 1/2) to both the terminal and log_path.
+
+    Operates at the OS file-descriptor level (via `tee`), so it also captures
+    output from subprocess.run() calls (e.g. the download step), not just print().
+    """
+    tee = subprocess.Popen(["tee", "-a", str(log_path)], stdin=subprocess.PIPE)
+    os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
+    os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
 
 
 def _run_info() -> dict:
@@ -90,6 +102,7 @@ def main():
 
     run_dir = Path(args.run_dir) if args.run_dir else Path("runs") / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
+    _tee_stdout_to(run_dir / "pipeline.log")
 
     # Check git state and save run_info.yaml
     info = _run_info()
@@ -130,13 +143,11 @@ def main():
     splits_dir      = run_dir / "datasplits"
     predictions_dir = run_dir / "predictions"
 
-    # Mode-specific paths
-    if mode == "detection":
-        dataset_dir    = run_dir / "dataset"
-        checkpoint     = run_dir / "checkpoints" / "weights" / "best.pt"
-    else:
-        dataset_dir    = run_dir / "dataset_cls"
-        checkpoint     = run_dir / "checkpoints_cls" / "weights" / "best.pt"
+    # Same "dataset"/"checkpoints" names in both modes — the mode is already encoded
+    # in the run-dir name (train_all.sh creates separate <ts>_det/<ts>_cls run-dirs).
+    dataset_dir = run_dir / "dataset"
+    checkpoint  = run_dir / "checkpoints" / "weights" / "best.pt"
+    if mode == "classification":
         cls_conf       = float(eval_cfg.get("cls_conf", 0.5))
         superior_only  = bool(training_cfg.get("classification", {}).get("superior_only", True))
         eval_sup_only  = bool(eval_cfg.get("eval_superior_only", False))
@@ -194,6 +205,7 @@ def main():
             config=cfg_dir / "training.yaml",
             dataset=dataset_path,
             run_dir=run_dir,
+            mode=mode,
             no_wandb=args.no_wandb,
         )
 

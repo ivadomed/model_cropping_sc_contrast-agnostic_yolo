@@ -27,7 +27,7 @@ Output structure:
 
 Usage:
     python scripts/evaluate_cls.py \\
-        --cls-checkpoint runs/20260601_120000/checkpoints_cls/weights/best.pt \\
+        --cls-checkpoint runs/20260601_120000/checkpoints/weights/best.pt \\
         --processed processed/10mm_SI_1mm_axial_3ch \\
         --inference runs/20260601_120000/predictions \\
         --cls-conf 0.5

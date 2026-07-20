@@ -85,7 +85,7 @@ def main():
     parser.add_argument("--det-checkpoint",  default="best.pt",
                         help="Detector weight file in checkpoints/weights/ (default: best.pt)")
     parser.add_argument("--cls-checkpoint",  default="best.pt",
-                        help="Classifier weight file in checkpoints_cls/weights/ "
+                        help="Classifier weight file in checkpoints/weights/ "
                              "(default: best.pt — use loss_best.pt for min-loss checkpoint)")
     args = parser.parse_args()
 
@@ -95,8 +95,8 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     version     = args.version
 
-    det_pt  = run_dir     / "checkpoints"     / "weights" / args.det_checkpoint
-    cls_pt  = cls_run_dir / "checkpoints_cls" / "weights" / args.cls_checkpoint
+    det_pt  = run_dir     / "checkpoints" / "weights" / args.det_checkpoint
+    cls_pt  = cls_run_dir / "checkpoints" / "weights" / args.cls_checkpoint
     assert det_pt.exists(),  f"Detector checkpoint not found: {det_pt}"
     assert cls_pt.exists(),  f"Classifier checkpoint not found: {cls_pt}"
 
@@ -104,7 +104,7 @@ def main():
     run_info = _load_yaml(run_dir / "run_info.yaml")
     cls_info = _load_yaml(cls_run_dir / "run_info.yaml")
     det_args = _load_yaml(run_dir / "checkpoints" / "args.yaml")
-    cls_args = _load_yaml(cls_run_dir / "checkpoints_cls" / "args.yaml")
+    cls_args = _load_yaml(cls_run_dir / "checkpoints" / "args.yaml")
     imgsz    = int(det_args.get("imgsz", 320))
 
     wandb_id_file = run_dir / "wandb_run_id.txt"

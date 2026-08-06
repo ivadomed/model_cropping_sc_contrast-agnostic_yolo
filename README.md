@@ -8,8 +8,7 @@ Trains the YOLO26n detector + classifier that find the spinal cord on **axial** 
 
 This repository only trains the model. **It does not run inference.** To crop a volume with an already-trained model, use [`sc-crop`](https://github.com/ivadomed/sc-crop) — a separate, standalone Python package/repository
 
-<img width="8034" height="1227" alt="Dataset Export and Release-2026-08-06-201714" src="https://github.com/user-attachments/assets/45ab2443-0b68-409b-9e7d-3a593ff2b918" />
-
+<img width="8192" height="884" alt="Dataset Export and Release-2026-08-06-202731" src="https://github.com/user-attachments/assets/82b7ef05-d8ba-4bfd-9488-c9186ef497e7" />
 
 ---
 

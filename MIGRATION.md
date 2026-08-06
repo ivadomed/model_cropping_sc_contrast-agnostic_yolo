@@ -62,15 +62,16 @@ Add `--skip-pypi` to do everything except the PyPI upload (useful if you don't h
 token handy yet, or want to review the GitHub release first).
 
 This command:
-1. Refuses to continue if `--package-version` or the model version (read from
-   `sha256.yaml`) isn't strictly greater than the last row of `VERSIONS.md` — this is
-   the guardrail against re-publishing a version by accident.
+1. Refuses to continue if `--package-version` isn't strictly greater than the last row
+   of `VERSIONS.md`. The model version (read from `sha256.yaml`) may be **equal** to the
+   last row (package-only fix, see below) but never lower — this is the guardrail
+   against re-publishing a version by accident.
 2. Creates the GitHub release `vX.Y.Z` on `ivadomed/sc-crop` with the 4 model files
-   attached.
+   attached — **skipped** if the model version is unchanged (package-only fix).
 3. Deploys `config.yaml` into `sc_crop/config.yaml` (only the inference-relevant keys —
    strips the training-side provenance fields).
 4. Updates `sc_crop/download.py`'s `_MODEL_TAG`/`_ASSETS` with the new release URL and
-   SHA256 hashes.
+   SHA256 hashes — **skipped** if the model version is unchanged, nothing to update.
 5. Inserts a new row in `VERSIONS.md`.
 6. Bumps `pyproject.toml` and `sc_crop/__init__.py` to the new package version.
 7. Commits, tags (`vX.Y.Z`), and pushes all of the above.
@@ -91,6 +92,25 @@ They don't move together. A package-only fix (no new model) bumps only the packa
 version, reusing the existing model version — several rows in `VERSIONS.md` can point to
 the same model. A new model bumps both. `VERSIONS.md` records the mapping; read its
 "Lecture du tableau" section for the full explanation.
+
+## Package-only fix (no new model)
+
+Bugfix in `sc_crop`'s code — CLI, API, padding defaults — with no retraining involved.
+You still need a local `release_export/` (Step 1's output) for `publish_release.sh` to
+read `config.yaml`/`sha256.yaml` from, even though nothing in it will actually change:
+
+- **If it's still on disk** from the last real export (`release_export/` is gitignored,
+  so check before assuming it's gone): skip straight to Step 2 with `--package-version`
+  bumped and the *same* `--export-dir`.
+- **If it's gone**: re-run Step 1 with the exact same `--version` as last time, from the
+  exact same commit that was tagged `model-vX.Y.Z` (check out that tag if you're not
+  already there). `export_model.py` re-exports the ONNX files and regenerates
+  `release_export/` without re-tagging or re-pushing — it only refuses if the tag
+  already points to a *different* commit than the one you're on.
+
+Then Step 2 as usual. `publish_release.sh` detects the model version matches the last
+row of `VERSIONS.md`, skips the GitHub model release and the `download.py` update, and
+still bumps the package version, updates `VERSIONS.md`, and publishes to PyPI.
 
 ## Verifying a release worked
 

@@ -179,11 +179,26 @@ def main():
     # ── Tag this repo at the commit that produced the export ───────────────────
     # Marks which training-repo commit v{version} was exported from — read by
     # anyone tracing a published model back to the code that trained it.
+    #
+    # release_export/ is gitignored (ephemeral) — regenerating it for an
+    # already-tagged version (e.g. to redo a package-only sc-crop release that
+    # doesn't touch the model) must stay possible. Only refuse if the existing
+    # tag points to a *different* commit than this one, which would mean the
+    # version number is being reused for genuinely different code.
     tag = f"model-v{version}"
-    existing = subprocess.run(["git", "tag", "-l", tag], capture_output=True, text=True).stdout.strip()
-    assert not existing, f"tag {tag} already exists — bump --version, this model version was already exported."
-    subprocess.run(["git", "tag", tag], check=True)
-    subprocess.run(["git", "push", "origin", tag], check=True)
+    tag_commit = subprocess.run(["git", "rev-list", "-n", "1", tag],
+                                capture_output=True, text=True).stdout.strip()
+    head_commit = _git_head()
+    if tag_commit:
+        assert tag_commit == head_commit, (
+            f"tag {tag} already exists at commit {tag_commit[:12]}, but HEAD is "
+            f"{head_commit[:12]} — bump --version instead of reusing one already "
+            f"exported from different code."
+        )
+        print(f"Tag {tag} already exists at this exact commit — not re-tagging (regenerating release_export/ only).")
+    else:
+        subprocess.run(["git", "tag", tag], check=True)
+        subprocess.run(["git", "push", "origin", tag], check=True)
 
     # ── Report ────────────────────────────────────────────────────────────────
     print(f"\n{'─'*60}")

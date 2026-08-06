@@ -6,17 +6,15 @@ Trains the YOLO26n detector + classifier that find the spinal cord on **axial** 
 
 *(example crop produced by `sc-crop`, the inference package built from a model trained here)*
 
-This repository only trains the model. **It does not run inference.** To crop a volume with an already-trained model, use [`sc-crop`](https://github.com/ivadomed/sc-crop) — a separate, standalone Python package/repository
+This repository only trains the model. **It does not run inference.** To crop a volume with an already-trained model, use [`sc-crop`](https://github.com/ivadomed/sc-crop) — a separate, standalone Python package/repository.
 
 ---
 
 ### Method
 
 - Spinal cord detected on 2.5D **axial** slices using YOLO26n
-- A YOLO26n image classifier gives a second opinion to say wheter there is spinal cord or not in the image (used to avoid detections of the spinal cord in the brain)
+- A YOLO26n image classifier gives a second opinion to say whether there is spinal cord or not in the image (used to avoid detections of the spinal cord in the brain)
 - Detections aggregated across slices to reconstruct a 3D bounding box
-
-
 
 ### Install
 
@@ -48,11 +46,9 @@ sudo apt install git-annex
 
 Add your public SSH key to [data.neuro.polymtl.ca](https://data.neuro.polymtl.ca/user/settings/keys) and to [spineimage.ca](https://spineimage.ca/user/settings/keys).
 
+### Train (the one command) that downloads datasets, trains a detector and classifier
 
-
-### Train (the one command) that dowloads datasets, train a detector and classifier
-
-Data dowloading and preprocessing are skipped if already done.
+Data downloading and preprocessing are skipped if already done.
 
 ```bash
 bash scripts/train_all.sh              # add --no-wandb to disable W&B logging
@@ -131,23 +127,34 @@ scripts/                    ← all pipeline scripts
 
 ### Release
 
-One command publishes a trained detector + classifier as a `sc-crop` release:
+Publishing a trained detector + classifier involves two repos: this one exports
+the model, [sc-crop](https://github.com/ivadomed/sc-crop) publishes it. Full
+walkthrough in [MIGRATION.md](MIGRATION.md) — summary here:
 
-Edit the variables at the top of `scripts/release.sh` (this is the file content to change, not a command to run):
-
-```bash
-DET_RUN="runs/YYYYMMDD_XXXXXX"        # detector run
-CLS_RUN="runs/YYYYMMDD_XXXXXX"        # classifier run
-MODEL_VERSION="0.0.X"                 # next model tag on ivadomed/sc-crop
-PACKAGE_VERSION="0.1.X"               # next package tag on ivadomed/sc-crop
-DET_CHECKPOINT="best.pt"              # best.pt | last.pt
-CLS_CHECKPOINT="loss_best.pt"         # best.pt | loss_best.pt | last.pt
-```
-
-Then run:
+**1. Here — export ONNX + tag this repo:**
 
 ```bash
-bash scripts/release.sh
+python scripts/export_model.py \
+    --run-dir     runs/YYYYMMDD_XXXXXX \
+    --cls-run-dir runs/YYYYMMDD_XXXXXX \
+    --version     0.0.X
 ```
+
+Produces `release_export/` (`model.pt`, `model.onnx`, `cls_model.pt`, `cls_model.onnx`,
+`config.yaml`, `sha256.yaml`) and tags this repo `model-v0.0.X` at the current commit.
+`--det-checkpoint`/`--cls-checkpoint` default to `best.pt`/`loss_best.pt` — pass
+`--det-checkpoint last.pt` etc. to use a different weight file.
+
+**2. In [sc-crop](https://github.com/ivadomed/sc-crop) — publish:**
+
+```bash
+bash scripts/publish_release.sh \
+    --export-dir release_export/ \
+    --package-version 0.1.X
+```
+
+Creates the GitHub release (model weights), deploys `config.yaml`, updates
+`download.py` and `VERSIONS.md`, bumps the package version, commits + tags + pushes,
+and publishes to PyPI. See that script's own `--skip-pypi` flag to defer the PyPI step.
 
 See [VERSIONS.md](https://github.com/ivadomed/sc-crop/blob/main/VERSIONS.md) on the `sc-crop` repo for how package/model versions map to training runs.

@@ -18,10 +18,8 @@ sagittal:
 three_ch: true       # pseudo-RGB: R=Superior neighbour, G=current, B=Inferior neighbour
 si_stride: 1        # axial only: no stride (1 slice every si_res mm)
 with_canal: false    # true = also extract spinal canal (class 1)
-norm_scope: slice_all  # slice       = percentile 0.5–99.5% par slice (voxels foreground >0 MRI, >-200 CT)
-                       # slice_all   = percentile 0.5–99.5% par slice sur TOUS les voxels (sans filtre) → processed/..._normslice_all
-                       # volume      = percentile 0.5–99.5% sur TOUS les voxels du volume (sans filtre) → processed/..._normvol
-                       # zscore      = nnUNet ZScoreNormalization : mean/std volume entier, clip [-3σ,+3σ] → processed/..._normzscore
-                       # zscore_slice = zscore par slice : mean/std de chaque slice, clip [-3σ,+3σ] → processed/..._normzscore_slice
-use_mask_for_norm: false  # zscore uniquement — false = mean/std sur TOUS les voxels (nnUNet exact) → processed/..._normzscore
-                          #                     true  = mean/std sur foreground (CT:>-200HU, MRI:>0) → processed/..._normzscore_mask
+# Doit correspondre exactement à sc_crop._volume_percentiles() / build_slices() côté inférence —
+# les 3 valeurs ci-dessous sont les seules supportées des deux côtés, vérifiées identiques.
+norm_scope: slice_all  # slice     = percentile 0.5–99.5% par slice, voxels foreground uniquement (>0 MRI, >-200 CT)
+                       # slice_all = percentile 0.5–99.5% par slice, TOUS les voxels (fond inclus) → processed/..._normslice_all
+                       # volume    = percentile 0.5–99.5% sur TOUS les voxels du volume entier, calculé une fois → processed/..._normvol

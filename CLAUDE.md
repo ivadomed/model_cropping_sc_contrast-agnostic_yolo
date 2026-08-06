@@ -270,4 +270,5 @@ SCRIPTS — un script, une responsabilité
   ├── train_all.sh      ← lance run_pipeline.py en mode detection PUIS classification
   │                       (deux run-dirs distincts <root>_det/ et <root>_cls/), imprime la
   │                       commande export_model.py à lancer ensuite
-  └── export_model.py + release.sh ← voir "Faire une release" dans README.md
+  └── export_model.py ← exporte + tag ce repo ; la publication (sc-crop, PyPI) se fait
+                          depuis l'autre repo via scripts/publish_release.sh — voir MIGRATION.md

@@ -14,10 +14,9 @@ For each (image, mask) pair in each BIDS dataset:
                           row 0 = Anterior, col 0 = Left
        --plane sagittal : iterate axis 0 (RL),  slice = img[r, :, ::-1].T shape (SI × AP) — Superior at top
        2D mode  : grayscale uint8, normalised per slice or per volume (--norm-scope)
-                  slice      = percentile 0.5–99.5% per slice (non-zero voxels)
-                  volume     = percentile 0.5–99.5% on non-zero voxels of the whole volume
-                  zscore     = nnUNet ZScoreNormalization: mean/std on all voxels, clip [-3σ,+3σ]
-                  zscore_slice = zscore computed per slice (mean/std of each slice, clip [-3σ,+3σ])
+                  slice     = percentile 0.5–99.5% per slice, foreground voxels only (>0 MRI, >-200 CT)
+                  slice_all = percentile 0.5–99.5% per slice, ALL voxels (background included)
+                  volume    = percentile 0.5–99.5% on ALL voxels of the whole volume, computed once
        2.5D mode: pseudo-RGB uint8 (R=prev, G=current, B=next) along the slice axis
                   border slices use a black frame for missing neighbours
        --si-stride N (axial only): extract 1 out of every N slices along SI after resampling to
@@ -40,8 +39,8 @@ For each (image, mask) pair in each BIDS dataset:
 Mask discovery: per-dataset explicit suffix tables DATASET_MASK_SUFFIX (SC) and
 DATASET_CANAL_SUFFIX (canal, only for datasets that have it) — crashes on unknown dataset.
 Output dir named automatically:
-  axial   : processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_normvol][_stride<N>][_sc_and_canal]
-  sagittal: processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_normvol]_sagittal[_sc_and_canal][_sc<N>mm]
+  axial   : processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_normvol|_normslice_all][_stride<N>][_sc_and_canal]
+  sagittal: processed/<si_res>mm_SI[_<axial_res>mm_axial][_3ch][_normvol|_normslice_all]_sagittal[_sc_and_canal][_sc<N>mm]
 
 Sagittal --sc-pad N:
   Only RL slices within [rl_min − N mm, rl_max + N mm] are saved, where rl_min/rl_max are the first
@@ -210,7 +209,7 @@ def _bbox3d_from_mask(mask_data: np.ndarray, H: int, W: int, Z: int,
 
 
 def process_pair(args: tuple):
-    img_path_str, mask_path_str, canal_mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm, rl_res_mm, three_ch, plane, sc_pad_mm, si_stride, norm_scope, use_mask_for_norm = args
+    img_path_str, mask_path_str, canal_mask_path_str, dataset_name, processed_str, si_res_mm, axial_res_mm, rl_res_mm, three_ch, plane, sc_pad_mm, si_stride, norm_scope = args
     img_path    = Path(img_path_str)
     patient_dir = Path(processed_str) / dataset_name / nifti_stem(img_path)
 
@@ -239,35 +238,19 @@ def process_pair(args: tuple):
     img_data  = img_r.get_fdata(dtype=np.float32)
     mask_data = np.round(mask_r.get_fdata()).astype(np.uint8)
 
-    # Volume-level lo/hi (used when norm_scope == "volume" or "zscore")
-    if norm_scope == "volume":
-        vol_lo, vol_hi = np.percentile(img_data, [0.5, 99.5])
-    elif norm_scope == "zscore":
-        # nnUNet ZScoreNormalization — clip [-3σ, +3σ] → [0, 255]
-        # use_mask_for_norm=True  : mean/std sur foreground uniquement (CT: >-200HU, MRI: >0)
-        # use_mask_for_norm=False : mean/std sur TOUS les voxels (background inclus)
-        # Seuil CT auto-détecté : si min < -100 HU → CT (threshold=-200), sinon MRI (threshold=0)
-        if use_mask_for_norm:
-            threshold = -200 if img_data.min() < -100 else 0
-            nz = img_data[img_data > threshold]
-            mean = float(nz.mean()) if len(nz) else 0.0
-            std  = max(float(nz.std()), 1e-8) if len(nz) else 1.0
-        else:
-            mean = float(img_data.mean())
-            std  = max(float(img_data.std()), 1e-8)
-        vol_lo, vol_hi = mean - 3 * std, mean + 3 * std
-    else:
-        vol_lo = vol_hi = None
+    # "volume" lo/hi: percentile over every voxel of the whole volume, computed once.
+    # Must match sc_crop._volume_percentiles() exactly (that's what runs at inference).
+    vol_lo, vol_hi = np.percentile(img_data, [0.5, 99.5]) if norm_scope == "volume" else (None, None)
 
     def _normalize(arr: np.ndarray) -> np.ndarray:
-        if norm_scope == "zscore_slice":
-            mean = float(arr.mean())
-            std  = max(float(arr.std()), 1e-8)
-            return normalize_to_uint8(arr, mean - 3 * std, mean + 3 * std)
+        if norm_scope == "slice":
+            return normalize_to_uint8(arr)  # per-slice percentile, foreground voxels only
         if norm_scope == "slice_all":
             lo, hi = np.percentile(arr, [0.5, 99.5])
             return normalize_to_uint8(arr, lo, hi)
-        return normalize_to_uint8(arr, vol_lo, vol_hi)
+        if norm_scope == "volume":
+            return normalize_to_uint8(arr, vol_lo, vol_hi)
+        raise ValueError(f"unsupported norm_scope: {norm_scope!r} (expected slice, slice_all, or volume)")
 
     canal_data = None
     if canal_mask_path_str is not None:
@@ -442,17 +425,14 @@ def update_meta_resolutions(processed_dir: Path) -> None:
 
 def output_dir_from_params(si_res: float, axial_res: float | None, rl_res: float | None,
                            three_ch: bool, norm_scope: str, si_stride: int | None,
-                           plane: str, sc_pad_mm: float | None, with_canal: bool,
-                           use_mask_for_norm: bool = False) -> Path:
+                           plane: str, sc_pad_mm: float | None, with_canal: bool) -> Path:
     """Derive the processed output directory path from preprocessing parameters."""
     name = f"{si_res:g}mm_SI"
     if axial_res  is not None: name += f"_{axial_res:g}mm_axial"
     if rl_res     is not None: name += f"_{rl_res:g}mm_RL"
     if three_ch:               name += "_3ch"
-    if norm_scope == "volume":       name += "_normvol"
-    if norm_scope == "zscore":       name += "_normzscore_mask" if use_mask_for_norm else "_normzscore"
-    if norm_scope == "zscore_slice": name += "_normzscore_slice"
-    if norm_scope == "slice_all":    name += "_normslice_all"
+    if norm_scope == "volume":    name += "_normvol"
+    if norm_scope == "slice_all": name += "_normslice_all"
     if si_stride is not None and si_stride > 1: name += f"_stride{si_stride}"
     if plane == "sagittal":    name += "_sagittal"
     if sc_pad_mm is not None:  name += f"_sc{sc_pad_mm:g}mm"
@@ -469,16 +449,15 @@ def output_dir(cfg: dict) -> Path:
     plane     = cfg.get("plane", "axial")
     section   = cfg.get(plane, {})
     return output_dir_from_params(
-        si_res            = section["si_res"],
-        axial_res         = section.get("inplane_res"),
-        rl_res            = section.get("rl_res"),
-        three_ch          = cfg.get("three_ch", False),
-        norm_scope        = cfg.get("norm_scope", "slice"),
-        si_stride         = cfg.get("si_stride"),
-        plane             = plane,
-        sc_pad_mm         = section.get("sc_pad"),
-        with_canal        = cfg.get("with_canal", False),
-        use_mask_for_norm = cfg.get("use_mask_for_norm", False),
+        si_res     = section["si_res"],
+        axial_res  = section.get("inplane_res"),
+        rl_res     = section.get("rl_res"),
+        three_ch   = cfg.get("three_ch", False),
+        norm_scope = cfg["norm_scope"],
+        si_stride  = cfg.get("si_stride"),
+        plane      = plane,
+        sc_pad_mm  = section.get("sc_pad"),
+        with_canal = cfg.get("with_canal", False),
     )
 
 
@@ -494,33 +473,33 @@ def run(config: str | Path | None = None,
         with_canal: bool = False,
         sc_pad_mm: float | None = None,
         si_stride: int | None = None,
-        norm_scope: str = "slice",
-        use_mask_for_norm: bool = False) -> Path:
+        norm_scope: str | None = None) -> Path:
     """Preprocess raw BIDS data to processed slices. Returns the output directory path."""
     if config:
         cfg = yaml.safe_load(Path(config).read_text())
         plane     = plane or cfg.get("plane", "axial")
         plane_cfg = cfg.get(plane, {})
-        if si_res    is None: si_res    = plane_cfg.get("si_res")
-        if axial_res is None: axial_res = plane_cfg.get("inplane_res")
-        if rl_res    is None: rl_res    = plane_cfg.get("rl_res")
-        if not three_ch:      three_ch  = cfg.get("three_ch", False)
-        if not with_canal:    with_canal = cfg.get("with_canal", False)
-        if sc_pad_mm is None: sc_pad_mm = plane_cfg.get("sc_pad")
-        if si_stride is None:          si_stride  = cfg.get("si_stride")
-        if norm_scope == "slice":      norm_scope = cfg.get("norm_scope", "slice")
-        if not use_mask_for_norm:      use_mask_for_norm = cfg.get("use_mask_for_norm", False)
-        if out is None:                out        = cfg.get("out")
+        if si_res     is None: si_res     = plane_cfg.get("si_res")
+        if axial_res  is None: axial_res  = plane_cfg.get("inplane_res")
+        if rl_res     is None: rl_res     = plane_cfg.get("rl_res")
+        if not three_ch:       three_ch   = cfg.get("three_ch", False)
+        if not with_canal:     with_canal = cfg.get("with_canal", False)
+        if sc_pad_mm  is None: sc_pad_mm  = plane_cfg.get("sc_pad")
+        if si_stride  is None: si_stride  = cfg.get("si_stride")
+        if norm_scope is None: norm_scope = cfg.get("norm_scope")
+        if out is None:        out        = cfg.get("out")
     if plane is None:
         plane = "axial"
 
     assert si_res is not None, "si_res is required (set in config or via --si-res)"
+    assert norm_scope in ("slice", "slice_all", "volume"), \
+        f"norm_scope is required and must be slice/slice_all/volume, got {norm_scope!r} (set in config or via --norm-scope)"
     assert sc_pad_mm is None or plane == "sagittal", "--sc-pad is only valid with sagittal plane"
     assert si_stride is None or plane == "axial",    "--si-stride is only valid with axial plane"
 
     if out is None:
         out = output_dir_from_params(si_res, axial_res, rl_res, three_ch, norm_scope,
-                                     si_stride, plane, sc_pad_mm, with_canal, use_mask_for_norm)
+                                     si_stride, plane, sc_pad_mm, with_canal)
 
     processed_dir = str(Path(out))
 
@@ -539,7 +518,7 @@ def run(config: str | Path | None = None,
                                      "reason":  "missing_nifti"})
         worker_args.extend(
             (str(img), str(mask), str(canal) if canal else None,
-             dataset_dir.name, processed_dir, si_res, axial_res, rl_res, three_ch, plane, sc_pad_mm, si_stride, norm_scope, use_mask_for_norm)
+             dataset_dir.name, processed_dir, si_res, axial_res, rl_res, three_ch, plane, sc_pad_mm, si_stride, norm_scope)
             for img, mask, canal in pairs
         )
 
@@ -592,16 +571,11 @@ def main():
     parser.add_argument("--si-stride",   type=int,   default=None, dest="si_stride",
                         help="Extract 1 out of every N SI slices after resampling (axial only). "
                              "si_res_mm in meta = N × si_res. RGB neighbours are selected slices N apart.")
-    parser.add_argument("--norm-scope",  default=None, choices=["slice", "slice_all", "volume", "zscore", "zscore_slice"], dest="norm_scope",
-                        help="Normalisation scope: "
-                             "'slice' = percentile 0.5/99.5 par slice sur voxels foreground (>0 MRI, >-200 CT) ; "
-                             "'slice_all' = percentile 0.5/99.5 par slice sur TOUS les voxels (sans filtre) ; "
-                             "'volume' = percentile 0.5/99.5 sur voxels non-nuls du volume entier ; "
-                             "'zscore' = nnUNet ZScoreNormalization : mean/std volume entier, clip [-3σ,+3σ] → [0,255] ; "
-                             "'zscore_slice' = zscore par slice : mean/std de chaque slice, clip [-3σ,+3σ] → [0,255].")
-    parser.add_argument("--use-mask-for-norm", action="store_true", dest="use_mask_for_norm",
-                        help="zscore uniquement : calcule mean/std sur voxels != 0 (foreground only, "
-                             "use_mask_for_norm=True). Par défaut False = tous les voxels (standard nnUNet CT/multimodal).")
+    parser.add_argument("--norm-scope",  default=None, choices=["slice", "slice_all", "volume"], dest="norm_scope",
+                        help="Normalisation scope (required, via CLI or config): "
+                             "'slice' = percentile 0.5/99.5 per slice, foreground voxels only (>0 MRI, >-200 CT) ; "
+                             "'slice_all' = percentile 0.5/99.5 per slice, ALL voxels (background included) ; "
+                             "'volume' = percentile 0.5/99.5 on ALL voxels of the whole volume, computed once.")
     parser.add_argument("--update-meta", action="store_true")
     args = parser.parse_args()
 
@@ -614,8 +588,7 @@ def main():
         plane=args.plane, si_res=args.si_res, axial_res=args.axial_res,
         rl_res=args.rl_res, three_ch=args.three_ch, with_canal=args.with_canal,
         sc_pad_mm=args.sc_pad_mm, si_stride=args.si_stride,
-        norm_scope=args.norm_scope or "slice",
-        use_mask_for_norm=args.use_mask_for_norm)
+        norm_scope=args.norm_scope)
 
 
 if __name__ == "__main__":

@@ -8,11 +8,13 @@ Exports both best.pt checkpoints to ONNX and assembles 4 release files:
   cls_model.onnx  ← classifier, ONNX format
 
 Also writes config.yaml with full provenance (preprocessing params, git hashes,
-wandb run ids) and prints SHA256 hashes ready to paste into sc_crop/download.py.
+wandb run ids) and a sha256.yaml with SHA256 hashes of the 4 files. Tags this repo
+model-v{version} at the exported commit.
 
 config.yaml includes all inference parameters (si_res, inplane_res, channels,
-norm_scope, conf, regularization, cls_conf) and is meant to be copied verbatim
-into sc_crop/models/config.yaml by release.sh.
+norm_scope, imgsz, conf, regularization, cls_conf). The sc-crop repo's
+scripts/publish_release.sh reads it and deploys the inference-relevant subset
+to sc_crop/config.yaml — see that script, or MIGRATION.md, for the full release flow.
 
 Requires: conda activate sc_crop_training
 
@@ -100,7 +102,12 @@ def main():
     assert det_pt.exists(),  f"Detector checkpoint not found: {det_pt}"
     assert cls_pt.exists(),  f"Classifier checkpoint not found: {cls_pt}"
 
-    pre_cfg  = _load_yaml(run_dir / "configs" / "preprocess.yaml")
+    pre_cfg    = _load_yaml(run_dir / "configs" / "preprocess.yaml")
+    norm_scope = pre_cfg["norm_scope"]
+    assert norm_scope in ("slice", "slice_all", "volume"), (
+        f"preprocess.yaml has norm_scope={norm_scope!r} — sc_crop only implements "
+        f"'slice', 'slice_all', and 'volume'. Fix preprocess.yaml or add support in sc_crop first."
+    )
     run_info = _load_yaml(run_dir / "run_info.yaml")
     cls_info = _load_yaml(cls_run_dir / "run_info.yaml")
     det_args = _load_yaml(run_dir / "checkpoints" / "args.yaml")
@@ -135,7 +142,8 @@ def main():
         "si_res":        pre_cfg.get("axial", {}).get("si_res", 10.0),
         "inplane_res":   pre_cfg.get("axial", {}).get("inplane_res", 1.0),
         "channels":      3 if pre_cfg.get("three_ch", False) else 1,
-        "norm_scope":    pre_cfg.get("norm_scope", "slice"),
+        "norm_scope":    norm_scope,
+        "imgsz":         imgsz,
         # inference thresholds
         "conf":          0.1,
         "regularization": "cls",   # classifier run always provided → cls regularization
@@ -158,7 +166,7 @@ def main():
     # ── SHA256 ────────────────────────────────────────────────────────────────
     shas = {name: _sha256(out_dir / name) for name in files}
 
-    # Write sha256.yaml — read by release.sh to avoid parsing stdout
+    # Write sha256.yaml — read by sc-crop's scripts/publish_release.sh to avoid parsing stdout
     sha256_data = {
         "version":    version,
         "det_run":    run_dir.name,
@@ -168,13 +176,24 @@ def main():
     }
     (out_dir / "sha256.yaml").write_text(yaml.dump(sha256_data, default_flow_style=False, sort_keys=False))
 
+    # ── Tag this repo at the commit that produced the export ───────────────────
+    # Marks which training-repo commit v{version} was exported from — read by
+    # anyone tracing a published model back to the code that trained it.
+    tag = f"model-v{version}"
+    existing = subprocess.run(["git", "tag", "-l", tag], capture_output=True, text=True).stdout.strip()
+    assert not existing, f"tag {tag} already exists — bump --version, this model version was already exported."
+    subprocess.run(["git", "tag", tag], check=True)
+    subprocess.run(["git", "push", "origin", tag], check=True)
+
     # ── Report ────────────────────────────────────────────────────────────────
     print(f"\n{'─'*60}")
     print(f"Release bundle v{version} → {out_dir.resolve()}/")
     for name in list(files) + ["config.yaml", "sha256.yaml"]:
         print(f"  {name}")
+    print(f"Tagged this repo: {tag}")
     print(f"\n{'─'*60}")
-    print(f"Done. Run:  bash scripts/release.sh")
+    print(f"Done. Now, in the sc-crop repo:")
+    print(f"  bash scripts/publish_release.sh --export-dir {out_dir.resolve()} --package-version <PACKAGE_VERSION>")
 
 
 if __name__ == "__main__":

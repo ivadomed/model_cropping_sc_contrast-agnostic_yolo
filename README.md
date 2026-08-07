@@ -1,7 +1,12 @@
 # Spinal cord detection model — training
 
 Trains the YOLO26n detector + classifier that find the spinal cord on **axial** MRI slices, contrast-agnostic (T1, T2, MP2RAGE, DWI…), across field strengths and pathologies, cervical and lumbar. Per-slice detections are aggregated into a 3D bounding box.
+
+Detector:
 <img width="955" height="420" alt="image" src="https://github.com/user-attachments/assets/dbfdb2aa-2f0b-46ea-a333-6e995196a96b" />
+
+Classifier:
+
 
 <img width="1900" height="757" alt="image" src="https://github.com/user-attachments/assets/0bc628b4-e441-4ca0-b5ac-6b55bbb5d8c6" />
 

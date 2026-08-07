@@ -267,7 +267,7 @@ SCRIPTS — un script, une responsabilité
   │                         gap_mm_*_neg croissant) ; --top-k (défaut 10) ; --split optionnel
   ├── run_pipeline.py   ← orchestrateur des 9 étapes (download→preprocess→splits→build→train→
   │                       eval→metrics→plot→failures), lit configs/*.yaml, --mode override le mode
-  ├── train_all.sh      ← lance run_pipeline.py en mode detection PUIS classification
+  ├── train_det_and_cls.sh      ← lance run_pipeline.py en mode detection PUIS classification
   │                       (deux run-dirs distincts <root>_det/ et <root>_cls/), imprime la
   │                       commande export_model.py à lancer ensuite
   └── export_model.py ← exporte + tag ce repo ; la publication (sc-crop, PyPI) se fait

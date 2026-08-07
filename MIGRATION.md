@@ -29,7 +29,7 @@ python scripts/export_model.py \
 ```
 
 `--det-run-dir`/`--cls-run-dir` are the detector and classifier run directories produced by
-`scripts/train_all.sh` (or `run_pipeline.py --mode detection` / `--mode classification`
+`scripts/train_det_and_cls.sh` (or `run_pipeline.py --mode detection` / `--mode classification`
 run separately). `--version` is the **model** version — see "Two version numbers" below.
 
 This command:

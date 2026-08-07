@@ -2,7 +2,7 @@
 # Train the detector and the classifier in one command (the two runs a release needs).
 # Mode is forced per-run via --mode, independently of configs/training.yaml.
 #
-# Usage: bash scripts/train_all.sh [run_root] [--no-wandb]
+# Usage: bash scripts/train_det_and_cls.sh [run_root] [--no-wandb]
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 

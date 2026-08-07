@@ -67,7 +67,7 @@ Add your public SSH key to [data.neuro.polymtl.ca](https://data.neuro.polymtl.ca
 Data downloading and preprocessing are skipped if already done.
 
 ```bash
-bash scripts/train_all.sh              # add --no-wandb to disable W&B logging
+bash scripts/train_det_and_cls.sh              # add --no-wandb to disable W&B logging
 ```
 
 Produces `runs/<TS>_det/` and `runs/<TS>_cls/`, then prints the `export_model.py` command to run next.

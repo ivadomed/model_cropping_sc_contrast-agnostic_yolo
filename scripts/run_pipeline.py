@@ -5,7 +5,7 @@ Full training pipeline: download → preprocess → splits → build dataset →
 Reads configs/preprocess.yaml, configs/training_dataset.yaml, configs/training.yaml, configs/evaluation.yaml.
 The mode (detection|classification) is read from configs/training.yaml (or overridden with --mode)
 and controls steps 4-9. Configs are snapshotted into runs/<TS>/configs/ at startup — configs/ can be
-modified for the next run immediately. Use scripts/train_all.sh to run both modes in one command.
+modified for the next run immediately. Use scripts/train_det_and_cls.sh to run both modes in one command.
 
 Steps:
   1 = download datasets
@@ -144,7 +144,7 @@ def main():
     predictions_dir = run_dir / "predictions"
 
     # Same "dataset"/"checkpoints" names in both modes — the mode is already encoded
-    # in the run-dir name (train_all.sh creates separate <ts>_det/<ts>_cls run-dirs).
+    # in the run-dir name (train_det_and_cls.sh creates separate <ts>_det/<ts>_cls run-dirs).
     dataset_dir = run_dir / "dataset"
     checkpoint  = run_dir / "checkpoints" / "weights" / "best.pt"
     if mode == "classification":

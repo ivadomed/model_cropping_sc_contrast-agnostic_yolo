@@ -166,7 +166,7 @@ walkthrough in [MIGRATION.md](MIGRATION.md) — summary here:
 
 ```bash
 python scripts/export_model.py \
-    --run-dir     runs/YYYYMMDD_XXXXXX \
+    --det-run-dir runs/YYYYMMDD_XXXXXX \
     --cls-run-dir runs/YYYYMMDD_XXXXXX \
     --version     0.0.X
 ```

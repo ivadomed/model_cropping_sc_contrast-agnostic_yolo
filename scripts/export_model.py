@@ -20,7 +20,7 @@ Requires: conda activate sc_crop_training
 
 Usage:
     python scripts/export_model.py \\
-        --run-dir     runs/20260524_224406 \\
+        --det-run-dir runs/20260524_224406 \\
         --cls-run-dir runs/20260525_150625 \\
         --version     0.0.6
 """
@@ -76,7 +76,7 @@ def main():
         description="Export detector + classifier to a sc_crop release bundle.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--run-dir",         required=True,
+    parser.add_argument("--det-run-dir",     required=True,
                         help="Detector run directory (runs/<timestamp>/)")
     parser.add_argument("--cls-run-dir",     required=True,
                         help="Classifier run directory (runs/<timestamp>/)")
@@ -91,18 +91,18 @@ def main():
                              "(default: best.pt — use loss_best.pt for min-loss checkpoint)")
     args = parser.parse_args()
 
-    run_dir     = Path(args.run_dir)
+    det_run_dir = Path(args.det_run_dir)
     cls_run_dir = Path(args.cls_run_dir)
     out_dir     = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     version     = args.version
 
-    det_pt  = run_dir     / "checkpoints" / "weights" / args.det_checkpoint
+    det_pt  = det_run_dir / "checkpoints" / "weights" / args.det_checkpoint
     cls_pt  = cls_run_dir / "checkpoints" / "weights" / args.cls_checkpoint
     assert det_pt.exists(),  f"Detector checkpoint not found: {det_pt}"
     assert cls_pt.exists(),  f"Classifier checkpoint not found: {cls_pt}"
 
-    pre_cfg    = _load_yaml(run_dir / "configs" / "preprocess.yaml")
+    pre_cfg    = _load_yaml(det_run_dir / "configs" / "preprocess.yaml")
     norm_scope = pre_cfg["norm_scope"]
     assert norm_scope in ("slice", "slice_all", "volume"), (
         f"preprocess.yaml has norm_scope={norm_scope!r} — sc_crop only implements "
@@ -111,17 +111,17 @@ def main():
     # Same thresholds used to evaluate/select each checkpoint (see run_pipeline.py step 6),
     # from each run's own configs/ snapshot -- not the repo's current configs/evaluation.yaml,
     # which may have moved on since these runs were trained.
-    det_eval_cfg = _load_yaml(run_dir / "configs" / "evaluation.yaml")
+    det_eval_cfg = _load_yaml(det_run_dir / "configs" / "evaluation.yaml")
     cls_eval_cfg = _load_yaml(cls_run_dir / "configs" / "evaluation.yaml")
-    conf         = float(det_eval_cfg.get("det_conf", 0.1))
+    det_conf     = float(det_eval_cfg.get("det_conf", 0.1))
     cls_conf     = float(cls_eval_cfg.get("cls_conf", 0.5))
-    run_info = _load_yaml(run_dir / "run_info.yaml")
+    det_info = _load_yaml(det_run_dir / "run_info.yaml")
     cls_info = _load_yaml(cls_run_dir / "run_info.yaml")
-    det_args = _load_yaml(run_dir / "checkpoints" / "args.yaml")
+    det_args = _load_yaml(det_run_dir / "checkpoints" / "args.yaml")
     cls_args = _load_yaml(cls_run_dir / "checkpoints" / "args.yaml")
     imgsz    = int(det_args.get("imgsz", 320))
 
-    wandb_id_file = run_dir / "wandb_run_id.txt"
+    wandb_id_file = det_run_dir / "wandb_run_id.txt"
     wandb_id      = wandb_id_file.read_text().strip() if wandb_id_file.exists() else None
 
     # ── ONNX export ──────────────────────────────────────────────────────────
@@ -152,13 +152,13 @@ def main():
         "norm_scope":    norm_scope,
         "imgsz":         imgsz,
         # inference thresholds -- from each run's own configs/evaluation.yaml, see above
-        "conf":          conf,
+        "conf":          det_conf,
         "regularization": "cls",   # classifier run always provided → cls regularization
         "cls_conf":      cls_conf,
         # traceability — detector
-        "det_run":             run_dir.name,
-        "det_git_hash":        run_info.get("git_hash", "unknown"),
-        "det_git_dirty":       run_info.get("git_dirty", False),
+        "det_run":             det_run_dir.name,
+        "det_git_hash":        det_info.get("git_hash", "unknown"),
+        "det_git_dirty":       det_info.get("git_dirty", False),
         "det_wandb_run_id":    wandb_id,
         # traceability — classifier
         "cls_run":             cls_run_dir.name,
@@ -176,7 +176,7 @@ def main():
     # Write sha256.yaml — read by sc-crop's scripts/publish_release.sh to avoid parsing stdout
     sha256_data = {
         "version":    version,
-        "det_run":    run_dir.name,
+        "det_run":    det_run_dir.name,
         "cls_run":    cls_run_dir.name,
         "export_git_hash": _git_head(),
         "assets":     shas,

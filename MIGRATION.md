@@ -23,18 +23,18 @@ actually install. Neither repo can do a release alone.
 
 ```bash
 python scripts/export_model.py \
-    --run-dir     runs/YYYYMMDD_XXXXXX \
+    --det-run-dir runs/YYYYMMDD_XXXXXX \
     --cls-run-dir runs/YYYYMMDD_XXXXXX \
     --version     0.0.X
 ```
 
-`--run-dir`/`--cls-run-dir` are the detector and classifier run directories produced by
+`--det-run-dir`/`--cls-run-dir` are the detector and classifier run directories produced by
 `scripts/train_all.sh` (or `run_pipeline.py --mode detection` / `--mode classification`
 run separately). `--version` is the **model** version — see "Two version numbers" below.
 
 This command:
 1. Exports both `best.pt` checkpoints to ONNX (`--det-checkpoint`/`--cls-checkpoint`
-   override which weight file, default `best.pt`/`loss_best.pt`).
+   both default to `best.pt`; pass e.g. `--cls-checkpoint loss_best.pt` for a different file).
 2. Writes `release_export/{model.pt, model.onnx, cls_model.pt, cls_model.onnx}`.
 3. Writes `release_export/config.yaml` — every inference parameter (`si_res`,
    `inplane_res`, `channels`, `norm_scope`, `imgsz`, `conf`, `regularization`,

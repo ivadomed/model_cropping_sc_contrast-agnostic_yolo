@@ -2,8 +2,8 @@
 Produce a release-ready bundle for sc_crop from a detector run + a classifier run.
 
 Exports both best.pt checkpoints to ONNX and assembles 4 release files:
-  model.pt        ← detector checkpoint
-  model.onnx      ← detector, ONNX format
+  det_model.pt    ← detector checkpoint
+  det_model.onnx  ← detector, ONNX format
   cls_model.pt    ← classifier checkpoint
   cls_model.onnx  ← classifier, ONNX format
 
@@ -134,8 +134,8 @@ def main():
 
     # ── Copy the 4 files to out_dir ──────────────────────────────────────────
     files = {
-        "model.pt":        det_pt,
-        "model.onnx":      det_onnx,
+        "det_model.pt":    det_pt,
+        "det_model.onnx":  det_onnx,
         "cls_model.pt":    cls_pt,
         "cls_model.onnx":  cls_onnx,
     }

@@ -39,13 +39,13 @@ conda activate sc_crop_training
 pip install -r requirements.txt
 ```
 
-> **Blackwell GPU (RTX PRO 6000, RTX 5090, sm_120+):** `requirements.txt` pins `torch==2.8.0` which requires CUDA 12.8 wheels not on PyPI. Install PyTorch first:
+> **Blackwell GPU (RTX PRO 6000, RTX 5090, sm_120+):**
 > ```bash
 > pip install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu128
 > pip install -r requirements.txt
 > ```
 
-> **Older GPU driver (`nvidia-smi` reports CUDA Version < 12.6, e.g. driver 535.x on Ampere-class GPUs like RTX A6000):** the only CUDA builds published for `torch==2.8.0` are `cu126`/`cu128`/`cu129`, all requiring driver ≥ 12.6 — none work here. `torch.cuda.is_available()` will silently return `False` (while `device_count()` still reports your GPUs) instead of a clear install error. The newest CUDA build compatible with driver ≤ 12.2 is `cu121`, which has no Python 3.13 wheel for `torchvision` — use **Python 3.12** for this env instead, and override torch/torchvision *after* `requirements.txt` so the `torch==2.8.0` pin doesn't clobber it:
+> **Older GPU driver (`nvidia-smi` reports CUDA Version < 12.6, e.g. driver 535.x):**
 > ```bash
 > conda create -n sc_crop_training python=3.12 -y
 > conda activate sc_crop_training
@@ -71,29 +71,44 @@ Produces `runs/<TS>_det/` and `runs/<TS>_cls/`, then prints the `export_model.py
 
 ### Datasets
 
-18 MRI datasets covering cervical and lumbar spine, multiple contrasts and pathologies.
+29 MRI datasets covering cervical and lumbar spine, multiple contrasts and pathologies
+(listed by actual usage — slice count in the last full training run; datasets with
+negligible usage are omitted, see `configs/datasets.yaml` for the full registry).
 
 From data.neuro.polymtl.ca:
-1. [basel-mp2rage](https://data.neuro.polymtl.ca/datasets/basel-mp2rage.git)
+1. [sct-testing-large](https://data.neuro.polymtl.ca/datasets/sct-testing-large.git)
 2. [canproco](https://data.neuro.polymtl.ca/datasets/canproco.git)
-3. [data-multi-subject](https://data.neuro.polymtl.ca/datasets/data-multi-subject.git)
-4. [dcm-brno](https://data.neuro.polymtl.ca/datasets/dcm-brno.git)
-5. [dcm-zurich](https://data.neuro.polymtl.ca/datasets/dcm-zurich.git)
-6. [dcm-zurich-lesions](https://data.neuro.polymtl.ca/datasets/dcm-zurich-lesions.git)
-7. [dcm-zurich-lesions-20231115](https://data.neuro.polymtl.ca/datasets/dcm-zurich-lesions-20231115.git)
-8. [lumbar-epfl](https://data.neuro.polymtl.ca/datasets/lumbar-epfl.git)
-9. [lumbar-vanderbilt](https://data.neuro.polymtl.ca/datasets/lumbar-vanderbilt.git)
-10. [nih-ms-mp2rage](https://data.neuro.polymtl.ca/datasets/nih-ms-mp2rage.git)
-11. [sci-colorado](https://data.neuro.polymtl.ca/datasets/sci-colorado.git)
-12. [sci-paris](https://data.neuro.polymtl.ca/datasets/sci-paris.git)
-13. [sci-zurich](https://data.neuro.polymtl.ca/datasets/sci-zurich.git)
-14. [sct-testing-large](https://data.neuro.polymtl.ca/datasets/sct-testing-large.git)
-15. [spider-challenge-2023](https://data.neuro.polymtl.ca/datasets/spider-challenge-2023.git)
-16. [whole-spine](https://data.neuro.polymtl.ca/datasets/whole-spine.git)
+3. [beijing-tumor](https://data.neuro.polymtl.ca/datasets/beijing-tumor.git)
+4. [spider-challenge-2023](https://data.neuro.polymtl.ca/datasets/spider-challenge-2023.git)
+5. [philadelphia-pediatric](https://data.neuro.polymtl.ca/datasets/philadelphia-pediatric.git)
+6. [whole-spine](https://data.neuro.polymtl.ca/datasets/whole-spine.git)
+7. [basel-mp2rage](https://data.neuro.polymtl.ca/datasets/basel-mp2rage.git)
+8. [head-neck-tumor-challenge-2024](https://data.neuro.polymtl.ca/datasets/head-neck-tumor-challenge-2024.git)
+9. [dcm-zurich](https://data.neuro.polymtl.ca/datasets/dcm-zurich.git)
+10. [dcm-brno](https://data.neuro.polymtl.ca/datasets/dcm-brno.git)
+11. [nih-ms-mp2rage](https://data.neuro.polymtl.ca/datasets/nih-ms-mp2rage.git)
+12. [sci-zurich](https://data.neuro.polymtl.ca/datasets/sci-zurich.git)
+13. [dcm-oklahoma](https://data.neuro.polymtl.ca/datasets/dcm-oklahoma.git)
+14. [sci-colorado](https://data.neuro.polymtl.ca/datasets/sci-colorado.git)
+15. [marseille-3t-mp2rage](https://data.neuro.polymtl.ca/datasets/marseille-3t-mp2rage.git)
+16. [inspired](https://data.neuro.polymtl.ca/datasets/inspired.git)
+17. [lumbar-epfl](https://data.neuro.polymtl.ca/datasets/lumbar-epfl.git)
+18. [lumbar-vanderbilt](https://data.neuro.polymtl.ca/datasets/lumbar-vanderbilt.git)
+19. [sci-paris](https://data.neuro.polymtl.ca/datasets/sci-paris.git)
+20. [dcm-zurich-lesions-20231115](https://data.neuro.polymtl.ca/datasets/dcm-zurich-lesions-20231115.git)
+21. [hc-lumbar-zurich](https://data.neuro.polymtl.ca/datasets/hc-lumbar-zurich.git)
+22. [hc-lumbar-shanghai](https://data.neuro.polymtl.ca/datasets/hc-lumbar-shanghai.git)
+23. [dcm-zurich-lesions](https://data.neuro.polymtl.ca/datasets/dcm-zurich-lesions.git)
+24. [ms-barcelona-psir](https://data.neuro.polymtl.ca/datasets/ms-barcelona-psir.git)
 
 From spineimage.ca:
-17. [site_006](https://spineimage.ca/MON/site_006)
-18. [site_007](https://spineimage.ca/VGH/site_007)
+25. [site_007](https://spineimage.ca/VGH/site_007)
+26. [site_006](https://spineimage.ca/MON/site_006)
+
+Other sources:
+27. [totalsegmentator](https://zenodo.org/records/10047292) (Zenodo)
+28. [data-multi-subject](https://github.com/spine-generic/data-multi-subject) (GitHub, spine-generic)
+29. [ds005143](https://github.com/OpenNeuroDatasets/ds005143.git) (OpenNeuroDatasets)
 
 ### Adding a new dataset
 
@@ -155,8 +170,8 @@ python scripts/export_model.py \
 
 Produces `release_export/` (`model.pt`, `model.onnx`, `cls_model.pt`, `cls_model.onnx`,
 `config.yaml`, `sha256.yaml`) and tags this repo `model-v0.0.X` at the current commit.
-`--det-checkpoint`/`--cls-checkpoint` default to `best.pt`/`loss_best.pt` — pass
-`--det-checkpoint last.pt` etc. to use a different weight file.
+`--det-checkpoint`/`--cls-checkpoint` both default to `best.pt` — pass
+`--det-checkpoint last.pt` or `--cls-checkpoint loss_best.pt` etc. to use a different weight file.
 
 **2. In [sc-crop](https://github.com/ivadomed/sc-crop) — publish:**
 

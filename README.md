@@ -2,22 +2,24 @@
 
 Trains the YOLO26n detector + classifier that find the spinal cord on **axial** MRI slices, contrast-agnostic (T1, T2, MP2RAGE, DWI…), across field strengths and pathologies, cervical and lumbar. Per-slice detections are aggregated into a 3D bounding box.
 
-Detector:
+#### Detector:
 
 <img width="955" height="420" alt="image" src="https://github.com/user-attachments/assets/dbfdb2aa-2f0b-46ea-a333-6e995196a96b" />
 
-Classifier:
+#### Classifier:
 
 <img width="1227" height="537" alt="image" src="https://github.com/user-attachments/assets/d4183a05-0d2a-4ac2-a41a-d74840569026" />
 
 
-Full detected box:
+#### Full detected box:
 
 <img width="1900" height="757" alt="image" src="https://github.com/user-attachments/assets/0bc628b4-e441-4ca0-b5ac-6b55bbb5d8c6" />
 
 *(example crop produced by `sc-crop`, the inference package built from a model trained here)*
 
 This repository only trains the model. **It does not run inference.** To crop a volume with an already-trained model, use [`sc-crop`](https://github.com/ivadomed/sc-crop) — a separate, standalone Python package/repository.
+
+#### The pipeline:
 
 <img width="5797" height="3745" alt="Dataset Export and Release-2026-08-07-165023" src="https://github.com/user-attachments/assets/aae8850c-de1c-465d-bd94-8cbebfa0d769" />
 

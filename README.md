@@ -19,7 +19,8 @@ Full detected box:
 
 This repository only trains the model. **It does not run inference.** To crop a volume with an already-trained model, use [`sc-crop`](https://github.com/ivadomed/sc-crop) — a separate, standalone Python package/repository.
 
-<img width="8192" height="884" alt="Dataset Export and Release-2026-08-06-202731" src="https://github.com/user-attachments/assets/82b7ef05-d8ba-4bfd-9488-c9186ef497e7" />
+<img width="5797" height="3745" alt="Dataset Export and Release-2026-08-07-165023" src="https://github.com/user-attachments/assets/aae8850c-de1c-465d-bd94-8cbebfa0d769" />
+
 
 ---
 

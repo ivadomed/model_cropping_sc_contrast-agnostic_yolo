@@ -3,6 +3,7 @@
 Trains the YOLO26n detector + classifier that find the spinal cord on **axial** MRI slices, contrast-agnostic (T1, T2, MP2RAGE, DWI…), across field strengths and pathologies, cervical and lumbar. Per-slice detections are aggregated into a 3D bounding box.
 
 <img width="1713" height="727" alt="image" src="https://github.com/user-attachments/assets/d8958227-06b6-4430-9378-4a6f91e9741d" />
+<img width="1900" height="757" alt="image" src="https://github.com/user-attachments/assets/0bc628b4-e441-4ca0-b5ac-6b55bbb5d8c6" />
 
 *(example crop produced by `sc-crop`, the inference package built from a model trained here)*
 

@@ -108,6 +108,13 @@ def main():
         f"preprocess.yaml has norm_scope={norm_scope!r} — sc_crop only implements "
         f"'slice', 'slice_all', and 'volume'. Fix preprocess.yaml or add support in sc_crop first."
     )
+    # Same thresholds used to evaluate/select each checkpoint (see run_pipeline.py step 6),
+    # from each run's own configs/ snapshot -- not the repo's current configs/evaluation.yaml,
+    # which may have moved on since these runs were trained.
+    det_eval_cfg = _load_yaml(run_dir / "configs" / "evaluation.yaml")
+    cls_eval_cfg = _load_yaml(cls_run_dir / "configs" / "evaluation.yaml")
+    conf         = float(det_eval_cfg.get("det_conf", 0.1))
+    cls_conf     = float(cls_eval_cfg.get("cls_conf", 0.5))
     run_info = _load_yaml(run_dir / "run_info.yaml")
     cls_info = _load_yaml(cls_run_dir / "run_info.yaml")
     det_args = _load_yaml(run_dir / "checkpoints" / "args.yaml")
@@ -144,10 +151,10 @@ def main():
         "channels":      3 if pre_cfg.get("three_ch", False) else 1,
         "norm_scope":    norm_scope,
         "imgsz":         imgsz,
-        # inference thresholds
-        "conf":          0.1,
+        # inference thresholds -- from each run's own configs/evaluation.yaml, see above
+        "conf":          conf,
         "regularization": "cls",   # classifier run always provided → cls regularization
-        "cls_conf":      0.5,
+        "cls_conf":      cls_conf,
         # traceability — detector
         "det_run":             run_dir.name,
         "det_git_hash":        run_info.get("git_hash", "unknown"),

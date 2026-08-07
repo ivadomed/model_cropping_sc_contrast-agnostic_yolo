@@ -151,6 +151,8 @@ def main():
         cls_conf       = float(eval_cfg.get("cls_conf", 0.5))
         superior_only  = bool(training_cfg.get("classification", {}).get("superior_only", True))
         eval_sup_only  = bool(eval_cfg.get("eval_superior_only", False))
+    else:
+        det_conf       = float(eval_cfg.get("det_conf", 0.1))
 
     print("══════════════════════════════════════════════════════════════")
     print(f"  Spine {mode} pipeline")
@@ -218,6 +220,7 @@ def main():
                     processed=processed_dir,
                     out=predictions_dir,
                     splits_dir=splits_dir,
+                    conf=det_conf,
                 )
             else:
                 print(f"  WARNING: checkpoint not found at {checkpoint} — skipping")
